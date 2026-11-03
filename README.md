@@ -309,11 +309,25 @@ python -m app.cli watch
 
 ## 9. 安卓端
 
-### 方案 A：PWA（推荐，零打包）
+### 方案 A+：GitHub Pages 静态 PWA（真·无后端，推荐）
+
+电脑可关机。GitHub Actions 每天两次自动跑完整管线（抓取→训练→预测→第二盘口→结算→回测），产出静态 JSON 并部署到 GitHub Pages；**赛时页由手机直连 ESPN**（CORS 已验证），投影数学在前端运行。
+
+一次性部署：
+
+1. GitHub 建仓库，`git remote add origin git@github.com:<你>/nba-quant.git && git push -u origin main`
+2. 仓库 Settings → Secrets and variables → Actions 添加 `NBAQ_ODDS_API_KEY`、`HOOPS_API_KEY`（.env 里的值）
+3. Settings → Pages → Build and deployment → Source 选 **GitHub Actions**
+4. Actions 页手动 Run 一次 "refresh-and-deploy" 验证
+5. 手机访问 `https://<你>.github.io/<仓库名>/` → Chrome"添加到主屏幕"（HTTPS，可安装 PWA）
+
+行为说明：页面自动探测 `data/static.json`——存在则进入**静态模式**（顶部会显示，写操作隐藏只读）；本地 `serve` 时自动走 API 模式，同一套前端。静态模式下"记一笔"等写操作不可用，记账在本地 API 模式补录。
+
+### 方案 A：PWA + 本地后端（功能完整，需电脑开机）
 
 1. 电脑运行 `python -m app.cli serve`；
 2. 手机与电脑同一 Wi-Fi，访问 `http://<电脑局域网IP>:8000`；
-3. Chrome 菜单 →“添加到主屏幕”。
+3. Chrome 菜单 →"添加到主屏幕"。
 
 注意：**Service Worker / 安装提示要求 HTTPS**（`localhost` 除外）。局域网 `http://192.168.x.x` 只能当普通网页用。
 
