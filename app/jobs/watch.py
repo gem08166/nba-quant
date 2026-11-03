@@ -111,6 +111,15 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                         print(f"[watch] hao-tiyu odds: +{hao_rows} row(s)")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[watch] hao-tiyu odds skipped: {exc}")
+                # The Odds API 多书源（省额度：状态文件控制，默认 20h 内只拉一次）
+                try:
+                    from ..ingest import theodds
+
+                    message = theodds.store_odds_api(conn, slate_date=slate)
+                    conn.commit()
+                    print(f"[watch] {message}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] odds-api skipped: {exc}")
                 # PBP for the last two slates (late West Coast games finish
                 # after the slate flips; backfill_pbp is idempotent).
                 try:

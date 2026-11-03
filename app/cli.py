@@ -102,6 +102,21 @@ def cmd_signal_backtest(args: argparse.Namespace) -> None:
     signal_backtest.print_report(report)
 
 
+def cmd_odds_api(args: argparse.Namespace) -> None:
+    """The Odds API 多书源盘口入库（省额度：默认 20h 内只拉一次）。"""
+    from .ingest import theodds
+
+    conn = db.connect()
+    try:
+        message = theodds.store_odds_api(conn, slate_date=args.date, force=args.force)
+        conn.commit()
+        print(message)
+    except Exception as exc:  # noqa: BLE001
+        print(f"odds-api failed: {exc}")
+    finally:
+        conn.close()
+
+
 def cmd_predict(args: argparse.Namespace) -> None:
     results = predict_date(args.date)
     print(f"predictions: {len(results)}")
@@ -259,6 +274,11 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--start", default=None)
     sb.add_argument("--end", default=None)
     sb.set_defaults(func=cmd_signal_backtest)
+
+    oa = sub.add_parser("odds-api", help="fetch The Odds API multi-book odds (quota-aware)")
+    oa.add_argument("--date", default=None)
+    oa.add_argument("--force", action="store_true", help="ignore the min-interval guard")
+    oa.set_defaults(func=cmd_odds_api)
 
     predict = sub.add_parser("predict", help="predict a slate and compute edges")
     predict.add_argument("--date", required=True)

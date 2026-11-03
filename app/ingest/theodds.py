@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+"""The Odds API 客户端（多书源共识）。
+
+额度非常有限（免费 500 credits/月），默认策略：
+- 每天最多拉 1 次（h2h+spreads+totals × 1 region = 3 credits）≈ 90/月
+- 状态文件 data/odds_api_state.json 记录上次拉取时间与剩余额度，间隔不足直接跳过
+- 每次响应打印 x-requests-remaining
+
+定价：一次请求返回多家 bookmaker（DraftKings/FanDuel/...），全部入库
+odds_snapshots（book=书名，source='the-odds-api'），供共识概率与交叉验证。
+"""
+
+import json
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from ..config import DATA_DIR, REQUEST_TIMEOUT, THE_ODDS_API_KEY, THE_ODDS_API_MIN_HOURS
+
+API_BASE = "https://api.the-odds-api.com/v4"
+SPORT_NBA = "basketball_nba"
+REGION = "us"
+MARKETS = "h2h,spreads,totals"
+STATE_PATH = DATA_DIR / "odds_api_state.json"
+
+
+class OddsApiError(RuntimeError):
+    pass
+
+
+def _load_state() -> dict:
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def hours_since_last_fetch() -> float | None:
+    state = _load_state()
+    last = state.get("last_fetch_ts")
+    if not last:
+        return None
+    return (time.time() - last) / 3600.0
+
+
+def _remaining_quota_ok() -> tuple[bool, str]:
+    hrs = hours_since_last_fetch()
+    if hrs is None:
+        return True, "首次调用"
+    if hrs < THE_ODDS_API_MIN_HOURS:
+        return False, f"距上次拉取 {hrs:.1f}h < {THE_ODDS_API_MIN_HOURS}h（省额度，跳过）"
+    return True, f"距上次拉取 {hrs:.1f}h"
+
+
+def fetch_nba_odds(force: bool = False) -> tuple[list[dict], str]:
+    """拉取 NBA 未来赛程的多家盘口。返回 (events, message)。
+
+    events: [{id, commence_time, home, away, bookmakers: [{title, markets...}]}]
+    额度不足/间隔不足时返回 ([], reason)。
+    """
+    if not THE_ODDS_API_KEY:
+        return [], "未配置 NBAQ_ODDS_API_KEY，跳过"
+    if not force:
+        ok, reason = _remaining_quota_ok()
+        if not ok:
+            return [], reason
+
+    with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+        resp = client.get(
+            f"{API_BASE}/sports/{SPORT_NBA}/odds/",
+            params={
+                "apiKey": THE_ODDS_API_KEY,
+                "regions": REGION,
+                "markets": MARKETS,
+                "oddsFormat": "decimal",
+            },
+        )
+        remaining = resp.headers.get("x-requests-remaining")
+        used = resp.headers.get("x-requests-used")
+        if resp.status_code == 429:
+            _save_state({**_load_state(), "last_fetch_ts": time.time()})
+            return [], f"额度用尽（429），remaining={remaining}"
+        resp.raise_for_status()
+        events = resp.json()
+
+    state = _load_state()
+    state.update(
+        {
+            "last_fetch_ts": time.time(),
+            "remaining": remaining,
+            "used": used,
+            "events": len(events),
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+    )
+    _save_state(state)
+    msg = f"The Odds API: {len(events)} 场 · 剩余额度 {remaining}（已用 {used}）"
+    print(msg)
+    return events, msg
+
+
+def store_odds_api(conn, slate_date: str | None = None, force: bool = False) -> str:
+    """The Odds API 多书源盘口入库（book=bookmaker 名），返回状态消息。
+
+    队名匹配：Odds API 与 ESPN 均为英文全名；日期口径同 hao（UTC-5 = 美国比赛日）。
+    """
+    import sqlite3  # noqa: F401
+    from datetime import datetime as dt
+
+    events, message = fetch_nba_odds(force=force)
+    if not events:
+        return message
+
+    rows_by_key = events_to_rows(events)
+    inserted = 0
+    for event in events:
+        home = event.get("home_team") or ""
+        away = event.get("away_team") or ""
+        key = f"{away}|{home}"
+        kickoff = event.get("commence_time")  # ISO UTC
+        try:
+            et_date = (
+                dt.fromisoformat(kickoff.replace("Z", "+00:00")).timestamp() - 5 * 3600
+            )
+            et_slate = datetime.utcfromtimestamp(et_date).strftime("%Y-%m-%d")
+        except (TypeError, ValueError):
+            continue
+        if slate_date and et_slate != slate_date:
+            continue
+        game = conn.execute(
+            """
+            SELECT g.id FROM games g
+            JOIN teams h ON h.id=g.home_id JOIN teams a ON a.id=g.away_id
+            WHERE h.name=? AND a.name=? AND g.slate_date=?
+              AND g.status NOT IN ('STATUS_POSTPONED','STATUS_CANCELED','STATUS_CANCELLED')
+            """,
+            (home, away, et_slate),
+        ).fetchone()
+        if not game:
+            continue
+        inserted += insert_api_rows(conn, game["id"], rows_by_key.get(key) or [])
+    return f"{message} · 入库 {inserted} 行"
+
+
+def insert_api_rows(conn, game_id: str, rows: list[dict]) -> int:
+    from . import service as espn_service
+
+    return espn_service.insert_odds(conn, game_id, rows)
+
+
+def events_to_rows(events: list[dict]) -> dict[str, list[dict]]:
+    """把响应转成 {队名对: [odds_snapshots rows]}（book=bookmaker 名）。"""
+    out: dict[str, list[dict]] = {}
+    for event in events:
+        home = event.get("home_team") or ""
+        away = event.get("away_team") or ""
+        key = f"{away}|{home}"
+        rows: list[dict] = []
+        for bookmaker in event.get("bookmakers") or []:
+            book = bookmaker.get("title") or "unknown"
+            for market in bookmaker.get("markets") or []:
+                mkey = market.get("key")
+                outcomes = market.get("outcomes") or []
+                if mkey == "h2h":
+                    for outcome in outcomes:
+                        side = "home" if outcome.get("name") == home else "away" if outcome.get("name") == away else None
+                        if side:
+                            rows.append(
+                                {"book": book, "market": "moneyline", "side": side, "line": None,
+                                 "price": float(outcome.get("price")), "source": "the-odds-api"}
+                            )
+                elif mkey == "spreads":
+                    for outcome in outcomes:
+                        side = "home" if outcome.get("name") == home else "away" if outcome.get("name") == away else None
+                        if side and outcome.get("point") is not None:
+                            rows.append(
+                                {"book": book, "market": "spread", "side": side, "line": float(outcome["point"]),
+                                 "price": float(outcome.get("price")), "source": "the-odds-api"}
+                            )
+                elif mkey == "totals":
+                    for outcome in outcomes:
+                        side = "over" if outcome.get("name") == "Over" else "under" if outcome.get("name") == "Under" else None
+                        if side and outcome.get("point") is not None:
+                            rows.append(
+                                {"book": book, "market": "total", "side": side, "line": float(outcome["point"]),
+                                 "price": float(outcome.get("price")), "source": "the-odds-api"}
+                            )
+        out[key] = rows
+    return out

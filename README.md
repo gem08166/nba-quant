@@ -297,6 +297,8 @@ python -m app.cli watch
 |---|---|---|
 | `NBAQ_TG_TOKEN` / `NBAQ_TG_CHAT_ID` | Telegram 机器人 | 未设置=关闭 |
 | `NBAQ_NTFY_TOPIC` | ntfy.sh 主题 | 未设置=关闭 |
+| `NBAQ_ODDS_API_KEY` | The Odds API 多书源（放 `.env` 文件） | 未设置=关闭 |
+| `NBAQ_ODDSAPI_MIN_HOURS` | Odds API 两次拉取最小间隔（小时，省额度） | 20 |
 | `NBAQ_WATCH_INTERVAL` | watch 循环间隔（秒） | 300 |
 | `NBAQ_CLOSING_WINDOW` | 收盘价捕获窗口（分钟） | 10 |
 | `NBAQ_EDGE` / `NBAQ_MIN_EV` | 信号阈值 | 3% / 1% |

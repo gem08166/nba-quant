@@ -63,6 +63,7 @@ app/
   jobs/backup.py     # 每日数据库备份（VACUUM INTO，data/backup/ 滚动 7 份）
   jobs/signal_backtest.py  # 信号级回测：历史 edge 按当时价格入场、收盘快照算 CLV
   ingest/hao.py      # 第二盘口源（好体育亚盘站）：多镜像故障转移 + checksum 自动发现
+  ingest/theodds.py  # The Odds API 多书源客户端（省额度：状态文件限流 + 剩余额度追踪）
   web/               # PWA 前端（index.html/app.js/research.js(研究图表)/live.js(赛时)/bets.js(收益)/styles.css/manifest/sw.js/icon.svg）
 scripts/
   inspect.py       # 查看月度总分/分差均值 + 未完赛场次（文件名会遮蔽标准库inspect，import numpy 的脚本别放本目录直接运行）
@@ -117,7 +118,8 @@ python -m app.cli status                      # 数据量
    已知局限：a) 107 场小样本，弱队效应会漏进球员系数（无 team fixed effects）；b) 上赛季评分未接入（球员流动，先验混合待做）；c) lam 未网格搜索。后续：ORAAM/DRAPM 拆分、把 suggestion 写入 UI
 3. **球员盘（props）**：分钟模型（GBM/分层）+ 负二项产出率 → 蒙特卡洛。ESPN summary 里有球员数据，**现在 players 表和 PBP 管线已就绪**
 4. **自动伤停影响**：给常见球星维护一个 impact 先验表（config 或 DB），Out 时自动扣分
-5. **The Odds API 交叉验证** → **已找到免费替代（2026-11-03 逆向完成）**：好体育（中文亚盘站，tiger-fluid 白标产品）公开接口可站外直调——`tournament/info`(sid=2 篮球，内嵌 matches 列表) + `match/simple`(sid=2&iidList=...&inplay=false，返回 market：`ah` 多档亚盘(港式水位 h/a，欧赔=1+水位)、`ou` 多档大小、`ml`、`1x2`、半场/单队盘)。鉴权头 `x-checksum`=base64("按域名绑定的hex|<镜像域名>|<uuid>|<毫秒>|")，已验证 Python 直调 200。**已确认多镜像：39374.app 与 333ty331.app 是同一产品的不同部署实例（数据逐字节相同、API 主机不同），`app/ingest/hao.py` 已实现跨镜像故障转移 + checksum 自动发现**。对比脚本 `python -m scripts.compare_books`（首日观察：两家价格差 0.02-0.06 级别、大小分 Δ≤1，ESPN 线不算 stale；好体育覆盖 5/14 但包含 ESPN 没盘的场次，互补）。**风险：镜像随时会换，只能当尽力而为的第二源；仅读公开赔率，不注册不登录**。待做：积累一周分歧观察后再决定是否整合进 ingest
+5. **The Odds API 交叉验证** → ✅ 已接入（2026-11-03）：key 放 `.env`（`NBAQ_ODDS_API_KEY`，已 gitignore）。**省额度策略**：状态文件 `data/odds_api_state.json` 控制间隔，默认 20h 内只拉一次（h2h+spreads+totals × us = 3 credits/次 ≈ 90/月）；watch 每日自动 + CLI `odds-api --date [--force]`；每次打印剩余额度（响应头 x-requests-remaining），额度状态持久化。一次请求=多家 bookmaker（DraftKings/FanDuel/Bovada/BetMGM/BetRivers）全部入库 odds_snapshots（book=书名），首日实测 3 credits 入库 150 行、额度剩 497。**待做**：融合定价从"ESPN 单线"升级为"多书去水共识"（数据已就绪）
+5b. **好体育免费亚盘源**（与 Odds API 互补、零额度）：`app/ingest/hao.py` 已逆向并验证——`tournament/info`(sid=2) 内嵌 matches 列表 + `match/simple` 单场盘口（`ah` 多档亚盘/港式水位、`ou` 多档大小、`ml`）；x-checksum=base64("按域名绑定hex|<镜像域名>|<uuid>|<毫秒>|")。**多镜像确认**：39374.app 与 333ty331.app 是同一 tiger-fluid 产品的不同部署实例（数据逐字节相同），hao.py 已实现跨镜像故障转移 + 从首页 HTML 自动发现新 checksum。watch 每日入库（book='hao-tiyu'）；对比脚本 `python -m scripts.compare_books`。首日观察：与 ESPN 价差 0.02-0.06 级别、覆盖 5/14 场但含 ESPN 空缺场次，互补
 6. **注单管理 UI**：现在只有 `/api/bets` 和首页一个统计块，可以加一个"注单"标签页（列表+CLV）
 7. ~~**赛中实时**~~ ✅ v1 已完成（2026-11-03）：**不需要 cdn.nba.com**——ESPN scoreboard 就是实时源（clock 秒数/period/state pre|in|post），summary 的 `winprobability` 给逐 play 主胜率曲线。实现：`app/jobs/live.py`（live_projection：投影=当前比分+赛前模型×剩余时间比例，σ 按 √剩余时间收缩）+ `GET /api/live?date=` + PWA"赛时"标签页（30 秒自动刷新，进行中卡片含 ESPN 胜率条/动量箭头/投影四格/赛前盘口覆盖概率/最近 plays）。**注意：11-03 休赛日，"in 状态"渲染只在合成数据下验证过，11-04 有真实比赛时看一眼**
 8. ~~**小问题：延期赛**~~ ✅ 已修（predict 跳过 `STATUS_POSTPONED/CANCELED`，`SKIP_STATUSES` in predict.py）

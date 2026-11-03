@@ -4,6 +4,11 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+from dotenv import load_dotenv  # noqa: E402
+
+# 支持 .env 文件（gitignore 内，存放 API key 等敏感配置）
+load_dotenv(ROOT / ".env")
 DATA_DIR = Path(os.getenv("NBAQ_DATA_DIR", ROOT / "data"))
 DB_PATH = Path(os.getenv("NBAQ_DB", DATA_DIR / "nba.db"))
 RAW_DIR = DATA_DIR / "raw"
@@ -43,3 +48,8 @@ TELEGRAM_CHAT_ID = os.getenv("NBAQ_TG_CHAT_ID", "")
 
 # Background watch loop
 WATCH_INTERVAL = float(os.getenv("NBAQ_WATCH_INTERVAL", "300"))
+
+# The Odds API（多书源共识，按量计费省着用）
+THE_ODDS_API_KEY = os.getenv("NBAQ_ODDS_API_KEY", "")
+# 两次拉取的最小间隔（小时）：默认 20h = 每天最多 1 次（3 markets × 1 region = 3 credits）
+THE_ODDS_API_MIN_HOURS = float(os.getenv("NBAQ_ODDSAPI_MIN_HOURS", "20"))
