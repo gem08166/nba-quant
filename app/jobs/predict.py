@@ -78,8 +78,14 @@ def _now() -> str:
 
 
 def latest_odds(conn: sqlite3.Connection, game_id: str) -> list[dict]:
+    """最新盘口快照（排除 SBR 收盘归档行——它们是赛后回填的历史数据，
+    用于回测；混入会让对已完赛比赛的重预测产生后验信息泄漏）。"""
     rows = conn.execute(
-        "SELECT * FROM odds_snapshots WHERE game_id=? ORDER BY captured_at, id",
+        """
+        SELECT * FROM odds_snapshots
+        WHERE game_id=? AND book NOT LIKE 'sbr-%'
+        ORDER BY captured_at, id
+        """,
         (game_id,),
     ).fetchall()
     latest: dict[tuple[str, str, str], dict] = {}

@@ -176,6 +176,35 @@ def run(start: str, end: str | None = None) -> dict:
                 "hit_rate": round(wins / len(decided), 4) if decided else None,
             }
 
+        # --- 市场基准（对照组）：收盘线自身的预测误差 + 按收盘公允价下注热门侧的 ROI ---
+        # 预期 ROI ≈ −vig（约 −4.5%）；模型若显著低于此基线即为负贡献。
+        margin_errs, total_errs, baseline_rows = [], [], []
+        for g in month_games:
+            close = closing[g["id"]]
+            sp = close.get("spread", {})
+            if sp.get("home") and sp["home"].get("line") is not None:
+                actual_margin = g["home_score"] - g["away_score"]
+                margin_errs.append(abs(actual_margin - (-sp["home"]["line"])))
+                # 对照：按收盘价下注市场看好的一侧（线为负 = 主队热门）
+                favorite = "home" if sp["home"]["line"] < 0 else "away"
+                price = sp[favorite]["price"]
+                line_side = sp["home"]["line"] if favorite == "home" else -sp["home"]["line"]
+                result = settle_edge("spread", favorite, line_side, g["home_score"], g["away_score"])
+                profit = (price - 1.0) if result == "won" else (-1.0 if result == "lost" else 0.0)
+                baseline_rows.append({"market": "spread", "profit": profit, "result": result})
+            t = close.get("total", {})
+            if t.get("over") and t["over"].get("line") is not None:
+                actual_total = g["home_score"] + g["away_score"]
+                total_errs.append(abs(actual_total - t["over"]["line"]))
+        baseline_decided = [b for b in baseline_rows if b["result"] != "push"]
+        baseline_profit = sum(b["profit"] for b in baseline_rows)
+        market_baseline = {
+            "n_games": len(month_games),
+            "closing_margin_mae": round(float(np.mean(margin_errs)), 2) if margin_errs else None,
+            "closing_total_mae": round(float(np.mean(total_errs)), 2) if total_errs else None,
+            "favorite_bet_roi_at_closing": round(baseline_profit / len(baseline_decided), 4) if baseline_decided else None,
+        }
+
         overall = _agg(rows)
         by_market = {m: _agg([r for r in rows if r["market"] == m]) for m in sorted({r["market"] for r in rows})}
         by_month = {m: _agg([r for r in rows if r["month"] == m]) for m in months}
@@ -185,6 +214,7 @@ def run(start: str, end: str | None = None) -> dict:
             "start": start, "end": end or "latest",
             "n_games": len(games),
             "overall": overall, "by_market": by_market, "by_month": by_month,
+            "market_baseline": market_baseline,
             "rows": rows,
         }
         path = DATA_DIR / "model_clv_report.json"
@@ -199,6 +229,12 @@ def print_report(report: dict) -> None:
     if report.get("error"):
         print(report["error"])
         return
+    mb = report.get("market_baseline") or {}
+    if mb.get("closing_margin_mae"):
+        print(
+            f"市场基准: 收盘线分差 MAE {mb['closing_margin_mae']} · 总分 MAE {mb['closing_total_mae']} · "
+            f"热门侧收盘下注 ROI {mb['favorite_bet_roi_at_closing']:+.2%}"
+        )
     o = report["overall"]
     print(f"模型 vs 收盘线（SBR/FanDuel）: {report['n_games']} 场 · 样本 {o['n']}")
     print(f"  平均 edge {o['mean_edge_vs_closing']:+.2%} (t={o['edge_t_stat']}) · 收盘价下注 ROI {o['roi_at_closing']:+.2%} · 命中 {o['hit_rate']:.1%}")
