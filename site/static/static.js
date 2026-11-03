@@ -75,6 +75,9 @@ function staticApi(path) {
   if (path.startsWith("/api/rapm")) {
     return payload.rapm;
   }
+  if (path.startsWith("/api/model-clv")) {
+    return payload.model_clv || { report: null };
+  }
   if (path.startsWith("/api/trends")) {
     return payload.trends;
   }
