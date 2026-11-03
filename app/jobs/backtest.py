@@ -128,6 +128,7 @@ def run(test_start: str, test_end: str | None = None, out_path: str | None = Non
             raise ValueError("no completed games; run backfill first")
         pregame_elo, _ = ratings.compute_elo(games)
         rest = ratings.compute_rest(games)
+        density = ratings.compute_density(games) if ratings.DENSITY_FEATURES else {}
 
         test_games = [
             game
@@ -148,6 +149,7 @@ def run(test_start: str, test_end: str | None = None, out_path: str | None = Non
                     continue
                 elo_home, elo_away = pregame_elo[game["id"]]
                 rest_home, rest_away = rest[game["id"]]
+                dens_home, dens_away = density.get(game["id"], (0, 0))
                 pred = ratings.predict(
                     model,
                     int(game["home_id"]),
@@ -156,6 +158,8 @@ def run(test_start: str, test_end: str | None = None, out_path: str | None = Non
                     elo_away,
                     rest_home,
                     rest_away,
+                    density_home=dens_home,
+                    density_away=dens_away,
                 )
                 actual_margin = int(game["home_score"]) - int(game["away_score"])
                 actual_total = int(game["home_score"]) + int(game["away_score"])

@@ -485,7 +485,9 @@ def predict_game(
     model: dict,
     elo: dict[int, float],
     rest: dict[int, int],
+    density: dict[int, int] | None = None,
 ) -> dict:
+    density = density or {}
     home_id, away_id = int(game["home_id"]), int(game["away_id"])
     injuries = conn.execute(
         "SELECT team_id, player, status, impact FROM injuries WHERE game_id=?",
@@ -504,6 +506,8 @@ def predict_game(
         rest.get(away_id, 7),
         injury_home,
         injury_away,
+        density.get(home_id, 0),
+        density.get(away_id, 0),
     )
     odds_rows = latest_odds(conn, game["id"])
     book, market = build_market(pred, odds_rows)
@@ -575,7 +579,8 @@ def predict_date(slate_date: str) -> list[dict]:
         elo = ratings.elo_as_of(conn, slate_date)
         team_ids = sorted({int(g["home_id"]) for g in games} | {int(g["away_id"]) for g in games})
         rest = ratings.rest_as_of(conn, slate_date, team_ids)
-        results = [predict_game(conn, game, model, elo, rest) for game in games]
+        density = ratings.density_as_of(conn, slate_date, team_ids)
+        results = [predict_game(conn, game, model, elo, rest, density) for game in games]
         conn.commit()
         return results
     finally:

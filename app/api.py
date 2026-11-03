@@ -443,6 +443,15 @@ def live_get(date: str | None = None, conn: sqlite3.Connection = Depends(get_con
         raise HTTPException(status_code=502, detail=f"ESPN live fetch failed: {exc}") from exc
 
 
+@router.get("/model-clv")
+def model_clv(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """模型 vs 收盘线历史检验报告（基准对照）。"""
+    path = DATA_DIR / "model_clv_report.json"
+    if not path.exists():
+        return {"report": None}
+    return {"report": json.loads(path.read_text(encoding="utf-8"))}
+
+
 @router.get("/trends")
 def trends(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     """Monthly league scoring/margin environment (regular season only)."""

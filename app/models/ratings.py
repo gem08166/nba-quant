@@ -4,6 +4,7 @@ import json
 import math
 import os
 import sqlite3
+from collections import defaultdict
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,13 @@ from ..config import (
 from ..pricing.devig import moneyline_prob
 
 REGULAR_AND_PLAYOFFS = (2, 3)
+
+# 赛程密度特征（背靠背/3 天赛场次差）：路线 B 的首个结构升级实验。
+# 验收结果（2026-11-04，SBR 收盘线 498 样本）：ON 使模型-市场分歧 edge 增大
+# （+6.1%→+9.4%）但收盘价下注 ROI 更差（-11.3%→-12.5%）——分歧处乐观偏差加大，
+# 未通过审查验收标准（β 显著>0 且 ROI 不为负）。默认关闭，代码保留可复现：
+# NBAQ_DENSITY_FEATURES=1 开启。
+DENSITY_FEATURES = os.getenv("NBAQ_DENSITY_FEATURES", "0") == "1"
 
 # Total-points regime recalibration: the weighted ridge (half-life 120d) lags
 # mid-season scoring regime shifts, leaving a systematic total bias. Shift the
@@ -96,6 +104,26 @@ def compute_elo(games: list[dict], k: float = 20.0, home_advantage: float = 100.
     return pregame, ratings
 
 
+def compute_density(games: list[dict], window: int = 3) -> dict[str, tuple[int, int]]:
+    """每场比赛主客队在前 window 天内的已赛场次（赛程密度/疲劳特征）。
+
+    返回 {game_id: (home_density, away_density)}。背靠背 = rest==1 时密度 ≥1。
+    """
+    by_team: dict[int, list[date_cls]] = defaultdict(list)
+    result: dict[str, tuple[int, int]] = {}
+    ordered = sorted(games, key=lambda g: (g["slate_date"], g.get("tipoff") or ""))
+    for g in ordered:
+        day = _d(g["slate_date"])
+        home, away = int(g["home_id"]), int(g["away_id"])
+        window_start = day - timedelta(days=window)
+        home_dens = sum(1 for d0 in by_team.get(home, []) if d0 > window_start)
+        away_dens = sum(1 for d0 in by_team.get(away, []) if d0 > window_start)
+        result[g["id"]] = (home_dens, away_dens)
+        by_team.setdefault(home, []).append(day)
+        by_team.setdefault(away, []).append(day)
+    return result
+
+
 def compute_rest(games: list[dict]) -> dict[str, tuple[int, int]]:
     last: dict[int, date_cls] = {}
     result: dict[str, tuple[int, int]] = {}
@@ -135,9 +163,11 @@ def fit(
 
     pregame_elo, _ = compute_elo(games)
     rest = compute_rest(games)
+    density = compute_density(games) if DENSITY_FEATURES else {}
     teams = sorted({int(g["home_id"]) for g in games} | {int(g["away_id"]) for g in games})
     index = {team: i for i, team in enumerate(teams)}
     n_teams = len(teams)
+    n_density_feats = 4 if DENSITY_FEATURES else 0
 
     X_margin: list[list[float]] = []
     y_margin: list[float] = []
@@ -153,9 +183,19 @@ def fit(
         age = (max_day - _d(game["slate_date"])).days
         weight = 0.5 ** (age / half_life_days)
 
-        row_m = [1.0, elo_home - elo_away, float(rest_home - rest_away)] + [0.0] * n_teams
-        row_m[3 + index[home]] = 1.0
-        row_m[3 + index[away]] = -1.0
+        density_feats: list[float] = []
+        if DENSITY_FEATURES:
+            hd, ad = density.get(game["id"], (0, 0))
+            density_feats = [
+                1.0 if rest_home == 1 else 0.0,
+                1.0 if rest_away == 1 else 0.0,
+                float(hd),
+                float(ad),
+            ]
+
+        row_m = [1.0, elo_home - elo_away, float(rest_home - rest_away)] + density_feats + [0.0] * n_teams
+        row_m[3 + n_density_feats + index[home]] = 1.0
+        row_m[3 + n_density_feats + index[away]] = -1.0
         X_margin.append(row_m)
         y_margin.append(float(game["home_score"] - game["away_score"]))
 
@@ -166,7 +206,10 @@ def fit(
         y_total.append(float(game["home_score"] + game["away_score"]))
         weights.append(weight)
 
-    beta_m = _ridge_solve(X_margin, y_margin, weights, [0.0, 0.0, 0.0] + [lam] * n_teams)
+    beta_m = _ridge_solve(
+        X_margin, y_margin, weights,
+        [0.0, 0.0, 0.0] + [1.0] * n_density_feats + [lam] * n_teams,
+    )
     beta_t = _ridge_solve(X_total, y_total, weights, [0.0] + [lam] * n_teams)
 
     # Recalibrate the total intercept toward the recent league scoring level.
@@ -224,6 +267,11 @@ def fit(
         "margin_intercept": float(beta_m[0]),
         "margin_elo": float(beta_m[1]),
         "margin_rest": float(beta_m[2]),
+        "margin_b2b_home": float(beta_m[3]) if DENSITY_FEATURES else 0.0,
+        "margin_b2b_away": float(beta_m[4]) if DENSITY_FEATURES else 0.0,
+        "margin_density_home": float(beta_m[5]) if DENSITY_FEATURES else 0.0,
+        "margin_density_away": float(beta_m[6]) if DENSITY_FEATURES else 0.0,
+        "density_features": DENSITY_FEATURES,
         "total_intercept": float(beta_t[0]),
         "total_regime_shift": regime_shift,
         "sigma_margin": max(sigma_m * SIGMA_OOS_SCALE_MARGIN, SIGMA_MARGIN_FLOOR),
@@ -243,6 +291,8 @@ def predict(
     rest_away: int,
     injury_home: float = 0.0,
     injury_away: float = 0.0,
+    density_home: int = 0,
+    density_away: int = 0,
 ) -> dict:
     home_params = model["teams"].get(str(home_id), {"net": 0.0, "env": 0.0})
     away_params = model["teams"].get(str(away_id), {"net": 0.0, "env": 0.0})
@@ -251,6 +301,10 @@ def predict(
         model["margin_intercept"]
         + model["margin_elo"] * (elo_home - elo_away)
         + model["margin_rest"] * (rest_home - rest_away)
+        + model.get("margin_b2b_home", 0.0) * (1.0 if rest_home == 1 else 0.0)
+        + model.get("margin_b2b_away", 0.0) * (1.0 if rest_away == 1 else 0.0)
+        + model.get("margin_density_home", 0.0) * density_home
+        + model.get("margin_density_away", 0.0) * density_away
         + home_params["net"]
         - away_params["net"]
         - injury_home
@@ -308,6 +362,24 @@ def elo_as_of(conn: sqlite3.Connection, slate_date: str) -> dict[int, float]:
         return {}
     _, final = compute_elo(games)
     return final
+
+
+def density_as_of(
+    conn: sqlite3.Connection, slate_date: str, team_ids: list[int], window: int = 3
+) -> dict[int, int]:
+    """各队截至 slate_date 前（不含当日）window 天内的已赛场次（赛程密度）。"""
+    day = _d(slate_date)
+    start = day - timedelta(days=window)
+    games = load_finals(conn, before=slate_date)
+    counts = {int(t): 0 for t in team_ids}
+    for game in games:
+        game_day = _d(game["slate_date"])
+        if game_day < start:
+            continue
+        for team in (int(game["home_id"]), int(game["away_id"])):
+            if team in counts:
+                counts[team] += 1
+    return counts
 
 
 def rest_as_of(conn: sqlite3.Connection, slate_date: str, team_ids: list[int]) -> dict[int, int]:

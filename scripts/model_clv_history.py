@@ -77,18 +77,20 @@ def run(start: str, end: str | None = None) -> dict:
             except ValueError:
                 continue
             month_games = [g for g in games if g["slate_date"][:7] == month]
-            pregame_elo, _ = ratings.compute_elo(
-                [g for g in ratings.load_finals(conn) if g["slate_date"] < f"{month}-01"]
-            )
-            rest = ratings.compute_rest(
-                [g for g in ratings.load_finals(conn) if g["slate_date"] < f"{month}-01"]
-            )
+            premonth = [g for g in ratings.load_finals(conn) if g["slate_date"] < f"{month}-01"]
+            pregame_elo, _ = ratings.compute_elo(premonth)
+            rest = ratings.compute_rest(premonth)
+            density = ratings.compute_density(premonth) if model.get("density_features") else {}
             sigma_m = model["sigma_margin"]
             sigma_t = model["sigma_total"]
             for g in month_games:
                 elo_h, elo_a = pregame_elo.get(int(g["home_id"]), 1500.0), pregame_elo.get(int(g["away_id"]), 1500.0)
                 r_h, r_a = rest.get(int(g["home_id"]), 7), rest.get(int(g["away_id"]), 7)
-                pred = ratings.predict(model, int(g["home_id"]), int(g["away_id"]), elo_h, elo_a, r_h, r_a)
+                d_h, d_a = density.get(g["id"], (0, 0))
+                pred = ratings.predict(
+                    model, int(g["home_id"]), int(g["away_id"]), elo_h, elo_a, r_h, r_a,
+                    density_home=d_h, density_away=d_a,
+                )
                 mu_m, mu_t = pred["pred_margin"], pred["pred_total"]
                 close = closing[g["id"]]
 

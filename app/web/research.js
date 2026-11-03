@@ -355,7 +355,40 @@ async function loadResearch() {
 }
 
 // 通用折线图暴露给其他标签页复用（收益页的累计收益曲线）
-window.drawLineChart = drawLineChart;
+// research.js 末尾：路线 A 基准对照面板（模型 vs 收盘线的诚实结论）
+async function loadBaselineCard() {
+  const box = document.getElementById("baseline-card");
+  if (!box) return;
+  try {
+    const data = await api("/api/model-clv");
+    const report = data.report;
+    if (report && report.overall && report.overall.n) {
+      const o = report.overall;
+      const mb = report.market_baseline || {};
+      const bt = (window.STATIC_PAYLOAD?.backtest?.report?.overall) || {};
+      box.innerHTML = `
+        <div class="table-wrap"><table>
+          <thead><tr><th>基准</th><th>分差 MAE</th><th>总分 MAE</th></tr></thead>
+          <tbody>
+            <tr><td>收盘线（SBR/FanDuel）</td><td class="pos">${mb.closing_margin_mae ?? "—"}</td><td class="pos">${mb.closing_total_mae ?? "—"}</td></tr>
+            <tr><td>本模型（walk-forward）</td><td>${bt.margin_mae ?? "—"}</td><td>${bt.total_mae ?? "—"}</td></tr>
+          </tbody>
+        </table></div>
+        <p class="notice" style="border:none;margin-top:8px;padding-top:0">
+          分歧处样本 ${o.n} · 模型融合概率比收盘公允平均高 ${(o.mean_edge_vs_closing * 100).toFixed(1)}pp
+          · 但收盘价下注 ROI ${(o.roi_at_closing * 100).toFixed(1)}%
+          （对照：市场热门侧 ${(mb.favorite_bet_roi_at_closing * 100).toFixed(1)}% ≈ 纯抽水）
+          <br>增量信息回归 β 的 CI 含 0 → 模型相对市场<b>无增量信息</b>；
+          当前信号定位为「模型 vs 市场分歧观察」，不构成下注依据。
+        </p>`;
+    } else {
+      box.textContent = "暂无收盘线检验报告（先运行 scripts/backfill_closing 与 model_clv_history）";
+    }
+  } catch (e) {
+    box.textContent = "基准数据加载失败：" + e.message;
+  }
+}
+window.loadBaselineCard = loadBaselineCard;
 
 // 标签页切换（research.js/live.js 各自暴露 window.loadResearch / window.loadLive，
 // 首次切入时才加载数据）
@@ -368,7 +401,7 @@ document.getElementById("tabs").addEventListener("click", (event) => {
     const panel = document.getElementById(`tab-${name}`);
     if (panel) panel.hidden = name !== target;
   });
-  if (target === "research") window.loadResearch?.();
+  if (target === "research") { window.loadResearch?.(); window.loadBaselineCard?.(); }
   if (target === "live") window.loadLive?.();
   if (target === "bets") window.loadBets?.();
 });

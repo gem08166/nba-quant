@@ -114,6 +114,13 @@ def main() -> None:
             "model": model,
             "backtest": backtest,
         }
+
+        # 模型 vs 收盘线历史检验报告（路线 A 基准对照数据源）
+        mcv_path = DATA_DIR / "model_clv_report.json"
+        if mcv_path.exists():
+            mcv = json.loads(mcv_path.read_text(encoding="utf-8"))
+            mcv.pop("rows", None)  # 裁剪逐场明细
+            payload["model_clv"] = mcv
         (out_dir / "static.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
         # 组装完整可部署站点：web 静态文件 + data
