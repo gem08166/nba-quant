@@ -444,6 +444,16 @@ td.neg { color: var(--muted); }
   border-radius: var(--radius);
 }
 
+/* 静态模式（GitHub Pages）：隐藏写操作 */
+body.static-mode [data-bet],
+body.static-mode [data-confirm-bet],
+body.static-mode [data-save-impact],
+body.static-mode [data-apply-impact],
+body.static-mode #m-submit,
+body.static-mode .form-grid {
+  display: none !important;
+}
+
 @media (max-width: 720px) {
   .wrap { padding: 16px 12px 50px; }
   .topbar { align-items: flex-start; flex-direction: column; }

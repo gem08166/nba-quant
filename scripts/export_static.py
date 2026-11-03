@@ -1,0 +1,111 @@
+"""导出静态 JSON 数据（GitHub Pages / 真·无后端模式）。
+
+直接调用 API 层函数，保证结构与 /api/* 完全一致。输出到 site/data/：
+- board.json     赛前看板（当前比赛日 games+predictions+signals）+ 可用日期列表
+- bets.json      收益分析（summary+curve+台账）
+- research.json  回测报告（裁剪版）+ RAPM 排行 + 月度趋势 + 模型信息
+- meta.json      模式元数据（生成时间、数据版）
+
+用法：python -m scripts.export_static [--date YYYY-MM-DD] [--out site]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+from app import db
+from app.api import bets_analysis, games as api_games, model_info, rapm_top, trends as api_trends
+from app.config import DATA_DIR
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--date", default=None, help="美国比赛日（默认 current_slate_date）")
+    parser.add_argument("--out", default="site", help="输出目录（默认 site/）")
+    args = parser.parse_args()
+
+    out_dir = Path(args.out) / "data"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = db.connect()
+    try:
+        # 默认导出"下一个有比赛的日期"（休赛日导出空板没有意义）
+        slate = args.date
+        if not slate:
+            row = conn.execute(
+                """
+                SELECT slate_date, COUNT(*) AS n FROM games
+                WHERE status NOT IN ('STATUS_POSTPONED','STATUS_CANCELED','STATUS_CANCELLED')
+                  AND slate_date >= date('now')
+                GROUP BY slate_date HAVING n > 0
+                ORDER BY slate_date LIMIT 1
+                """
+            ).fetchone()
+            slate = row["slate_date"] if row else None
+        board = api_games(date=slate, conn=conn)
+        # 可用日期列表（供静态模式自动跳转）
+        date_rows = conn.execute(
+            """
+            SELECT slate_date, COUNT(*) AS n FROM games
+            WHERE status NOT IN ('STATUS_POSTPONED','STATUS_CANCELED','STATUS_CANCELLED')
+            GROUP BY slate_date ORDER BY slate_date
+            """
+        ).fetchall()
+        board["dates"] = [{"date": r["slate_date"], "n": r["n"]} for r in date_rows]
+
+        bets = bets_analysis(conn)
+        trends = api_trends(conn)
+        rapm_data = rapm_top(limit=200, conn=conn)
+        model = model_info(conn)
+
+        # 回测报告：裁剪逐场行（太大），保留 monthly/overall
+        backtest = {"report": None}
+        bt_path = DATA_DIR / "backtest_report.json"
+        if bt_path.exists():
+            full = json.loads(bt_path.read_text(encoding="utf-8"))
+            rows = full.get("rows") or []
+            # 只保留最近 400 场的精简行（散点图/校准用）
+            trimmed = [
+                {k: r[k] for k in ("date", "pred_total", "actual_total", "pred_margin",
+                                    "actual_margin", "home_win_prob", "home_win")}
+                for r in rows[-400:]
+            ]
+            full["rows"] = trimmed
+            backtest = {"report": full}
+
+        payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "board": board,
+            "bets": bets,
+            "trends": trends,
+            "rapm": rapm_data,
+            "model": model,
+            "backtest": backtest,
+        }
+        (out_dir / "static.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        # 组装完整可部署站点：web 静态文件 + data
+        import shutil
+
+        site_root = Path(args.out)
+        web_src = Path(__file__).resolve().parents[1] / "app" / "web"
+        static_dir = site_root / "static"
+        if static_dir.exists():
+            shutil.rmtree(static_dir)
+        shutil.copytree(web_src, static_dir)
+        for name in ("index.html", "manifest.webmanifest"):
+            if (web_src / name).exists():
+                shutil.copy2(web_src / name, site_root / name)
+
+        print(f"exported: {out_dir / 'static.json'}")
+        print(f"  board: {board['date']} {board['count']} games, signals={board['signals']}")
+        print(f"  bets: {bets['summary']['settled']} settled, curve={len(bets['curve'])}")
+        print(f"  site ready: {site_root} (index.html + static/ + data/)")
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    main()

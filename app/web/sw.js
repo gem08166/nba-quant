@@ -1,13 +1,14 @@
 const CACHE = "nbaq-v10";
 const ASSETS = [
-  "/",
-  "/static/styles.css",
-  "/static/app.js",
-  "/static/research.js",
-  "/static/live.js",
-  "/static/bets.js",
-  "/static/icon.svg",
-  "/manifest.webmanifest",
+  "./",
+  "static/styles.css",
+  "static/app.js",
+  "static/research.js",
+  "static/live.js",
+  "static/bets.js",
+  "static/static.js",
+  "static/icon.svg",
+  "manifest.webmanifest",
 ];
 
 self.addEventListener("install", (event) => {

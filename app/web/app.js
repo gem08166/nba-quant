@@ -16,6 +16,13 @@ function esc(value) {
 }
 
 async function api(path, options = {}) {
+  await detectMode();
+  if (window.APP_MODE === "static") {
+    if (options.method && options.method !== "GET") {
+      throw new Error("静态模式为只读（数据由 GitHub Actions 定时更新）");
+    }
+    return staticApi(path);
+  }
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,
@@ -594,7 +601,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
 load();

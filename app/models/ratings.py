@@ -20,8 +20,9 @@ REGULAR_AND_PLAYOFFS = (2, 3)
 # The recent average uses exponential weighting (recency half-life below) over
 # a lookback window, so the estimate tracks mid-month swings instead of
 # averaging them flat like a fixed window does.
-TOTAL_REGIME_WINDOW = int(os.getenv("NBAQ_TOTAL_REGIME_WINDOW", "45"))
-TOTAL_REGIME_HALFLIFE = float(os.getenv("NBAQ_TOTAL_REGIME_HALFLIFE", "10"))
+TOTAL_REGIME_WINDOW = int(os.getenv("NBAQ_TOTAL_REGIME_WINDOW", "30"))
+# 9999 = 窗口内纯平均（回测最优：MAE 15.31/RMSE 19.15/bias +0.76；滑动加权实测更差）
+TOTAL_REGIME_HALFLIFE = float(os.getenv("NBAQ_TOTAL_REGIME_HALFLIFE", "9999"))
 TOTAL_REGIME_BLEND = float(os.getenv("NBAQ_TOTAL_REGIME_BLEND", "1.0"))
 TOTAL_REGIME_MIN_GAMES = int(os.getenv("NBAQ_TOTAL_REGIME_MIN_GAMES", "10"))
 # Skip recalibration across an offseason: last season's scoring regime says

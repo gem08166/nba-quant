@@ -111,7 +111,11 @@ async function loadLive(force = false) {
   const status = document.getElementById("live-status");
   dot.classList.add("on");
   try {
-    const data = await api(`/api/live?date=${encodeURIComponent(state.date)}`);
+    await detectMode();
+    const data =
+      window.APP_MODE === "static"
+        ? await espnLive(state.date)
+        : await api(`/api/live?date=${encodeURIComponent(state.date)}`);
     const box = document.getElementById("live-games");
     const inPlay = data.games.filter((g) => g.state === "in").length;
     if (!data.games.length) {
