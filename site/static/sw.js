@@ -30,6 +30,19 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+const CACHE = "nbaq-v12";
+const ASSETS = [
+  "./",
+  "static/styles.css",
+  "static/app.js",
+  "static/research.js",
+  "static/live.js",
+  "static/bets.js",
+  "static/static.js",
+  "static/icon.svg",
+  "manifest.webmanifest",
+];
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
@@ -47,6 +60,20 @@ self.addEventListener("fetch", (event) => {
             })
         )
       )
+    );
+    return;
+  }
+
+  // 数据文件：network-first（Actions 会更新数据，缓存只作离线兜底）
+  if (url.pathname.includes("/data/")) {
+    event.respondWith(
+      fetch(event.request)
+        .then((resp) => {
+          const copy = resp.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          return resp;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || Response.error()))
     );
     return;
   }
