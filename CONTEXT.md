@@ -129,4 +129,5 @@ python -m app.cli status                      # 数据量
 - `predictions` 表每次 predict 都插新行（保留历史），API/脚本永远取最新一条；新写查询时注意
 - settle 的 CLV 依赖"开赛前"的快照（按 tipoff 过滤时间戳），手动测试可用 `seed_bet.py --closing-price` 模拟
 - ESPN 接口字段是宽松解析的（tolerant parser），遇到解析失败先看 `data/raw/<date>/` 里存的原始 JSON
-- 本项目无 git；如需版本管理建议 `git init` 后把 `data/`（除 nba.db 外）加进 .gitignore
+- 版本管理：✅ git 已初始化（`data/`、`.venv`、日志已 gitignore；改完代码 `git add -A && git commit`）
+- 本项目数据库已纳入每日自动备份（data/backup/ 滚动 7 份）
