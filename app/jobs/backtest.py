@@ -97,6 +97,26 @@ def _ou_result(conn: sqlite3.Connection, game: dict, pred_total: float) -> bool 
     return actual_over == model_over
 
 
+def _calibration(rows: list[dict]) -> list[dict]:
+    """可靠性诊断：按预测概率分桶，比较预测均值与实际胜率（isotonic 校准的依据）。"""
+    buckets: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        buckets[min(int(r["home_win_prob"] * 10), 9)].append(r)
+    out = []
+    for b in sorted(buckets):
+        items = buckets[b]
+        mean_p = sum(i["home_win_prob"] for i in items) / len(items)
+        actual = sum(i["home_win"] for i in items) / len(items)
+        out.append({
+            "bucket": f"{b * 10}-{b * 10 + 10}%",
+            "mean_prob": round(mean_p, 3),
+            "actual": round(actual, 3),
+            "gap": round(mean_p - actual, 3),
+            "n": len(items),
+        })
+    return out
+
+
 def run(test_start: str, test_end: str | None = None, out_path: str | None = None) -> dict:
     conn = db.connect()
     try:
@@ -156,6 +176,7 @@ def run(test_start: str, test_end: str | None = None, out_path: str | None = Non
             "test_end": test_end,
             "overall": _metrics(rows),
             "monthly": {month: _metrics(items) for month, items in sorted(monthly.items())},
+            "calibration": _calibration(rows),
             "rows": rows,
         }
         path = out_path or str(DATA_DIR / "backtest_report.json")
