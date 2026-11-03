@@ -4,6 +4,8 @@ on:
   schedule:
     # UTC 02:00 / 08:00 = 北京时间 10:00 / 16:00
     - cron: "0 2,8 * * *"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
