@@ -7,12 +7,14 @@ build/
 dist/
 
 # 数据与运行时产物（Actions 云端计算的基底 + 静态站数据随仓库走）
-data/
-!data/backup/.gitkeep
-# Actions 每次运行会更新并提交这三个文件
+# 注意：用 /* 而不是 data/，否则子文件例外不生效
+data/*
 !data/nba.db
 !data/odds_api_state.json
 !data/hoops_state.json
+!data/backup/
+data/backup/*
+!data/backup/.gitkeep
 *.log
 tmp_*.py
 
