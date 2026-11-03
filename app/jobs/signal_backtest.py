@@ -103,6 +103,111 @@ def settle_edge(market: str, side: str, line: float | None, home_score: int, awa
     return "push"
 
 
+def closing_comparison(conn: sqlite3.Connection) -> dict:
+    """模型 vs 收盘共识：对每场已完赛且有盘口快照的比赛，比较模型融合概率与
+    收盘多书共识公允概率（edge = 模型概率 − 共识公允），并模拟在收盘价下注的 ROI。
+    这是"模型是否跑赢市场"的标准度量，不依赖信号触发，样本=所有有快照的完赛场。"""
+    from .predict import consensus_market
+
+    games = conn.execute(
+        """
+        SELECT id, slate_date, tipoff, home_score, away_score FROM games
+        WHERE home_score IS NOT NULL AND away_score IS NOT NULL
+        """
+    ).fetchall()
+    rows: list[dict] = []
+    for game in games:
+        tip = _parse_ts(game["tipoff"])
+        pred = conn.execute(
+            "SELECT * FROM predictions WHERE game_id=? ORDER BY id DESC LIMIT 1", (game["id"],)
+        ).fetchone()
+        if not pred or not tip:
+            continue
+        try:
+            details = json.loads(pred["details"])
+        except (TypeError, ValueError):
+            continue
+        probs = details.get("probabilities") or {}
+        snapshot_rows = conn.execute(
+            "SELECT * FROM odds_snapshots WHERE game_id=?", (game["id"],)
+        ).fetchall()
+        # 只保留开赛前（收盘）的快照，再按 (book, market, side) 取最新
+        latest: dict[tuple[str, str, str], dict] = {}
+        for row in snapshot_rows:
+            captured = _parse_ts(row["captured_at"])
+            if captured and captured <= tip:
+                latest[(row["book"], row["market"], row["side"])] = dict(row)
+        if not latest:
+            continue
+        cons = consensus_market(list(latest.values()))
+
+        def _bet(market: str, model_prob: float | None, side_a: str, side_b: str) -> dict | None:
+            cons_m = cons.get(market)
+            if not cons_m or model_prob is None:
+                return None
+            fair_a = cons_m.get("fair_" + side_a)
+            fair_b = cons_m.get("fair_" + side_b)
+            if fair_a is None or fair_b is None:
+                return None
+            # 模型选边：模型概率高的一侧
+            if market == "spread" or market == "total":
+                take_a = model_prob >= 0.5
+            else:
+                take_a = model_prob >= 0.5
+            side = side_a if take_a else side_b
+            fair = fair_a if take_a else fair_b
+            price = cons_m.get(f"{side_a}_price" if take_a else f"{side_b}_price")
+            if not price:
+                return None
+            line = cons_m.get("line")
+            result = settle_edge(
+                market,
+                side if market != "total" else side,
+                line,
+                game["home_score"],
+                game["away_score"],
+            )
+            profit = (price - 1.0) if result == "won" else (-1.0 if result == "lost" else 0.0)
+            return {
+                "game_id": game["id"],
+                "slate_date": game["slate_date"],
+                "market": market,
+                "side": side,
+                "model_prob": model_prob,
+                "closing_fair": fair,
+                "edge": model_prob - fair,
+                "price": price,
+                "result": result,
+                "profit": profit,
+            }
+
+        for market, model_prob, side_a, side_b in (
+            ("spread", probs.get("spread_home"), "home", "away"),
+            ("total", probs.get("total_over"), "over", "under"),
+            ("moneyline", probs.get("moneyline_home"), "home", "away"),
+        ):
+            bet = _bet(market, model_prob, side_a, side_b)
+            if bet:
+                rows.append(bet)
+
+    def _agg(items: list[dict]) -> dict:
+        decided = [i for i in items if i["result"] != "push"]
+        wins = sum(1 for i in decided if i["result"] == "won")
+        profit = sum(i["profit"] for i in items)
+        mean_edge = sum(i["edge"] for i in items) / len(items) if items else None
+        return {
+            "n": len(items),
+            "wins": wins,
+            "roi": round(profit / len(decided), 4) if decided else None,
+            "mean_edge_vs_closing": round(mean_edge, 4) if mean_edge is not None else None,
+        }
+
+    by_market = {}
+    for market in sorted({r["market"] for r in rows}):
+        by_market[market] = _agg([r for r in rows if r["market"] == market])
+    return {"n_games": len({r["game_id"] for r in rows}), "overall": _agg(rows), "by_market": by_market}
+
+
 def run(start: str | None = None, end: str | None = None) -> dict:
     conn = db.connect()
     try:
@@ -195,6 +300,7 @@ def run(start: str | None = None, end: str | None = None) -> dict:
             "overall": _aggregate(settled_rows),
             "by_market": by_market,
             "skipped_no_entry_snapshot": skipped_no_entry,
+            "closing_comparison": closing_comparison(conn),
             "rows": settled_rows,
         }
         path = DATA_DIR / "signal_backtest.json"
@@ -206,6 +312,21 @@ def run(start: str | None = None, end: str | None = None) -> dict:
 
 
 def print_report(report: dict) -> None:
+    closing = report.get("closing_comparison") or {}
+    if closing.get("overall", {}).get("n"):
+        overall = closing["overall"]
+        print(
+            f"模型 vs 收盘共识: {closing['n_games']} 场 · 样本 {overall['n']} · "
+            f"平均edge {overall['mean_edge_vs_closing']:+.2%} · 收盘价下注 ROI {overall['roi']:+.2%}"
+        )
+        for market, stats in closing["by_market"].items():
+            if stats["n"]:
+                print(
+                    f"  {market}: n={stats['n']} edge {stats['mean_edge_vs_closing']:+.2%} "
+                    f"ROI {stats['roi']:+.2%}"
+                )
+    else:
+        print("模型 vs 收盘共识：暂无带快照的完赛场次（数据从现在开始积累）")
     overall = report["overall"]
     if not overall["n"]:
         print(

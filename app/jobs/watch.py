@@ -120,6 +120,17 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                     print(f"[watch] {message}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[watch] odds-api skipped: {exc}")
+                # HoopsAPI：upcoming 建映射 + 完赛归档收盘价（含 Pinnacle）
+                try:
+                    from ..ingest import hoops
+
+                    stats_hoops = hoops.sync_games(conn)
+                    conn.commit()
+                    arch = hoops.archive_closing(conn)
+                    conn.commit()
+                    print(f"[watch] hoops: {stats_hoops} archived={arch}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] hoops skipped: {exc}")
                 # PBP for the last two slates (late West Coast games finish
                 # after the slate flips; backfill_pbp is idempotent).
                 try:

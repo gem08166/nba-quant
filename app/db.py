@@ -150,6 +150,16 @@ CREATE TABLE IF NOT EXISTS rapm_models (
     n_stints   INTEGER,
     params     TEXT NOT NULL
 );
+
+-- HoopsAPI 比赛映射：hoops 的 game_id ↔ 本库（ESPN）game_id。
+-- 比赛完赛后用 hoops_id 从归档拉多书收盘价。
+CREATE TABLE IF NOT EXISTS hoops_games (
+    hoops_id    TEXT PRIMARY KEY,
+    espn_game_id TEXT NOT NULL,
+    start_time  TEXT,
+    archived    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_hoops_unarchived ON hoops_games(archived);
 """
 
 
@@ -167,9 +177,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         row["name"]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
-    if not {"players", "pbp_plays", "starters", "rapm_models"} <= tables:
-        conn.executescript(
-        """
+    if not {"players", "pbp_plays", "starters", "rapm_models", "hoops_games"} <= tables:
+        conn.executescript(        """
         CREATE TABLE IF NOT EXISTS players (
             id         INTEGER PRIMARY KEY,
             name       TEXT NOT NULL,
@@ -204,6 +213,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             n_stints   INTEGER,
             params     TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS hoops_games (
+            hoops_id     TEXT PRIMARY KEY,
+            espn_game_id TEXT NOT NULL,
+            start_time   TEXT,
+            archived     INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_hoops_unarchived ON hoops_games(archived);
         """
     )
     conn.commit()

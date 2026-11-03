@@ -117,6 +117,24 @@ def cmd_odds_api(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_hoops_sync(_: argparse.Namespace) -> None:
+    """HoopsAPI：映射建立 + upcoming 主盘 + 完赛收盘归档。"""
+    from .ingest import hoops
+
+    conn = db.connect()
+    try:
+        stats = hoops.sync_games(conn)
+        conn.commit()
+        print(f"hoops sync: {stats}")
+        archive = hoops.archive_closing(conn)
+        conn.commit()
+        print(f"hoops archive: {archive}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"hoops sync failed: {exc}")
+    finally:
+        conn.close()
+
+
 def cmd_predict(args: argparse.Namespace) -> None:
     results = predict_date(args.date)
     print(f"predictions: {len(results)}")
@@ -279,6 +297,8 @@ def build_parser() -> argparse.ArgumentParser:
     oa.add_argument("--date", default=None)
     oa.add_argument("--force", action="store_true", help="ignore the min-interval guard")
     oa.set_defaults(func=cmd_odds_api)
+
+    sub.add_parser("hoops-sync", help="HoopsAPI: map games, store main odds, archive closing odds").set_defaults(func=cmd_hoops_sync)
 
     predict = sub.add_parser("predict", help="predict a slate and compute edges")
     predict.add_argument("--date", required=True)

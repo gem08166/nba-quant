@@ -8,6 +8,7 @@ from collections import defaultdict
 from .. import db
 from ..config import DATA_DIR
 from ..models import ratings
+from .predict import consensus_market
 
 
 def _metrics(rows: list[dict]) -> dict:
@@ -41,40 +42,58 @@ def _metrics(rows: list[dict]) -> dict:
 
 
 def _ats_result(conn: sqlite3.Connection, game: dict, pred_margin: float, home_prob: float) -> bool | None:
-    row = conn.execute(
-        """
-        SELECT line FROM odds_snapshots
-        WHERE game_id=? AND market='spread' AND side='home'
-        ORDER BY id DESC LIMIT 1
-        """,
-        (game["id"],),
-    ).fetchone()
-    if not row or row["line"] is None:
-        return None
+    """让分方向命中：用多书共识线（无共识时退回最新单线）。"""
+    rows = conn.execute(
+        "SELECT * FROM odds_snapshots WHERE game_id=? AND market='spread'", (game["id"],)
+    ).fetchall()
+    cons = consensus_market([dict(r) for r in rows]).get("spread")
+    if cons and cons.get("line") is not None:
+        line = cons["line"]
+    else:
+        row = conn.execute(
+            """
+            SELECT line FROM odds_snapshots
+            WHERE game_id=? AND market='spread' AND side='home'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (game["id"],),
+        ).fetchone()
+        if not row or row["line"] is None:
+            return None
+        line = row["line"]
     actual_margin = int(game["home_score"]) - int(game["away_score"])
-    if actual_margin + row["line"] == 0:
+    if actual_margin + line == 0:
         return None
-    home_covered = actual_margin + row["line"] > 0
+    home_covered = actual_margin + line > 0
     model_home = home_prob >= 0.5
     return home_covered == model_home
 
 
 def _ou_result(conn: sqlite3.Connection, game: dict, pred_total: float) -> bool | None:
-    row = conn.execute(
-        """
-        SELECT line FROM odds_snapshots
-        WHERE game_id=? AND market='total' AND side='over'
-        ORDER BY id DESC LIMIT 1
-        """,
-        (game["id"],),
-    ).fetchone()
-    if not row or row["line"] is None:
-        return None
+    """大小分方向命中：用多书共识线（无共识时退回最新单线）。"""
+    rows = conn.execute(
+        "SELECT * FROM odds_snapshots WHERE game_id=? AND market='total'", (game["id"],)
+    ).fetchall()
+    cons = consensus_market([dict(r) for r in rows]).get("total")
+    if cons and cons.get("line") is not None:
+        line = cons["line"]
+    else:
+        row = conn.execute(
+            """
+            SELECT line FROM odds_snapshots
+            WHERE game_id=? AND market='total' AND side='over'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (game["id"],),
+        ).fetchone()
+        if not row or row["line"] is None:
+            return None
+        line = row["line"]
     actual_total = int(game["home_score"]) + int(game["away_score"])
-    if actual_total == row["line"]:
+    if actual_total == line:
         return None
-    actual_over = actual_total > row["line"]
-    model_over = pred_total > row["line"]
+    actual_over = actual_total > line
+    model_over = pred_total > line
     return actual_over == model_over
 
 

@@ -53,3 +53,6 @@ WATCH_INTERVAL = float(os.getenv("NBAQ_WATCH_INTERVAL", "300"))
 THE_ODDS_API_KEY = os.getenv("NBAQ_ODDS_API_KEY", "")
 # 两次拉取的最小间隔（小时）：默认 20h = 每天最多 1 次（3 markets × 1 region = 3 credits）
 THE_ODDS_API_MIN_HOURS = float(os.getenv("NBAQ_ODDSAPI_MIN_HOURS", "20"))
+
+# HoopsAPI（多书盘口 + 完赛收盘归档，含 Pinnacle）
+HOOPS_API_KEY = os.getenv("HOOPS_API_KEY", "")
