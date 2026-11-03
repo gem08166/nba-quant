@@ -41,8 +41,9 @@ def _metrics(rows: list[dict]) -> dict:
     }
 
 
-def _ats_result(conn: sqlite3.Connection, game: dict, pred_margin: float, home_prob: float) -> bool | None:
-    """让分方向命中：用多书共识线（无共识时退回最新单线）。"""
+def _ats_result(conn: sqlite3.Connection, game: dict, sigma_margin: float, pred_margin: float) -> bool | None:
+    """让分方向命中：与生产信号同口径——用融合定价的 cover_prob 判定
+    （第三方审查 P1-2：旧实现用 ML 概率 0.5 判方向，与让分口径错配）。"""
     rows = conn.execute(
         "SELECT * FROM odds_snapshots WHERE game_id=? AND market='spread'", (game["id"],)
     ).fetchall()
@@ -61,11 +62,13 @@ def _ats_result(conn: sqlite3.Connection, game: dict, pred_margin: float, home_p
         if not row or row["line"] is None:
             return None
         line = row["line"]
+    from ..pricing.devig import cover_prob
+
+    model_home = cover_prob(pred_margin, line, sigma_margin) >= 0.5
     actual_margin = int(game["home_score"]) - int(game["away_score"])
     if actual_margin + line == 0:
         return None
     home_covered = actual_margin + line > 0
-    model_home = home_prob >= 0.5
     return home_covered == model_home
 
 
@@ -166,7 +169,7 @@ def run(test_start: str, test_end: str | None = None, out_path: str | None = Non
                     "actual_total": actual_total,
                     "home_win": 1 if actual_margin > 0 else 0,
                 }
-                row["ats_hit"] = _ats_result(conn, game, pred["pred_margin"], pred["home_win_prob"])
+                row["ats_hit"] = _ats_result(conn, game, pred["sigma_margin"], pred["pred_margin"])
                 row["ou_hit"] = _ou_result(conn, game, pred["pred_total"])
                 rows.append(row)
                 monthly[month].append(row)

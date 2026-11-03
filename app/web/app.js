@@ -91,14 +91,22 @@ function edgeText(edge, game) {
   return `${label} · ${side}${line} @ ${fmtPrice(edge.price)} · EV ${fmtSignedPct(edge.ev)}`;
 }
 
+function noOdds(game) {
+  return !game.prediction?.lines?.spread && !game.prediction?.lines?.total;
+}
+
 function renderStats(data) {
+  const gamesWithEdges = data.games.filter((game) => (game.edges || []).some((e) => e.signal));
   const allEdges = data.games.flatMap((game) => game.edges || []);
   const signals = allEdges.filter((edge) => edge.signal);
   const best = signals.sort((a, b) => b.ev - a.ev)[0];
+  const noOdds = data.games.filter((game) => !game.prediction?.lines?.spread && !game.prediction?.lines?.total).length;
   $("#stats").innerHTML = `
     <div class="stat"><div class="k">比赛</div><div class="v">${data.count}</div></div>
-    <div class="stat"><div class="k">正 EV 信号</div><div class="v ${signals.length ? "green" : ""}">${signals.length}</div></div>
+    <div class="stat"><div class="k">信号场次</div><div class="v ${gamesWithEdges.length ? "green" : ""}">${gamesWithEdges.length}</div></div>
+    <div class="stat"><div class="k">信号条数</div><div class="v">${signals.length}</div></div>
     <div class="stat"><div class="k">最佳 EV</div><div class="v ${best ? "green" : ""}">${best ? fmtSignedPct(best.ev) : "—"}</div></div>
+    <div class="stat"><div class="k">无盘口场次</div><div class="v" style="color:${noOdds ? "var(--muted)" : "inherit"}">${noOdds}</div></div>
     <div class="stat"><div class="k">日期</div><div class="v" style="font-size:14px">${esc(data.date)}</div></div>
   `;
 }
@@ -126,7 +134,9 @@ function renderGames(games) {
           : "";
       const badge = best
         ? `<div class="edge-badge"><span class="label">${edgeText(best, game)}</span><span class="ev">${fmtSignedPct(best.ev)}</span></div>`
-        : `<div class="edge-badge muted"><span>暂无正 EV 信号</span><span>—</span></div>`;
+        : noOdds(game)
+          ? `<div class="edge-badge muted"><span>暂无盘口报价</span><span>—</span></div>`
+          : `<div class="edge-badge muted"><span>暂无正 EV 信号</span><span>—</span></div>`;
       return `
         <article class="card ${best && best.signal ? "signal" : ""}" data-game="${esc(game.id)}">
           <div class="card-top">

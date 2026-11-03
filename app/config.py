@@ -15,7 +15,7 @@ RAW_DIR = DATA_DIR / "raw"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 # Decision thresholds
-EDGE_THRESHOLD = float(os.getenv("NBAQ_EDGE", "0.03"))
+EDGE_THRESHOLD = float(os.getenv("NBAQ_EDGE", "0.05"))
 MIN_EV = float(os.getenv("NBAQ_MIN_EV", "0.01"))
 KELLY_FRACTION = float(os.getenv("NBAQ_KELLY", "0.25"))
 MAX_STAKE_PCT = float(os.getenv("NBAQ_MAX_STAKE", "0.03"))
@@ -28,6 +28,10 @@ MARKET_BLEND = float(os.getenv("NBAQ_MARKET_BLEND", "0.55"))
 # Uncertainty floors (points). Calibrate these with backtest data.
 SIGMA_MARGIN_FLOOR = float(os.getenv("NBAQ_SIGMA_MARGIN", "10.5"))
 SIGMA_TOTAL_FLOOR = float(os.getenv("NBAQ_SIGMA_TOTAL", "13.5"))
+# σ 样本外缩放：样本内残差系统性低估样本外误差（实测 margin 14.51 vs RMSE 15.21），
+# 用 walk-forward RMSE 比值放大，消除定价过度自信（第三方审查 P1-4）。
+SIGMA_OOS_SCALE_MARGIN = float(os.getenv("NBAQ_SIGMA_SCALE_MARGIN", "1.048"))
+SIGMA_OOS_SCALE_TOTAL = float(os.getenv("NBAQ_SIGMA_SCALE_TOTAL", "1.014"))
 
 # Optional bearer token for the API. Empty = disabled (personal LAN use).
 API_TOKEN = os.getenv("NBAQ_TOKEN", "")

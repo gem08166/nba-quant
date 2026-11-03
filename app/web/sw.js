@@ -1,4 +1,4 @@
-const CACHE = "nbaq-v11";
+const CACHE = "nbaq-v13";
 const ASSETS = [
   "./",
   "static/styles.css",
@@ -29,19 +29,6 @@ self.addEventListener("activate", (event) => {
       .then(() => self.clients.claim())
   );
 });
-
-const CACHE = "nbaq-v12";
-const ASSETS = [
-  "./",
-  "static/styles.css",
-  "static/app.js",
-  "static/research.js",
-  "static/live.js",
-  "static/bets.js",
-  "static/static.js",
-  "static/icon.svg",
-  "manifest.webmanifest",
-];
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;

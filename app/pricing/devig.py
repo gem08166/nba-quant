@@ -44,15 +44,16 @@ def devig_multiplicative(prices: list[float]) -> list[float]:
     return [p / total for p in implied]
 
 
-def fair_two_way(price_a: float | None, price_b: float | None) -> tuple[float, float]:
+def fair_two_way(price_a: float | None, price_b: float | None) -> tuple[float, float] | None:
     """Return fair probabilities for a two-sided market.
 
-    If prices are missing, fall back to 50/50 at the quoted line.
+    单边报价返回 None（无法去水）——调用方应跳过该侧 edge，
+    否则 0.5/0.5 的伪公允概率会与单边价格组合出假信号。
     """
     if price_a and price_b and price_a > 1.0 and price_b > 1.0:
         a, b = devig_multiplicative([price_a, price_b])
         return a, b
-    return 0.5, 0.5
+    return None
 
 
 def cover_prob(mu_margin: float, home_line: float, sigma: float) -> float:

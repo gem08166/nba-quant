@@ -9,7 +9,12 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from ..config import SIGMA_MARGIN_FLOOR, SIGMA_TOTAL_FLOOR
+from ..config import (
+    SIGMA_MARGIN_FLOOR,
+    SIGMA_OOS_SCALE_MARGIN,
+    SIGMA_OOS_SCALE_TOTAL,
+    SIGMA_TOTAL_FLOOR,
+)
 from ..pricing.devig import moneyline_prob
 
 REGULAR_AND_PLAYOFFS = (2, 3)
@@ -221,8 +226,8 @@ def fit(
         "margin_rest": float(beta_m[2]),
         "total_intercept": float(beta_t[0]),
         "total_regime_shift": regime_shift,
-        "sigma_margin": max(sigma_m, SIGMA_MARGIN_FLOOR),
-        "sigma_total": max(sigma_t, SIGMA_TOTAL_FLOOR),
+        "sigma_margin": max(sigma_m * SIGMA_OOS_SCALE_MARGIN, SIGMA_MARGIN_FLOOR),
+        "sigma_total": max(sigma_t * SIGMA_OOS_SCALE_TOTAL, SIGMA_TOTAL_FLOOR),
         "raw_sigma_margin": sigma_m,
         "raw_sigma_total": sigma_t,
     }
