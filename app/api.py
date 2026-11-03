@@ -1,0 +1,467 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from . import db
+from .config import DATA_DIR
+from .dates import current_slate_date
+from .ingest.service import insert_odds
+from .jobs import live
+from .jobs.predict import latest_odds, latest_prediction, predict_date
+from .jobs.settle import summarize
+from .models import rapm
+
+router = APIRouter(prefix="/api")
+
+
+def get_conn():
+    conn = db.connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _game_payload(row: sqlite3.Row, prediction: dict | None) -> dict:
+    payload = {
+        "id": row["id"],
+        "tipoff": row["tipoff"],
+        "status": row["status"],
+        "status_detail": row["status_detail"],
+        "season": row["season"],
+        "home": {"id": row["home_id"], "abbrev": row["home_abbrev"], "name": row["home_name"]},
+        "away": {"id": row["away_id"], "abbrev": row["away_abbrev"], "name": row["away_name"]},
+        "home_score": row["home_score"],
+        "away_score": row["away_score"],
+        "prediction": None,
+        "edges": [],
+        "best_edge": None,
+    }
+    if prediction:
+        details = prediction["details"]
+        payload["prediction"] = {
+            "pred_margin": prediction["pred_margin"],
+            "sigma_margin": prediction["sigma_margin"],
+            "pred_total": prediction["pred_total"],
+            "sigma_total": prediction["sigma_total"],
+            "home_win_prob": prediction["home_win_prob"],
+            "book": details.get("book"),
+            "lines": details.get("lines"),
+            "probabilities": details.get("probabilities"),
+            "pricing": details.get("pricing"),
+            "created_at": prediction["created_at"],
+        }
+        payload["edges"] = details.get("edges", [])
+        payload["best_edge"] = payload["edges"][0] if payload["edges"] else None
+    return payload
+
+
+@router.get("/health")
+def health(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    games = conn.execute("SELECT COUNT(*) AS n FROM games").fetchone()["n"]
+    return {"ok": True, "games": games, "time": _now()}
+
+
+@router.get("/games")
+def games(
+    date: str | None = None,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    slate = date or current_slate_date()
+    rows = conn.execute(
+        """
+        SELECT g.*, h.abbrev AS home_abbrev, h.name AS home_name,
+               a.abbrev AS away_abbrev, a.name AS away_name
+        FROM games g
+        JOIN teams h ON h.id = g.home_id
+        JOIN teams a ON a.id = g.away_id
+        WHERE g.slate_date = ?
+        ORDER BY COALESCE(g.tipoff, '')
+        """,
+        (slate,),
+    ).fetchall()
+    items = []
+    for row in rows:
+        prediction = latest_prediction(conn, row["id"])
+        items.append(_game_payload(row, prediction))
+    signals = [
+        edge
+        for item in items
+        for edge in item["edges"]
+        if edge.get("signal")
+    ]
+    return {"date": slate, "count": len(items), "signals": len(signals), "games": items}
+
+
+@router.get("/edges")
+def edges(
+    date: str | None = None,
+    min_ev: float = 0.0,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    slate = date or current_slate_date()
+    rows = conn.execute(
+        """
+        SELECT g.*, h.abbrev AS home_abbrev, a.abbrev AS away_abbrev
+        FROM games g
+        JOIN teams h ON h.id = g.home_id
+        JOIN teams a ON a.id = g.away_id
+        WHERE g.slate_date = ?
+        ORDER BY COALESCE(g.tipoff, '')
+        """,
+        (slate,),
+    ).fetchall()
+    out = []
+    for row in rows:
+        prediction = latest_prediction(conn, row["id"])
+        if not prediction:
+            continue
+        for item in prediction["details"].get("edges", []):
+            if not item.get("signal") or item.get("ev", 0) < min_ev:
+                continue
+            out.append(
+                {
+                    "game_id": row["id"],
+                    "tipoff": row["tipoff"],
+                    "matchup": f"{row['away_abbrev']} @ {row['home_abbrev']}",
+                    **item,
+                }
+            )
+    out.sort(key=lambda item: item["ev"], reverse=True)
+    return {"date": slate, "count": len(out), "edges": out}
+
+
+@router.get("/games/{game_id}")
+def game_detail(game_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    row = conn.execute(
+        """
+        SELECT g.*, h.abbrev AS home_abbrev, h.name AS home_name,
+               a.abbrev AS away_abbrev, a.name AS away_name
+        FROM games g
+        JOIN teams h ON h.id = g.home_id
+        JOIN teams a ON a.id = g.away_id
+        WHERE g.id = ?
+        """,
+        (game_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="game not found")
+
+    prediction = latest_prediction(conn, game_id)
+    payload = _game_payload(row, prediction)
+    odds = latest_odds(conn, game_id)
+    odds.sort(key=lambda item: (item["market"], item["side"], item["book"], item["line"] or 0))
+    injuries = [
+        dict(item)
+        for item in conn.execute(
+            "SELECT * FROM injuries WHERE game_id=? ORDER BY team_id, status, player",
+            (game_id,),
+        )
+    ]
+    return {"game": payload, "odds": odds, "injuries": injuries, "injury_suggestions": (prediction or {}).get("details", {}).get("injury_suggestions", [])}
+
+
+@router.get("/rapm")
+def rapm_top(
+    limit: int = 50,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Latest player RAPM ratings (net points per 100 possessions)."""
+    model = rapm.latest_model(conn)
+    if not model:
+        raise HTTPException(status_code=404, detail="no RAPM model; run 'nbaq rapm-train'")
+    ranked = sorted(model["ratings"].items(), key=lambda kv: kv[1], reverse=True)
+    names = model.get("names") or {}
+    players = [
+        {"id": pid, "name": names.get(pid, pid), "rating": round(value, 2)}
+        for pid, value in ranked[: max(1, min(limit, 800))]
+    ]
+    return {
+        "created_at": model["created_at"],
+        "n_games": model["n_games"],
+        "n_stints": model["n_stints"],
+        "players": players,
+    }
+
+
+class ManualOddsIn(BaseModel):
+    game_id: str
+    market: Literal["spread", "total", "moneyline"]
+    side: str
+    line: float | None = None
+    price: float = Field(gt=1.0)
+    book: str = "manual"
+
+
+@router.post("/odds")
+def add_odds(body: ManualOddsIn, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    game = conn.execute("SELECT id FROM games WHERE id=?", (body.game_id,)).fetchone()
+    if not game:
+        raise HTTPException(status_code=404, detail="game not found")
+    valid_sides = {"home", "away"} if body.market != "total" else {"over", "under"}
+    if body.side not in valid_sides:
+        raise HTTPException(status_code=400, detail=f"side must be one of {sorted(valid_sides)}")
+    if body.market != "moneyline" and body.line is None:
+        raise HTTPException(status_code=400, detail="line is required for spread/total")
+    inserted = insert_odds(
+        conn,
+        body.game_id,
+        [
+            {
+                "book": body.book,
+                "market": body.market,
+                "side": body.side,
+                "line": body.line,
+                "price": body.price,
+                "source": "manual",
+            }
+        ],
+    )
+    conn.commit()
+    return {"inserted": inserted}
+
+
+class PredictIn(BaseModel):
+    date: str
+
+
+@router.post("/predict")
+def run_predict(body: PredictIn) -> dict:
+    results = predict_date(body.date)
+    return {"date": body.date, "count": len(results)}
+
+
+class BetIn(BaseModel):
+    game_id: str
+    market: str
+    side: str
+    line: float | None = None
+    price: float = Field(gt=1.0)
+    stake: float = Field(gt=0)
+    model_prob: float = Field(ge=0.0, le=1.0)
+    ev: float
+    note: str | None = None
+
+
+@router.post("/bets")
+def add_bet(body: BetIn, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    game = conn.execute("SELECT id FROM games WHERE id=?", (body.game_id,)).fetchone()
+    if not game:
+        raise HTTPException(status_code=404, detail="game not found")
+    cur = conn.execute(
+        """
+        INSERT INTO bets(game_id, market, side, line, price, stake, model_prob, ev, placed_at, note)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            body.game_id,
+            body.market,
+            body.side,
+            body.line,
+            body.price,
+            body.stake,
+            body.model_prob,
+            body.ev,
+            _now(),
+            body.note,
+        ),
+    )
+    conn.commit()
+    return {"id": int(cur.lastrowid)}
+
+
+@router.get("/bets/summary")
+def bets_summary(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    return summarize(conn)
+
+
+@router.get("/bets")
+def list_bets(
+    game_id: str | None = None,
+    result: str | None = None,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    sql = """
+        SELECT b.*, g.slate_date,
+               h.abbrev AS home_abbrev, a.abbrev AS away_abbrev
+        FROM bets b
+        JOIN games g ON g.id = b.game_id
+        JOIN teams h ON h.id = g.home_id
+        JOIN teams a ON a.id = g.away_id
+    """
+    conditions, params = [], []
+    if game_id:
+        conditions.append("b.game_id=?")
+        params.append(game_id)
+    if result:
+        conditions.append("b.result=?")
+        params.append(result)
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+    sql += " ORDER BY b.id DESC LIMIT 200"
+    rows = conn.execute(sql, params).fetchall()
+    return {"bets": [dict(row) for row in rows]}
+
+
+@router.delete("/bets/{bet_id}")
+def delete_bet(bet_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """撤销纸面注单：仅未结算的可以删。"""
+    row = conn.execute("SELECT id, result FROM bets WHERE id=?", (bet_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="bet not found")
+    if row["result"] != "open":
+        raise HTTPException(status_code=400, detail="settled bets cannot be deleted")
+    conn.execute("DELETE FROM bets WHERE id=?", (bet_id,))
+    conn.commit()
+    return {"ok": True}
+
+
+@router.get("/bets/analysis")
+def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """Bankroll summary + cumulative profit curve + bet ledger (joined with games)."""
+    summary = summarize(conn)
+    rows = conn.execute(
+        """
+        SELECT b.*, g.slate_date, h.abbrev AS home_abbrev, a.abbrev AS away_abbrev
+        FROM bets b
+        LEFT JOIN games g ON g.id = b.game_id
+        LEFT JOIN teams h ON h.id = g.home_id
+        LEFT JOIN teams a ON a.id = g.away_id
+        ORDER BY b.id
+        """
+    ).fetchall()
+
+    bets = []
+    for row in rows:
+        item = dict(row)
+        home = item.pop("home_abbrev", None)
+        away = item.pop("away_abbrev", None)
+        item["matchup"] = f"{away or '?'} @ {home or '?'}" if home or away else item["game_id"]
+        bets.append(item)
+
+    # cumulative profit over settled bets, ordered by game date
+    decided = [b for b in bets if b["result"] in ("won", "lost", "push") and b["slate_date"]]
+    decided.sort(key=lambda b: (b["slate_date"], b["id"]))
+    curve = []
+    running = 0.0
+    for bet in decided:
+        running += bet["profit"] or 0.0
+        if curve and curve[-1]["date"] == bet["slate_date"]:
+            curve[-1]["cum_profit"] = round(running, 2)
+            curve[-1]["n"] += 1
+        else:
+            curve.append({"date": bet["slate_date"], "cum_profit": round(running, 2), "n": 1})
+
+    return {"summary": summary, "curve": curve, "bets": bets}
+
+
+class ImpactIn(BaseModel):
+    impact: float
+
+
+@router.post("/injuries/{injury_id}/impact")
+def set_impact(injury_id: int, body: ImpactIn, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    conn.execute("UPDATE injuries SET impact=? WHERE id=?", (body.impact, injury_id))
+    conn.commit()
+    return {"ok": True}
+
+
+@router.post("/injuries/{injury_id}/apply-suggestion")
+def apply_impact_suggestion(injury_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """把 RAPM 建议仓位写入该伤停的 impact（一键采用）。"""
+    from .models import rapm as rapm_module
+
+    injury = conn.execute("SELECT id, game_id, player FROM injuries WHERE id=?", (injury_id,)).fetchone()
+    if not injury:
+        raise HTTPException(status_code=404, detail="injury not found")
+    suggestions = rapm_module.suggest_impacts(conn, injury["game_id"])
+    match = next((s for s in suggestions if s["player"] == injury["player"]), None)
+    if not match:
+        raise HTTPException(status_code=404, detail="no RAPM suggestion for this player")
+    conn.execute("UPDATE injuries SET impact=? WHERE id=?", (match["suggested_impact"], injury_id))
+    conn.commit()
+    return {"ok": True, "impact": match["suggested_impact"], "rapm_rating": match["rapm_rating"]}
+
+
+@router.get("/model")
+def model_info(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    row = conn.execute("SELECT * FROM models ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return {"model": None}
+    params = json.loads(row["params"])
+    return {
+        "created_at": row["created_at"],
+        "n_games": row["n_games"],
+        "sigma_margin": row["sigma_margin"],
+        "sigma_total": row["sigma_total"],
+        "margin_intercept": params.get("margin_intercept"),
+        "margin_elo": params.get("margin_elo"),
+        "margin_rest": params.get("margin_rest"),
+        "total_intercept": params.get("total_intercept"),
+        "teams": params.get("teams", {}),
+    }
+
+
+@router.get("/backtest")
+def backtest_report() -> dict:
+    path = DATA_DIR / "backtest_report.json"
+    if not path.exists():
+        return {"report": None}
+    return {"report": json.loads(path.read_text(encoding="utf-8"))}
+
+
+@router.get("/dates")
+def game_dates(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """All slate dates that have games (for auto-jumping off-days)."""
+    rows = conn.execute(
+        """
+        SELECT slate_date, COUNT(*) AS n FROM games
+        WHERE status NOT IN ('STATUS_POSTPONED', 'STATUS_CANCELED', 'STATUS_CANCELLED')
+        GROUP BY slate_date ORDER BY slate_date
+        """
+    ).fetchall()
+    return {"dates": [{"date": row["slate_date"], "n": row["n"]} for row in rows]}
+
+
+@router.get("/live")
+def live_get(date: str | None = None, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """Live scoreboard merged with pregame predictions (fetches ESPN)."""
+    slate = date or current_slate_date()
+    try:
+        return live.live_board(conn, slate)
+    except Exception as exc:  # noqa: BLE001 - upstream errors vary
+        raise HTTPException(status_code=502, detail=f"ESPN live fetch failed: {exc}") from exc
+
+
+@router.get("/trends")
+def trends(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """Monthly league scoring/margin environment (regular season only)."""
+    rows = conn.execute(
+        """
+        SELECT substr(slate_date, 1, 7) AS month,
+               AVG(home_score + away_score) AS avg_total,
+               AVG(ABS(home_score - away_score)) AS avg_abs_margin,
+               COUNT(*) AS n
+        FROM games
+        WHERE home_score IS NOT NULL AND season_type = 2
+        GROUP BY month
+        HAVING n >= 5
+        ORDER BY month
+        """
+    ).fetchall()
+    return {
+        "months": [row["month"] for row in rows],
+        "avg_total": [round(row["avg_total"], 2) for row in rows],
+        "avg_abs_margin": [round(row["avg_abs_margin"], 2) for row in rows],
+        "n": [row["n"] for row in rows],
+    }

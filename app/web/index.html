@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f17">
+  <meta name="description" content="Personal pregame NBA quant research dashboard">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>NBA Quant · 赛前</title>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">◗</div>
+        <div>
+          <h1>NBA Quant</h1>
+          <p>赛前 · 免费数据 · 个人研究</p>
+        </div>
+      </div>
+      <div class="controls">
+        <input type="date" id="date" aria-label="比赛日期">
+        <button class="btn primary" id="refresh">刷新</button>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="slate">赛前看板</button>
+      <button class="tab" data-tab="live">赛时</button>
+      <button class="tab" data-tab="bets">收益</button>
+      <button class="tab" data-tab="research">研究图表</button>
+    </nav>
+
+    <div id="tab-slate">
+      <section class="stats" id="stats"></section>
+      <main class="grid" id="games"></main>
+      <p class="notice">
+        数据来自 ESPN 免费接口；模型为 Elo + 调整后攻防/节奏，仅供个人研究，不构成投注建议。
+        免费历史盘口稀缺，请从今天开始积累盘口快照。
+      </p>
+    </div>
+
+    <div id="tab-live" hidden>
+      <div class="live-header">
+        <span class="live-dot" id="live-dot"></span>
+        <span id="live-status" style="color:var(--muted);font-size:12.5px">加载中…</span>
+        <span style="flex:1"></span>
+        <span style="color:var(--muted);font-size:11.5px">跟随顶部日期 · 30 秒自动刷新</span>
+      </div>
+      <main class="grid" id="live-games"></main>
+      <p class="notice">
+        实时数据来自 ESPN 免费接口（约 30 秒延迟）。胜率曲线与逐 play 文本由 ESPN 提供；
+        投影 = 当前比分 + 赛前模型 × 剩余时间比例，σ 按剩余时间收缩。仅供个人研究。
+      </p>
+    </div>
+
+    <div id="tab-bets" hidden>
+      <section class="stats" id="bets-stats"></section>
+      <section class="charts" style="grid-template-columns:1fr">
+        <div class="chart-card">
+          <h2>累计收益（纸面注单，按比赛日）</h2>
+          <canvas id="chart-profit" height="240"></canvas>
+        </div>
+      </section>
+      <section class="charts" style="grid-template-columns:1fr;margin-top:13px">
+        <div class="chart-card">
+          <h2>分市场拆分</h2>
+          <div id="bets-markets"></div>
+        </div>
+        <div class="chart-card">
+          <h2>注单台账</h2>
+          <div id="bets-ledger"></div>
+        </div>
+      </section>
+      <p class="notice">
+        收益为<b>纸面跟踪</b>（1 单位 = 1），不涉及真实资金。CLV = 下注赔率 ÷ 收盘赔率 − 1，
+        长期为正才说明信号有真实价值；判断模型好坏请看 CLV 而不是单场输赢。
+      </p>
+    </div>
+
+    <div id="tab-research" hidden>
+      <section class="charts">
+        <div class="chart-card">
+          <h2>回测 · 月度总分 bias（预测 − 实际，正=预测偏高）</h2>
+          <canvas id="chart-bias" height="220"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2>回测 · 月度 MAE（分）</h2>
+          <canvas id="chart-mae" height="220"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2>联盟得分环境（月均总分，常规赛）</h2>
+          <canvas id="chart-trend" height="220"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2>球员 RAPM · 净分 / 100 回合</h2>
+          <canvas id="chart-rapm" height="300"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2>预测总分 vs 实际总分（对角线=完美）</h2>
+          <canvas id="chart-scatter" height="300"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2>主胜概率校准（说 X% 是否真赢 X%）</h2>
+          <canvas id="chart-calib" height="260"></canvas>
+        </div>
+      </section>
+      <p class="notice" id="research-note">加载研究数据…</p>
+    </div>
+  </div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <button class="close" id="close" aria-label="关闭">×</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/live.js"></script>
+  <script src="/static/research.js"></script>
+  <script src="/static/bets.js"></script>
+</body>
+</html>

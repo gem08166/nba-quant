@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import sqlite3
+from datetime import datetime, timezone
+
+from ..config import CLOSING_WINDOW_MIN
+from ..ingest import service
+from .. import db
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def outcome(bet: dict, home_score: int, away_score: int) -> str:
+    """won / lost / push / void for a settled bet."""
+    market, side, line = bet["market"], bet["side"], bet["line"]
+    margin = home_score - away_score
+    total = home_score + away_score
+
+    if market == "spread":
+        if line is None:
+            return "void"
+        diff = margin + line if side == "home" else -margin + line
+        return "won" if diff > 0 else "push" if diff == 0 else "lost"
+    if market == "total":
+        if line is None:
+            return "void"
+        diff = total - line
+        if side == "over":
+            return "won" if diff > 0 else "push" if diff == 0 else "lost"
+        return "won" if diff < 0 else "push" if diff == 0 else "lost"
+    if market == "moneyline":
+        if side == "home":
+            return "won" if margin > 0 else "lost"
+        return "won" if margin < 0 else "lost"
+    return "void"
+
+
+def _closing_snapshot(
+    conn: sqlite3.Connection, game_id: str, market: str, side: str, tipoff: str | None
+) -> sqlite3.Row | None:
+    """Latest odds snapshot for the same market/side captured before tipoff."""
+    tip = _parse_ts(tipoff)
+    best: sqlite3.Row | None = None
+    best_ts: datetime | None = None
+    for row in conn.execute(
+        """
+        SELECT line, price, captured_at FROM odds_snapshots
+        WHERE game_id=? AND market=? AND side=? AND price IS NOT NULL
+        ORDER BY id
+        """,
+        (game_id, market, side),
+    ):
+        ts = _parse_ts(row["captured_at"])
+        if ts is None:
+            continue
+        if tip and ts > tip:
+            continue
+        if best is None or (best_ts is None or ts >= best_ts):
+            best, best_ts = row, ts
+    return best
+
+
+def settle(conn: sqlite3.Connection | None = None) -> list[dict]:
+    """Settle open bets on finished games; fill profit, closing line/price, CLV."""
+    own = conn is None
+    conn = conn or db.connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT b.*, g.home_score, g.away_score, g.tipoff, g.slate_date
+            FROM bets b
+            JOIN games g ON g.id = b.game_id
+            WHERE b.result = 'open'
+              AND g.status = 'STATUS_FINAL'
+              AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+            """
+        ).fetchall()
+
+        settled: list[dict] = []
+        for row in rows:
+            bet = dict(row)
+            result = outcome(bet, int(bet["home_score"]), int(bet["away_score"]))
+            if result == "won":
+                profit = bet["stake"] * (bet["price"] - 1.0)
+            elif result == "lost":
+                profit = -bet["stake"]
+            else:
+                profit = 0.0
+
+            closing = _closing_snapshot(
+                conn, bet["game_id"], bet["market"], bet["side"], bet["tipoff"]
+            )
+            closing_line = closing["line"] if closing else None
+            closing_price = closing["price"] if closing else None
+            clv = None
+            if closing_price and closing_price > 1.0 and bet["price"] > 1.0:
+                clv = bet["price"] / closing_price - 1.0
+
+            conn.execute(
+                """
+                UPDATE bets
+                SET result=?, profit=?, closing_line=?, closing_price=?, clv=?
+                WHERE id=?
+                """,
+                (result, profit, closing_line, closing_price, clv, bet["id"]),
+            )
+            settled.append(
+                {
+                    "bet_id": bet["id"],
+                    "game_id": bet["game_id"],
+                    "market": bet["market"],
+                    "side": bet["side"],
+                    "line": bet["line"],
+                    "price": bet["price"],
+                    "result": result,
+                    "profit": profit,
+                    "closing_line": closing_line,
+                    "closing_price": closing_price,
+                    "clv": clv,
+                }
+            )
+        conn.commit()
+        return settled
+    finally:
+        if own:
+            conn.close()
+
+
+def capture_closing(
+    conn: sqlite3.Connection | None = None, window_minutes: float | None = None
+) -> list[dict]:
+    """Re-fetch odds for games starting within the window (closing lines)."""
+    own = conn is None
+    conn = conn or db.connect()
+    window = window_minutes if window_minutes is not None else CLOSING_WINDOW_MIN
+    now = datetime.now(timezone.utc)
+    try:
+        rows = conn.execute(
+            "SELECT id, slate_date, tipoff FROM games WHERE status != 'STATUS_FINAL'"
+        ).fetchall()
+        captured: list[dict] = []
+        for row in rows:
+            tip = _parse_ts(row["tipoff"])
+            if not tip:
+                continue
+            minutes = (tip - now).total_seconds() / 60.0
+            if 0 <= minutes <= window:
+                inserted = service.refresh_game_odds(conn, row["id"], row["slate_date"])
+                captured.append(
+                    {"game_id": row["id"], "tipoff": row["tipoff"], "odds_inserted": inserted}
+                )
+        conn.commit()
+        return captured
+    finally:
+        if own:
+            conn.close()
+
+
+def summarize(conn: sqlite3.Connection) -> dict:
+    settled = [
+        dict(row)
+        for row in conn.execute("SELECT * FROM bets WHERE result != 'open'")
+    ]
+    open_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM bets WHERE result = 'open'"
+    ).fetchone()["n"]
+
+    decided = [bet for bet in settled if bet["result"] in ("won", "lost", "push")]
+    wins = sum(1 for bet in decided if bet["result"] == "won")
+    losses = sum(1 for bet in decided if bet["result"] == "lost")
+    pushes = sum(1 for bet in decided if bet["result"] == "push")
+    stake = sum(bet["stake"] for bet in decided)
+    profit = sum(bet["profit"] or 0.0 for bet in decided)
+
+    clvs = [bet["clv"] for bet in decided if bet["clv"] is not None]
+    by_market: dict[str, dict] = {}
+    for market in sorted({bet["market"] for bet in decided}):
+        rows = [bet for bet in decided if bet["market"] == market]
+        m_stake = sum(bet["stake"] for bet in rows)
+        m_profit = sum(bet["profit"] or 0.0 for bet in rows)
+        m_clv = [bet["clv"] for bet in rows if bet["clv"] is not None]
+        by_market[market] = {
+            "n": len(rows),
+            "stake": m_stake,
+            "profit": m_profit,
+            "roi": (m_profit / m_stake) if m_stake else None,
+            "avg_clv": (sum(m_clv) / len(m_clv)) if m_clv else None,
+        }
+
+    return {
+        "open": open_count,
+        "settled": len(decided),
+        "wins": wins,
+        "losses": losses,
+        "pushes": pushes,
+        "hit_rate": (wins / (wins + losses)) if (wins + losses) else None,
+        "stake": stake,
+        "profit": profit,
+        "roi": (profit / stake) if stake else None,
+        "clv_n": len(clvs),
+        "avg_clv": (sum(clvs) / len(clvs)) if clvs else None,
+        "clv_positive_rate": (sum(1 for value in clvs if value > 0) / len(clvs)) if clvs else None,
+        "by_market": by_market,
+    }
