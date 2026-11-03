@@ -12,19 +12,54 @@ from __future__ import annotations
    odds_snapshots（book=书名），喂给"模型 vs 收盘共识"回测。
 """
 
+import json
 import sqlite3
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
-from ..config import REQUEST_SLEEP, REQUEST_TIMEOUT
+from ..config import DATA_DIR, REQUEST_SLEEP, REQUEST_TIMEOUT
 
 API = "https://hoopsapi.com/api/v1"
+
+# 配额：每滚动 24 小时 10 个请求（请求发出时开始计时）。超限返回 429 + 重置时间头。
+# 预算策略：列表请求 1 次/天，其余留给归档（优先归档开球最早的完赛场）；
+# 单次调用最多用掉 4 个请求，剩余留给后续 watch 循环（5 分钟一轮）分摊。
+REQUEST_BUDGET_24H = 10
+MAX_REQUESTS_PER_INVOCATION = 4
+STATE_PATH = DATA_DIR / "hoops_state.json"
+
+
+class HoopsRateLimited(RuntimeError):
+    """24h 预算用尽或收到 429；应推迟到下一轮再试。"""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class HoopsError(RuntimeError):
     pass
+
+
+def _load_state() -> dict:
+    try:
+        return json.loads(Path(STATE_PATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    Path(STATE_PATH).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+
+def _available_requests(state: dict) -> int:
+    now = time.time()
+    stamps = [t for t in state.get("requests", []) if now - t < 86400]
+    state["requests"] = stamps
+    return REQUEST_BUDGET_24H - len(stamps)
 
 
 def _headers() -> dict:
@@ -39,16 +74,42 @@ def _sleep() -> None:
     time.sleep(REQUEST_SLEEP)
 
 
-def fetch_nba_games(client: httpx.Client) -> list[dict]:
-    resp = client.get(f"{API}/games", params={"competition": "NBA"}, headers=_headers())
+def _call(client: httpx.Client, url: str, params: dict | None = None) -> dict:
+    """带预算管理的 GET：滚动 24h 窗口计数、429 退避。"""
+    state = _load_state()
+    if _available_requests(state) <= 0:
+        raise HoopsRateLimited("HoopsAPI 24h 预算已用完，推迟到下一轮")
+    if state.get("rate_limited_until") and time.time() < state["rate_limited_until"]:
+        raise HoopsRateLimited(f"429 退避中，{state['rate_limited_until'] - time.time():.0f}s 后可用")
+    resp = client.get(url, params=params, headers=_headers())
+    if resp.status_code == 429:
+        retry_after = None
+        for header in ("x-ratelimit-reset", "x-rate-limit-reset", "retry-after"):
+            value = resp.headers.get(header)
+            if value:
+                try:
+                    retry_after = float(value)
+                    # retry-after 可能是绝对时间戳或秒数：秒数很大时按绝对时间戳处理
+                    if retry_after > 1e12:
+                        retry_after = retry_after / 1000.0 - time.time()
+                except ValueError:
+                    retry_after = None
+        state["rate_limited_until"] = time.time() + (retry_after if retry_after and 0 < retry_after < 86400 else 900)
+        _save_state(state)
+        raise HoopsRateLimited(f"429，{state['rate_limited_until'] - time.time():.0f}s 后重试", retry_after)
     resp.raise_for_status()
-    return resp.json().get("games") or []
+    state.setdefault("requests", []).append(time.time())
+    _save_state(state)
+    return resp.json()
+
+
+def fetch_nba_games(client: httpx.Client) -> list[dict]:
+    resp = _call(client, f"{API}/games", {"competition": "NBA"})
+    return resp.get("games") or []
 
 
 def fetch_game(game_id, client: httpx.Client) -> dict:
-    resp = client.get(f"{API}/games/{game_id}", headers=_headers())
-    resp.raise_for_status()
-    return resp.json()
+    return _call(client, f"{API}/games/{game_id}")
 
 
 def _providers_to_rows(providers: dict) -> list[dict]:
@@ -120,32 +181,45 @@ def sync_games(conn: sqlite3.Connection) -> dict:
 
 
 def archive_closing(conn: sqlite3.Connection) -> dict:
-    """对已完赛且未归档的映射比赛，从 HoopsAPI 归档拉多书收盘价入库。"""
+    """对已完赛且未归档的映射比赛，从 HoopsAPI 归档拉多书收盘价入库。
+
+    受 10 请求/24h 预算约束：单次调用最多 MAX_REQUESTS_PER_INVOCATION 个请求，
+    优先归档开球最早的（收盘价最有研究价值）；预算耗尽抛 HoopsRateLimited，
+    由 watch 下一轮（5 分钟后）继续。
+    """
     from . import service as espn_service
 
-    stats = {"archived": 0, "odds_rows": 0, "errors": 0}
+    stats = {"archived": 0, "odds_rows": 0, "errors": 0, "deferred": 0}
     pending = conn.execute(
         """
-        SELECT hg.hoops_id, hg.espn_game_id, g.status FROM hoops_games hg
+        SELECT hg.hoops_id, hg.espn_game_id, g.status, g.tipoff FROM hoops_games hg
         JOIN games g ON g.id = hg.espn_game_id
         WHERE hg.archived = 0
+        ORDER BY g.tipoff
         """
     ).fetchall()
+    finished = [row for row in pending if row["status"] == "STATUS_FINAL"]
+    stats["deferred"] = len(pending) - len(finished)
+    if not finished:
+        return stats
+
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
-        for row in pending:
-            if row["status"] != "STATUS_FINAL":
-                continue
+        for row in finished[:MAX_REQUESTS_PER_INVOCATION]:
             try:
                 detail = fetch_game(row["hoops_id"], client)
                 _sleep()
                 rows = _providers_to_rows(detail.get("providers"))
                 espn_service.insert_odds(conn, row["espn_game_id"], rows)
                 conn.execute("UPDATE hoops_games SET archived=1 WHERE hoops_id=?", (row["hoops_id"],))
+                conn.commit()
                 stats["archived"] += 1
                 stats["odds_rows"] += len(rows)
+            except HoopsRateLimited as exc:
+                stats["deferred"] += 1
+                print(f"[hoops] 预算/限流：{exc}，剩余归档推迟")
+                break
             except Exception:  # noqa: BLE001 - 单场失败不拖垮
                 stats["errors"] += 1
-    conn.commit()
     return stats
 
 
