@@ -6,9 +6,13 @@ __pycache__/
 build/
 dist/
 
-# 数据与运行时产物（数据库请用 data/backup/ 的快照做灾备，不进 git）
+# 数据与运行时产物（Actions 云端计算的基底 + 静态站数据随仓库走）
 data/
 !data/backup/.gitkeep
+# Actions 每次运行会更新并提交这三个文件
+!data/nba.db
+!data/odds_api_state.json
+!data/hoops_state.json
 *.log
 tmp_*.py
 
