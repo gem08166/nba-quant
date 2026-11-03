@@ -35,6 +35,21 @@ function staticApi(path) {
   const params = new URLSearchParams(query);
 
   if (path.startsWith("/api/games")) {
+    // /api/games/{id}：从看板数据构造详情响应（静态导出已附带 odds/injuries）
+    const parts = path.split("?")[0].split("/").filter(Boolean);
+    if (parts.length >= 3) {
+      const gameId = parts[2];
+      const game = (payload.board.games || []).find((g) => g.id === gameId);
+      if (game) {
+        return {
+          game,
+          odds: game.odds || [],
+          injuries: game.injuries || [],
+          injury_suggestions: game.injury_suggestions || [],
+        };
+      }
+      throw new Error("比赛不在当前导出的比赛日中");
+    }
     return payload.board;
   }
   if (path.startsWith("/api/dates")) {

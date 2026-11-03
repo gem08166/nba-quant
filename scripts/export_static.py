@@ -45,6 +45,36 @@ def main() -> None:
             ).fetchone()
             slate = row["slate_date"] if row else None
         board = api_games(date=slate, conn=conn)
+
+        # 比赛详情静态化：每场附带伤停、盘口快照、RAPM 建议（/api/games/{id} 的静态等价物）
+        for item in board["games"]:
+            game_id = item["id"]
+            item["injuries"] = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT id, team_id, player, status, detail, impact FROM injuries WHERE game_id=?",
+                    (game_id,),
+                )
+            ]
+            odds_rows = conn.execute(
+                "SELECT book, market, side, line, price, captured_at FROM odds_snapshots WHERE game_id=? ORDER BY id",
+                (game_id,),
+            ).fetchall()
+            latest: dict[tuple[str, str, str], dict] = {}
+            for r in odds_rows:
+                latest[(r["book"], r["market"], r["side"])] = dict(r)
+            item["odds"] = list(latest.values())
+            pred = item.get("prediction")
+            if pred:
+                pred_row = conn.execute(
+                    "SELECT details FROM predictions WHERE game_id=? ORDER BY id DESC LIMIT 1",
+                    (game_id,),
+                ).fetchone()
+                if pred_row:
+                    try:
+                        item["injury_suggestions"] = json.loads(pred_row["details"]).get("injury_suggestions") or []
+                    except (TypeError, ValueError):
+                        item["injury_suggestions"] = []
         # 可用日期列表（供静态模式自动跳转）
         date_rows = conn.execute(
             """
