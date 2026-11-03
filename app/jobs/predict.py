@@ -70,6 +70,32 @@ def _mode(values: list[float]) -> float | None:
     return tied[mid] if len(tied) % 2 else (tied[mid - 1] + tied[mid]) / 2
 
 
+def _robust_pair_stats(
+    pairs: list[tuple[float, float]],
+    prices: list[tuple[float | None, float | None]],
+    tol: float = 0.08,
+) -> tuple[float, float, float | None, float | None, int]:
+    """鲁棒聚合：各书源去水公允概率，剔除与中位数偏差 > tol 的离群书源
+    （防单源字段颠倒/坏数据污染共识），再取平均；价格为过滤后书源中的最优价。"""
+    if not pairs:
+        return 0.0, 0.0, None, None, 0
+    med_a = sorted(p[0] for p in pairs)[len(pairs) // 2]
+    med_b = sorted(p[1] for p in pairs)[len(pairs) // 2]
+    kept = [
+        i
+        for i, (fa, fb) in enumerate(pairs)
+        if abs(fa - med_a) <= tol and abs(fb - med_b) <= tol
+    ]
+    if not kept:
+        kept = list(range(len(pairs)))
+    n = len(kept)
+    mean_a = sum(pairs[i][0] for i in kept) / n
+    mean_b = sum(pairs[i][1] for i in kept) / n
+    best_a = max((prices[i][0] for i in kept if prices[i][0]), default=None)
+    best_b = max((prices[i][1] for i in kept if prices[i][1]), default=None)
+    return mean_a, mean_b, best_a, best_b, n
+
+
 def consensus_market(odds_rows: list[dict]) -> dict:
     """多书共识：对每家书源分别去水后取平均公允概率；线取众数；每侧取共识线下的最优价。
 
@@ -86,8 +112,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
     result: dict[str, dict] = {}
 
     # --- spread（home 线） ---
-    lines: list[float] = []
-    fair_h, fair_a, best_h, best_a = [], [], None, None
+    entries: list[dict] = []
     for book, by_key in books.items():
         h, a = by_key.get(("spread", "home")), by_key.get(("spread", "away"))
         if not h or not a or h.get("line") is None or a.get("line") is None:
@@ -98,29 +123,26 @@ def consensus_market(odds_rows: list[dict]) -> dict:
         pair = _devig_pair(h["price"], a["price"])
         if not pair:
             continue
-        lines.append(line_h)
-        fair_h.append(pair[0])
-        fair_a.append(pair[1])
-    if lines:
-        consensus_line = _mode(lines)
-        for book, by_key in books.items():
-            h, a = by_key.get(("spread", "home")), by_key.get(("spread", "away"))
-            if not h or not a or h.get("line") is None:
-                continue
-            if abs(float(h["line"]) - consensus_line) < 1e-9:
-                best_h = max(best_h, h["price"]) if best_h else h["price"]
-                best_a = max(best_a, a["price"]) if best_a else a["price"]
+        entries.append({"book": book, "line": line_h, "fair_h": pair[0], "fair_a": pair[1],
+                        "price_h": h["price"], "price_a": a["price"]})
+    if entries:
+        consensus_line = _mode([e["line"] for e in entries])
+        at_line = [e for e in entries if abs(e["line"] - consensus_line) < 1e-9]
+        mean_a, mean_b, best_h, best_a, n_kept = _robust_pair_stats(
+            [(e["fair_h"], e["fair_a"]) for e in at_line],
+            [(e["price_h"], e["price_a"]) for e in at_line],
+        )
         result["spread"] = {
             "line": consensus_line,
             "home_price": best_h,
             "away_price": best_a,
-            "fair_home": sum(fair_h) / len(fair_h),
-            "fair_away": sum(fair_a) / len(fair_a),
-            "n_books": len(lines),
+            "fair_home": mean_a,
+            "fair_away": mean_b,
+            "n_books": n_kept,
         }
 
     # --- total ---
-    lines, fair_o, fair_u, best_o, best_u = [], [], [], None, None
+    entries: list[dict] = []
     for book, by_key in books.items():
         o, u = by_key.get(("total", "over")), by_key.get(("total", "under"))
         if not o or not u or o.get("line") is None or u.get("line") is None:
@@ -131,29 +153,26 @@ def consensus_market(odds_rows: list[dict]) -> dict:
         pair = _devig_pair(o["price"], u["price"])
         if not pair:
             continue
-        lines.append(line_o)
-        fair_o.append(pair[0])
-        fair_u.append(pair[1])
-    if lines:
-        consensus_line = _mode(lines)
-        for book, by_key in books.items():
-            o, u = by_key.get(("total", "over")), by_key.get(("total", "under"))
-            if not o or not u or o.get("line") is None:
-                continue
-            if abs(float(o["line"]) - consensus_line) < 1e-9:
-                best_o = max(best_o, o["price"]) if best_o else o["price"]
-                best_u = max(best_u, u["price"]) if best_u else u["price"]
+        entries.append({"book": book, "line": line_o, "fair_o": pair[0], "fair_u": pair[1],
+                        "price_o": o["price"], "price_u": u["price"]})
+    if entries:
+        consensus_line = _mode([e["line"] for e in entries])
+        at_line = [e for e in entries if abs(e["line"] - consensus_line) < 1e-9]
+        mean_o, mean_u, best_o, best_u, n_kept = _robust_pair_stats(
+            [(e["fair_o"], e["fair_u"]) for e in at_line],
+            [(e["price_o"], e["price_u"]) for e in at_line],
+        )
         result["total"] = {
             "line": consensus_line,
             "over_price": best_o,
             "under_price": best_u,
-            "fair_over": sum(fair_o) / len(fair_o),
-            "fair_under": sum(fair_u) / len(fair_u),
-            "n_books": len(lines),
+            "fair_over": mean_o,
+            "fair_under": mean_u,
+            "n_books": n_kept,
         }
 
     # --- moneyline ---
-    fair_h, fair_a, best_h, best_a = [], [], None, None
+    fair_h, fair_a, prices_h, prices_a = [], [], [], []
     for book, by_key in books.items():
         h, a = by_key.get(("moneyline", "home")), by_key.get(("moneyline", "away"))
         if not h or not a:
@@ -163,15 +182,18 @@ def consensus_market(odds_rows: list[dict]) -> dict:
             continue
         fair_h.append(pair[0])
         fair_a.append(pair[1])
-        best_h = max(best_h, h["price"]) if best_h else h["price"]
-        best_a = max(best_a, a["price"]) if best_a else a["price"]
+        prices_h.append(h["price"])
+        prices_a.append(a["price"])
     if fair_h:
+        mean_h, mean_a, best_h, best_a, n_kept = _robust_pair_stats(
+            list(zip(fair_h, fair_a)), list(zip(prices_h, prices_a))
+        )
         result["moneyline"] = {
             "home_price": best_h,
             "away_price": best_a,
-            "fair_home": sum(fair_h) / len(fair_h),
-            "fair_away": sum(fair_a) / len(fair_a),
-            "n_books": len(fair_h),
+            "fair_home": mean_h,
+            "fair_away": mean_a,
+            "n_books": n_kept,
         }
     return result
 

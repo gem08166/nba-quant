@@ -272,6 +272,14 @@ def store_nba_odds(conn, slate_date: str) -> int:
             market = parse_market(detail.get("market"))
             rows: list[dict] = []
             ah = (market.get("ah") or [{}])[0]
+            ml = market.get("ml") or {}
+            # 好体育的 ML 字段主客语义偶与其让分字段不一致（实测 DAL@SA ML 反向）。
+            # 交叉校验：主队让分（line<0）时主队 ML 必须是热门（价更低），否则交换。
+            if ml.get("home") and ml.get("away") and ah.get("line") is not None:
+                home_favored = ah["line"] < 0
+                ml_home_hot = ml["home"] < ml["away"]
+                if home_favored != ml_home_hot:
+                    ml = {"home": ml["away"], "away": ml["home"]}
             if ah.get("line") is not None:
                 rows.append({"book": "hao-tiyu", "market": "spread", "side": "home", "line": ah["line"], "price": ah["home_price"], "source": "hao"})
                 rows.append({"book": "hao-tiyu", "market": "spread", "side": "away", "line": -ah["line"], "price": ah["away_price"], "source": "hao"})
@@ -279,7 +287,6 @@ def store_nba_odds(conn, slate_date: str) -> int:
             if ou.get("line") is not None:
                 rows.append({"book": "hao-tiyu", "market": "total", "side": "over", "line": ou["line"], "price": ou["over_price"], "source": "hao"})
                 rows.append({"book": "hao-tiyu", "market": "total", "side": "under", "line": ou["line"], "price": ou["under_price"], "source": "hao"})
-            ml = market.get("ml") or {}
             if ml.get("home"):
                 rows.append({"book": "hao-tiyu", "market": "moneyline", "side": "home", "line": None, "price": ml["home"], "source": "hao"})
             if ml.get("away"):
