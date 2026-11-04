@@ -184,7 +184,8 @@ function drawRapmChart(canvas, players) {
     ctx.fillStyle = COLORS.text;
     ctx.textAlign = "right";
     ctx.font = "11px sans-serif";
-    ctx.fillText(p.name.length > 18 ? p.name.slice(0, 17) + "…" : p.name, pad.l - 8, cy + 4);
+    const label = p.name_zh || p.name;
+    ctx.fillText(label.length > 12 ? label.slice(0, 11) + "…" : label, pad.l - 8, cy + 4);
     ctx.textAlign = p.rating >= 0 ? "left" : "right";
     // negative ratings: label on the right of the zero line so it doesn't
     // collide with the name column

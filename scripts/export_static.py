@@ -15,7 +15,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app import db
+from app import db, i18n
 from app.api import bets_analysis, games as api_games, model_info, rapm_top, trends as api_trends
 from app.config import DATA_DIR
 
@@ -50,7 +50,7 @@ def main() -> None:
         for item in board["games"]:
             game_id = item["id"]
             item["injuries"] = [
-                dict(r)
+                i18n.with_zh(dict(r))
                 for r in conn.execute(
                     "SELECT id, team_id, player, status, detail, impact FROM injuries WHERE game_id=?",
                     (game_id,),
@@ -72,7 +72,8 @@ def main() -> None:
                 ).fetchone()
                 if pred_row:
                     try:
-                        item["injury_suggestions"] = json.loads(pred_row["details"]).get("injury_suggestions") or []
+                        raw = json.loads(pred_row["details"]).get("injury_suggestions") or []
+                        item["injury_suggestions"] = [i18n.with_zh(dict(s)) for s in raw]
                     except (TypeError, ValueError):
                         item["injury_suggestions"] = []
         # 可用日期列表（供静态模式自动跳转）

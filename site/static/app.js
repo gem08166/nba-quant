@@ -371,9 +371,10 @@ function renderModal(data) {
           const applyButton = suggestion
             ? `<button class="btn small" data-apply-impact="${injury.id}" title="RAPM ${suggestion.rapm_rating >= 0 ? "+" : ""}${suggestion.rapm_rating} → 建议 ${suggestion.suggested_impact}">采用 ${suggestion.suggested_impact}</button>`
             : "";
+          const displayName = injury.player_zh || injury.player;
           return `
             <div class="inj">
-              <span>${esc(team)} · ${esc(injury.player)} <span class="s">${esc(injury.status || "")}</span>
+              <span title="${esc(injury.player)}">${esc(team)} · ${esc(displayName)} <span class="s">${esc(injury.status || "")}</span>
                 <span style="color:var(--muted)">${esc(injury.detail || "")}</span></span>
               <span style="display:flex;gap:6px;align-items:center">
                 ${applyButton}

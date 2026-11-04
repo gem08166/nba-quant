@@ -182,12 +182,14 @@ app/
     backtest.py        # walk-forward
   models/ratings.py    # 分差/总分模型 + regime 修正 + 跨季季前赛锚定
   pricing/devig.py     # 去水 + 走盘感知概率
+  i18n.py              # 球员英文名 → 中文名（查 data/player_zh.json）
   web/                 # PWA 前端（app.js/bets.js/research.js/static.js/live.js）
 scripts/
   export_static.py     # 静态站导出（含根级 sw.js）
   holdout_eval.py      # 冻结 holdout
   blend_sweep.py       # MARKET_BLEND 扫描
   linemove_analysis.py # 信号→线移动验收
+  build_player_zh.py   # 抓虎扑名单生成中文名映射（data/player_zh.json）
   model_clv_history.py # 模型 vs 收盘线
 data/                  # nba.db（现已不进主仓）+ 各报告 JSON
 site/                  # 静态站产物（进主仓）

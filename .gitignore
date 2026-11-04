@@ -12,6 +12,7 @@ dist/
 data/*
 !data/odds_api_state.json
 !data/hoops_state.json
+!data/player_zh.json
 !data/backup/
 data/backup/*
 !data/backup/.gitkeep

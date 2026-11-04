@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import db
+from . import db, i18n
 from .config import DATA_DIR
 from .dates import current_slate_date
 from .ingest.service import insert_odds
@@ -164,13 +164,17 @@ def game_detail(game_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> d
     odds = latest_odds(conn, game_id)
     odds.sort(key=lambda item: (item["market"], item["side"], item["book"], item["line"] or 0))
     injuries = [
-        dict(item)
+        i18n.with_zh(dict(item))
         for item in conn.execute(
             "SELECT * FROM injuries WHERE game_id=? ORDER BY team_id, status, player",
             (game_id,),
         )
     ]
-    return {"game": payload, "odds": odds, "injuries": injuries, "injury_suggestions": (prediction or {}).get("details", {}).get("injury_suggestions", [])}
+    suggestions = [
+        i18n.with_zh(dict(item))
+        for item in ((prediction or {}).get("details", {}).get("injury_suggestions", []) or [])
+    ]
+    return {"game": payload, "odds": odds, "injuries": injuries, "injury_suggestions": suggestions}
 
 
 @router.get("/rapm")
@@ -185,7 +189,12 @@ def rapm_top(
     ranked = sorted(model["ratings"].items(), key=lambda kv: kv[1], reverse=True)
     names = model.get("names") or {}
     players = [
-        {"id": pid, "name": names.get(pid, pid), "rating": round(value, 2)}
+        {
+            "id": pid,
+            "name": names.get(pid, pid),
+            "name_zh": i18n.player_zh(names.get(pid, pid)),
+            "rating": round(value, 2),
+        }
         for pid, value in ranked[: max(1, min(limit, 800))]
     ]
     return {
