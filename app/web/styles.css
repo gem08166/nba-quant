@@ -442,6 +442,9 @@ input:focus, select:focus {
 tr.row-bettable td { background: rgba(22, 163, 74, 0.12); }
 tr.row-bettable td:first-child { font-weight: 750; color: #c4f7d8; }
 
+.bets-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.bets-toolbar .hint { color: var(--muted); font-size: 11.5px; }
+
 @media (max-width: 560px) {
   .bp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; }
   .bp-match { flex: 1 1 100%; }

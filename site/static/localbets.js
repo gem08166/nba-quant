@@ -167,6 +167,28 @@ function lbAnalysis() {
   return { summary: lbSummary(bets), bets, curve: lbCurve(bets) };
 }
 
+function lbImport(rows) {
+  const list = lbRead();
+  const byId = new Map(list.map((bet) => [String(bet.id), bet]));
+  let added = 0;
+  for (const row of rows || []) {
+    if (!row || !row.id) continue;
+    const key = String(row.id);
+    const current = byId.get(key);
+    if (!current) {
+      list.push({ ...row, source: "local" });
+      byId.set(key, row);
+      added += 1;
+    } else if (current.result === "open" && row.result && row.result !== "open") {
+      // 同一注单：以已结算版本为准（云端结算结果覆盖本地未结算）
+      Object.assign(current, row);
+      added += 1;
+    }
+  }
+  lbWrite(list);
+  return { added, total: list.length };
+}
+
 window.LB = {
   read: lbRead,
   add: lbAdd,
@@ -175,4 +197,5 @@ window.LB = {
   summary: lbSummary,
   curve: lbCurve,
   analysis: lbAnalysis,
+  importRows: lbImport,
 };

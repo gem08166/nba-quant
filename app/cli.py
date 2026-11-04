@@ -242,6 +242,23 @@ def cmd_watch(args: argparse.Namespace) -> None:
     watch_job.run(interval=args.interval, with_ingest=not args.no_ingest, once=args.once)
 
 
+def cmd_bets_sync(args: argparse.Namespace) -> None:
+    import json
+
+    from .config import WEBDAV_PASS, WEBDAV_USER
+    from .jobs import betssync, webdav
+
+    if args.check or not webdav.enabled():
+        print(json.dumps({**betssync.status(), "hint": "set NBAQ_WEBDAV_USER / NBAQ_WEBDAV_PASS in .env"}, ensure_ascii=False, indent=1))
+        return
+    conn = db.connect()
+    try:
+        stats = betssync.run(conn, force_push=args.force)
+        print(json.dumps(stats, ensure_ascii=False, indent=1))
+    finally:
+        conn.close()
+
+
 def cmd_notify_test(_: argparse.Namespace) -> None:
     enabled = notify.providers_enabled()
     if not enabled:
@@ -363,6 +380,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch.set_defaults(func=cmd_watch)
 
     sub.add_parser("notify-test", help="send a test push").set_defaults(func=cmd_notify_test)
+
+    bs = sub.add_parser("bets-sync", help="sync the paper ledger with Jianguoyun WebDAV")
+    bs.add_argument("--check", action="store_true", help="show config/coverage only")
+    bs.add_argument("--force", action="store_true", help="push the ledger even if unchanged")
+    bs.set_defaults(func=cmd_bets_sync)
 
     serve = sub.add_parser("serve", help="run the web app")
     serve.add_argument("--host", default="0.0.0.0")

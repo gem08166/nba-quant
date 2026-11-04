@@ -236,8 +236,18 @@ README.md              # 用户文档（含第 0 节验证结论）
 | 收益页 | 演示单已删，`0 结算 · ROI —` |
 
 ### 10.4 下一步（合并后）
-
 0. **投注助手 P0（2026-11-04 晚已完成）**：①收盘窗口 10→120 分钟（`CLOSING_WINDOW_MIN`）；②新增 `odds-refresh.yml` 每 30 分钟轻量 tick（`watch --once`：抓盘口/收盘/结算/预测/推送，**不提交 main**，只 force-push data 分支 + 部署 Pages）；③ntfy 推送接通（标题 UTF-8 字节修复 ascii 报错），本机 topic 在 `.env`，CI 走 repo secret `NBAQ_NTFY_TOPIC`（待用户在 Settings→Secrets 添加，同时加 `NBAQ_ODDS_API_KEY`、`HOOPS_API_KEY`——此前 CI 里这两个源一直没 key，多书共识只靠 hao-tiyu）；④本机 `app.cli watch` 常驻（会话内）。
 1. 推送本机改动并等 Actions 用 `data` 分支跑通一轮（重点看 restore 是否成功、`site/data/static.json` 的 `generated_at` 是否等于本 run）。
 2. 线移动检验需继续积累实时快照（当前 63 信号 / 35 有移动），2-4 周后复跑。
 3. 收盘线基准下一步从单家 `sbr-fanduel` 改成 8 家共识（`backfill_closing` 已回填 8 书源，报告侧尚未用共识）。
+
+### 10.5 台账坚果云同步（2026-11-05）
+
+- **实测结论：坚果云 WebDAV 无 CORS 头**，浏览器（手机 PWA）直连必挂——同步只能在 PC 服务端做。
+- 架构：PC `watch` 每 5 分钟跑 `betssync.run()`（`app/jobs/betssync.py` + `app/jobs/webdav.py`）：
+  1. 拉 `nbaq/inbox/*.json`（手机「导出台账」→ 坚果云 app 上传）→ 按 `ref` 去重合并进 bets 表 → MOVE 到 `inbox/done/`；
+  2. 拉 `nbaq/bets.json`（云端全量，可能来自另一台 PC）合并；
+  3. 推送本地全量台账回 `nbaq/bets.json`（内容 hash 没变就跳过，省坚果云请求配额）。
+- `bets` 表新增 `ref` 列（唯一索引）：静态端 = 注单字符串 id（`local-...`），服务端 = `srv-<id>`，云端无 ref 时用 `gen-<md5>` 兜底。
+- 手机 PWA 收益页新增「导出台账 / 导入台账」（文件中转，走坚果云 app）。
+- 配置：`.env` 里 `NBAQ_WEBDAV_USER`（注册邮箱）+ `NBAQ_WEBDAV_PASS`（坚果云网页 → 账户信息 → 安全选项 → 添加**应用密码**，不要用登录密码）。留空 = 不同步。手动跑：`python -m app.cli bets-sync`。

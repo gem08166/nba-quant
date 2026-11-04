@@ -109,8 +109,50 @@ function renderLedger(bets) {
     </table></div>`;
 }
 
+function renderBetsToolbar() {
+  const box = document.getElementById("bets-toolbar");
+  if (!box) return;
+  if (window.APP_MODE !== "static") {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = `
+    <div class="bets-toolbar">
+      <button class="btn small" id="bets-export">导出台账</button>
+      <button class="btn small" id="bets-import">导入台账</button>
+      <input type="file" id="bets-import-file" accept=".json,application/json" hidden>
+      <span class="hint">手机：导出 → 坚果云 app 上传到 nbaq/inbox/；PC 端 30 分钟内自动合并</span>
+    </div>`;
+  document.getElementById("bets-export").addEventListener("click", () => {
+    const rows = window.LB.read();
+    const blob = new Blob([JSON.stringify(rows, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `nbaq-bets-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  const fileInput = document.getElementById("bets-import-file");
+  document.getElementById("bets-import").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    try {
+      const rows = JSON.parse(await file.text());
+      const result = window.LB.importRows(rows);
+      toast(`导入完成：新增/更新 ${result.added} 条，共 ${result.total} 条`);
+      await loadBets();
+    } catch (error) {
+      toast(`导入失败：${error.message}`);
+    } finally {
+      fileInput.value = "";
+    }
+  });
+}
+
 async function loadBets() {
   try {
+    renderBetsToolbar();
     const data = await api("/api/bets/analysis");
     const s = data.summary;
     renderBetStats(s);

@@ -172,6 +172,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE bets ADD COLUMN profit REAL")
     if columns and "clv_line" not in columns:
         conn.execute("ALTER TABLE bets ADD COLUMN clv_line REAL")
+    if columns and "ref" not in columns:
+        # 台账同步的去重键：手机/静态端导出的注单带字符串 id，坚果云合并用
+        conn.execute("ALTER TABLE bets ADD COLUMN ref TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_bets_ref ON bets(ref) WHERE ref IS NOT NULL")
     # last_seen_at: captured_at 只在报价变化时更新，稳定的线会被误判超龄。
     # 每次抓取都刷新 last_seen_at，新鲜度判断用它而不是 captured_at。
     odds_columns = {row["name"] for row in conn.execute("PRAGMA table_info(odds_snapshots)")}

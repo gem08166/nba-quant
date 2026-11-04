@@ -80,3 +80,11 @@ THE_ODDS_API_MIN_HOURS = float(os.getenv("NBAQ_ODDSAPI_MIN_HOURS", "20"))
 
 # HoopsAPI（多书盘口 + 完赛收盘归档，含 Pinnacle）
 HOOPS_API_KEY = os.getenv("HOOPS_API_KEY", "")
+
+# 坚果云 WebDAV 台账同步（PC 端服务端直连，无 CORS 问题）。
+# NBAQ_WEBDAV_USER = 坚果云注册邮箱；NBAQ_WEBDAV_PASS = 应用密码
+# （坚果云网页 → 账户信息 → 安全选项 → 第三方应用管理 → 添加应用密码）。
+# 留空 = 不同步。
+WEBDAV_URL = os.getenv("NBAQ_WEBDAV_URL", "https://dav.jianguoyun.com/dav/")
+WEBDAV_USER = os.getenv("NBAQ_WEBDAV_USER", "")
+WEBDAV_PASS = os.getenv("NBAQ_WEBDAV_PASS", "")

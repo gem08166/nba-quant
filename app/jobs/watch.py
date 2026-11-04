@@ -168,6 +168,16 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 print(f"[watch] settle failed: {exc}")
                 loop_failed = True
 
+            # 台账 ↔ 坚果云（配置了 WebDAV 才跑）
+            try:
+                from . import betssync
+
+                sync_stats = betssync.run(conn)
+                if sync_stats.get("inbox_merged") or sync_stats.get("ledger_merged") or sync_stats.get("pushed"):
+                    print(f"[watch] betssync: {sync_stats}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[watch] betssync failed: {exc}")
+
             try:
                 predict_date(slate)
                 items = notify.collect_signal_items(conn, slate)
