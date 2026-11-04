@@ -168,12 +168,20 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 print(f"[watch] settle failed: {exc}")
                 loop_failed = True
 
-            # 台账 ↔ 坚果云（配置了 WebDAV 才跑）
+            # 台账 ↔ 坚果云（配置了 WebDAV 才跑）。PC 在线时把最新静态站也推上去，
+            # 手机 5 分钟内就能看到新数据（CI 离线时也不会断供）
             try:
                 from . import betssync
 
-                sync_stats = betssync.run(conn)
-                if sync_stats.get("inbox_merged") or sync_stats.get("ledger_merged") or sync_stats.get("pushed"):
+                import subprocess
+                import sys as _sys
+
+                subprocess.run(
+                    [_sys.executable, "-m", "scripts.export_static", "--out", "site"],
+                    cwd=str(ROOT), capture_output=True, timeout=600,
+                )
+                sync_stats = betssync.run(conn, push_static=True)
+                if sync_stats.get("inbox_merged") or sync_stats.get("ledger_merged") or sync_stats.get("pushed") or sync_stats.get("static_pushed"):
                     print(f"[watch] betssync: {sync_stats}")
             except Exception as exc:  # noqa: BLE001
                 print(f"[watch] betssync failed: {exc}")

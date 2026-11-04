@@ -68,6 +68,39 @@ async function detectMode() {
   return "api";
 }
 
+// 刷新数据通道（静态模式点「刷新」时调用；有新快照才更新，避免无谓重渲染）
+async function refreshStaticPayload() {
+  if (window.APP_MODE !== "static") return "api";
+  if (window.DAV?.davEnabled()) {
+    try {
+      const remote = await window.DAV.davGetText("nbaq/static.json");
+      if (remote) {
+        const parsed = JSON.parse(remote);
+        const old = window.STATIC_PAYLOAD?.generated_at;
+        window.STATIC_PAYLOAD = parsed;
+        window.STATIC_SOURCE = "webdav";
+        return parsed.generated_at === old ? "webdav-same" : "webdav-updated";
+      }
+    } catch (_) {
+      /* 坚果云不可达 → 回落 Pages */
+    }
+  }
+  try {
+    const resp = await fetch("data/static.json", { cache: "no-store" });
+    if (resp.ok) {
+      const parsed = await resp.json();
+      const old = window.STATIC_PAYLOAD?.generated_at;
+      window.STATIC_PAYLOAD = parsed;
+      window.STATIC_SOURCE = "pages";
+      return parsed.generated_at === old ? "pages-same" : "pages-updated";
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return "unavailable";
+}
+window.refreshStaticPayload = refreshStaticPayload;
+
 // ---------- 静态模式的 API 映射 ----------
 
 function staticApi(path) {

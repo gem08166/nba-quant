@@ -47,12 +47,12 @@ def _mkcol_ok(status: int) -> bool:
 
 
 def ensure_folders() -> bool:
-    """创建 nbaq/、nbaq/inbox/、nbaq/inbox/done/（已存在不算错）。"""
+    """创建同步所需的所有目录（已存在不算错）。"""
     if not enabled():
         return False
     ok = True
     with _client() as client:
-        for path in (FOLDER, INBOX, DONE):
+        for path in (FOLDER, INBOX, DONE, SNAP_INBOX, SNAP_DONE):
             try:
                 resp = client.request("MKCOL", _url(path + "/"))
                 if resp.status_code not in (201, 405) and resp.status_code >= 400:
@@ -64,10 +64,27 @@ def ensure_folders() -> bool:
     return ok
 
 
+def _mkdirs(path: str) -> None:
+    """逐级 MKCOL 父目录（PUT 到不存在的 collection 会 409）。"""
+    parts = path.split("/")
+    for i in range(1, len(parts)):
+        parent = "/".join(parts[:i])
+        try:
+            with _client() as client:
+                client.request("MKCOL", _url(parent + "/"))
+        except httpx.HTTPError:
+            pass
+
+
 def put_text(path: str, text: str) -> bool:
     if not enabled():
         return False
     with _client() as client:
+        resp = client.put(_url(path), content=text.encode("utf-8"))
+        if resp.status_code in (200, 201, 204):
+            return True
+        # 父目录不存在 → 逐级创建后重试一次
+        _mkdirs(path)
         resp = client.put(_url(path), content=text.encode("utf-8"))
         return resp.status_code in (200, 201, 204)
 

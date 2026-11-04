@@ -52,7 +52,22 @@ async function davGetText(path) {
 }
 
 async function davPutText(path, text) {
-  const resp = await davFetch(path, {
+  let resp = await davFetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: text,
+  });
+  if (resp.ok) return true;
+  // 父目录不存在 → 逐级 MKCOL 后重试一次
+  const parts = path.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    try {
+      await davFetch(parts.slice(0, i).join("/") + "/", { method: "MKCOL" });
+    } catch (_) {
+      /* 已存在/无权限忽略 */
+    }
+  }
+  resp = await davFetch(path, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: text,

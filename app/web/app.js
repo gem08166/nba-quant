@@ -235,6 +235,16 @@ async function load({ repredict = false } = {}) {
     if (repredict && window.APP_MODE === "api") {
       await api("/api/predict", { method: "POST", body: JSON.stringify({ date: state.date }) });
     }
+    if (window.APP_MODE === "static") {
+      // 静态模式：重新拉数据通道（坚果云 → Pages 兜底），有新快照才重渲染
+      const source = await window.refreshStaticPayload();
+      if (source.endsWith("same")) {
+        button.disabled = false;
+        button.textContent = "刷新";
+        toast("数据已是最新（" + (window.STATIC_PAYLOAD?.generated_at || "").replace("T", " ").slice(0, 16) + "）");
+        return;
+      }
+    }
     const data = await api(`/api/games?date=${encodeURIComponent(state.date)}`);
     if (!data.count) {
       const jumped = await autoAdjustDate();
