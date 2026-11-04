@@ -48,7 +48,15 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest -q
+        run: |
+          set -o pipefail
+          if ! pytest -q 2>&1 | tee pytest.log; then
+            # 把 FAILED/ERROR 行作为 annotation 暴露出来（无 token 也能在 checks API 看到）
+            grep -E "^(FAILED|ERROR)" pytest.log | while IFS= read -r line; do
+              echo "::error title=pytest::$line"
+            done
+            exit 1
+          fi
 
       - name: Compute slate date
         id: slate
