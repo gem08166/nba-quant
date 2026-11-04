@@ -434,13 +434,20 @@ async function loadBaselineCard() {
     if (report && report.overall && report.overall.n) {
       const o = report.overall;
       const mb = report.market_baseline || {};
-      const bt = (window.STATIC_PAYLOAD?.backtest?.report?.overall) || {};
+      let bt = (window.STATIC_PAYLOAD?.backtest?.report?.overall) || {};
+      if (bt.margin_mae == null) {
+        // 本地 API 模式没有 STATIC_PAYLOAD：直接取回测报告，避免这一格永远是 "—"
+        try {
+          const bd = await api("/api/backtest");
+          bt = bd.report?.overall || {};
+        } catch (_) { /* backtest 报告缺失时保持空 */ }
+      }
       box.innerHTML = `
         <div class="table-wrap"><table>
           <thead><tr><th>基准</th><th>分差 MAE</th><th>总分 MAE</th></tr></thead>
           <tbody>
             <tr><td>收盘线（SBR/FanDuel）</td><td class="pos">${mb.closing_margin_mae ?? "—"}</td><td class="pos">${mb.closing_total_mae ?? "—"}</td></tr>
-            <tr><td>本模型（walk-forward）</td><td>${bt.margin_mae ?? "—"}</td><td>${bt.total_mae ?? "—"}</td></tr>
+            <tr><td>本模型（walk-forward）</td><td>${bt.margin_mae != null ? Number(bt.margin_mae).toFixed(2) : "—"}</td><td>${bt.total_mae != null ? Number(bt.total_mae).toFixed(2) : "—"}</td></tr>
           </tbody>
         </table></div>
         <p class="notice" style="border:none;margin-top:8px;padding-top:0">
