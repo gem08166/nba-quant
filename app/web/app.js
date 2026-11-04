@@ -97,7 +97,7 @@ function edgeText(edge, game) {
   const line = edge.market === "spread" ? ` ${fmtSpread(edge.line)}` : "";
   const label = edge.market === "total" ? "大小分" : edge.market === "spread" ? "让分" : "胜负";
   const tag = edge.bettable ? "" : " · 仅观察";
-  return `${label} · ${side}${line} @ ${fmtPrice(edge.price)} · EV ${fmtSignedPct(edge.ev)}${tag}`;
+  return `${label} · ${side}${line} @ ${fmtPrice(edge.price)}${tag}`;
 }
 
 function noOdds(game) {
@@ -116,13 +116,54 @@ function renderStats(data) {
   $("#stats").innerHTML = `
     <div class="stat"><div class="k">比赛</div><div class="v">${data.count}</div></div>
     <div class="stat"><div class="k">信号条数</div><div class="v">${signals.length}</div></div>
-    <div class="stat"><div class="k">可下注</div><div class="v ${bettable.length ? "green" : ""}" title="通过软书/共识深度/同场互斥闸门的信号">${bettable.length}</div></div>
+    <div class="stat ${bettable.length ? "highlight" : ""}"><div class="k">可下注</div><div class="v ${bettable.length ? "green" : ""}" title="通过软书/共识深度/同场互斥闸门的信号">${bettable.length}</div></div>
     <div class="stat"><div class="k">最佳 EV</div><div class="v ${best ? "green" : ""}">${best ? fmtSignedPct(best.ev) : "—"}</div></div>
     <div class="stat"><div class="k">可下注最佳 EV</div><div class="v ${bestBettable ? "green" : ""}">${bestBettable ? fmtSignedPct(bestBettable.ev) : "—"}</div></div>
     <div class="stat"><div class="k">无盘口场次</div><div class="v" style="color:${noOdds ? "var(--muted)" : "inherit"}">${noOdds}</div></div>
     <div class="stat"><div class="k">日期</div><div class="v" style="font-size:14px">${esc(data.date)}</div></div>
     ${predTime ? `<div class="stat"><div class="k">预测时间</div><div class="v" style="font-size:13px">${fmtDayTime(predTime)}</div></div>` : ""}
   `;
+}
+
+function bettableEdgesOf(game) {
+  return (game.edges || [])
+    .filter((edge) => edge.signal && edge.bettable)
+    .sort((a, b) => b.ev - a.ev);
+}
+
+function renderBettablePanel(games) {
+  const box = $("#bettable-panel");
+  if (!box) return;
+  const rows = [];
+  for (const game of games) {
+    for (const edge of bettableEdgesOf(game)) rows.push({ game, edge });
+  }
+  rows.sort((a, b) => b.edge.ev - a.edge.ev);
+  if (!rows.length) {
+    box.innerHTML = `<div class="bp-empty">今日暂无可下注信号——其余高 EV 项因软书价/共识过浅/同场相关被降级为「仅观察」。</div>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="bp-head">
+      <span class="bp-title">今日可下注</span>
+      <span class="bp-count">${rows.length} 条</span>
+      <span class="bp-hint">已通过软书价 / 共识深度 / 同场互斥闸门</span>
+    </div>
+    <div class="bp-list">
+      ${rows
+        .map(({ game, edge }) => {
+          const side = edgeSideLabel(edge, game);
+          const line = edge.market === "spread" ? " " + fmtSpread(edge.side === "home" ? edge.line : -edge.line) : "";
+          return `<button class="bp-row" data-game="${esc(game.id)}">
+            <span class="bp-match">${esc(game.away.abbrev)} @ ${esc(game.home.abbrev)}</span>
+            <span class="bp-pick">${edgeMarketLabel(edge.market)} · ${esc(side)}${line}</span>
+            <span class="bp-price">@${fmtPrice(edge.price)}</span>
+            <span class="bp-book">${esc(edge.book || "")}</span>
+            <span class="bp-ev">${fmtSignedPct(edge.ev)}</span>
+          </button>`;
+        })
+        .join("")}
+    </div>`;
 }
 
 function renderGames(games) {
@@ -136,6 +177,8 @@ function renderGames(games) {
       const info = statusInfo(game);
       const pred = game.prediction;
       const best = game.best_edge;
+      const bettable = bettableEdgesOf(game)[0] || null;
+      const shown = bettable || best;
       const modelText = pred
         ? `模型 ${game.home.abbrev} ${fmtSpread(-pred.pred_margin)} · 总分 ${fmtTotal(pred.pred_total)}`
         : "尚未生成预测";
@@ -146,13 +189,18 @@ function renderGames(games) {
         game.home_score !== null && game.away_score !== null
           ? `<span class="score">${game.away_score} : ${game.home_score}</span>`
           : "";
-      const badge = best
-        ? `<div class="edge-badge"><span class="label">${edgeText(best, game)}</span><span class="ev">${fmtSignedPct(best.ev)}${best.created_at ? `<span class="edge-time" title="信号生成时间">${fmtSignalTime(best.created_at)}</span>` : ""}</span></div>`
+      const badge = shown
+        ? `<div class="edge-badge ${bettable ? "bettable" : ""}">
+             ${bettable ? `<span class="chip-bettable">可下注</span>` : ""}
+             <span class="label">${edgeText(shown, game)}</span>
+             <span class="ev">${fmtSignedPct(shown.ev)}${shown.created_at ? `<span class="edge-time" title="信号生成时间">${fmtSignalTime(shown.created_at)}</span>` : ""}</span>
+           </div>`
         : noOdds(game)
           ? `<div class="edge-badge muted"><span>暂无盘口报价</span><span>—</span></div>`
           : `<div class="edge-badge muted"><span>暂无正 EV 信号</span><span>—</span></div>`;
       return `
-        <article class="card ${best && best.signal ? "signal" : ""}" data-game="${esc(game.id)}">
+        <article class="card ${best && best.signal ? "signal" : ""} ${bettable ? "bettable" : ""}" data-game="${esc(game.id)}">
+          ${bettable ? `<div class="bettable-strip">✓ 可下注</div>` : ""}
           <div class="card-top">
             <span>${fmtDayTime(game.tipoff)} · ${esc(game.home.name)}</span>
             <span class="status ${info.cls}">${info.text}</span>
@@ -190,6 +238,7 @@ async function load({ repredict = false } = {}) {
     }
     state.games = data.games;
     renderStats(data);
+    renderBettablePanel(data.games);
     renderGames(data.games);
     loadBankroll();
   } catch (error) {
@@ -271,6 +320,7 @@ function renderModal(data) {
   const suggestionFor = (injury) => suggestions.find((s) => s.player === injury.player);
   const gameBets = data.bets || [];
   const openBets = gameBets.filter((bet) => bet.result === "open");
+  const bettableCount = edges.filter((edge) => edge.signal && edge.bettable).length;
   const edgeRows = edges
     .map(
       (edge, index) => {
@@ -279,7 +329,7 @@ function renderModal(data) {
           ? `<span data-bet-cell="${index}"><span class="pill signal" title="注 ${Number(existing.stake).toFixed(1)} @ ${fmtPrice(existing.price)}">已记录</span></span>`
           : `<span data-bet-cell="${index}"><button class="btn small" data-bet="${index}">记一笔</button></span>`;
         return `
-      <tr>
+      <tr class="${edge.signal && edge.bettable ? "row-bettable" : ""}">
         <td>${edgeMarketLabel(edge.market)}</td>
         <td>${esc(edgeSideLabel(edge, game))}
           ${edge.market === "spread" ? " " + fmtSpread(edge.side === "home" ? edge.line : -edge.line) : ""}</td>
@@ -290,7 +340,7 @@ function renderModal(data) {
         <td class="${edge.ev >= 0 ? "pos" : "neg"}">${fmtSignedPct(edge.ev)}</td>
         <td style="color:var(--muted)">${edge.created_at ? fmtSignalTime(edge.created_at) : "—"}</td>
         <td>${edge.signal ? `<span class="pill signal">信号</span>` : `<span class="pill">观察</span>`}
-          ${edge.signal && edge.bettable ? `<span class="pill signal pos" title="通过可下注闸门">可下</span>` : ""}
+          ${edge.signal && edge.bettable ? `<span class="pill signal pos" title="通过可下注闸门">可下注</span>` : ""}
           ${edge.signal && !edge.bettable && edge.bettable_note ? `<span class="pill" title="${esc(edge.bettable_note)}" style="color:var(--muted)">仅观察</span>` : ""}</td>
         <td>${edge.signal ? action : "—"}</td>
       </tr>`;
@@ -440,6 +490,11 @@ function renderModal(data) {
         : ""
     }
 
+    ${
+      bettableCount
+        ? `<div class="bettable-banner">本场有 <b>${bettableCount}</b> 条<b>可下注</b>信号（已通过软书价 / 共识深度 / 同场互斥闸门）。仍属纸面跟踪，不构成投注建议。</div>`
+        : ""
+    }
     <h3>模型 vs 盘口</h3>
     ${
       edgeRows

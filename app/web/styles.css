@@ -212,6 +212,11 @@ input:focus, select:focus {
   font-variant-numeric: tabular-nums;
 }
 .stat .v.green { color: var(--green); }
+.stat.highlight {
+  border-color: rgba(34, 197, 94, 0.55);
+  background: linear-gradient(180deg, rgba(22, 163, 74, 0.22), rgba(18, 25, 38, 0.92));
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.2);
+}
 
 /* ---------- 比赛卡片 ---------- */
 
@@ -320,6 +325,8 @@ input:focus, select:focus {
   margin-top: 12px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 4px;
   justify-content: space-between;
   gap: 10px;
   background: linear-gradient(180deg, rgba(20, 83, 45, 0.38), rgba(16, 66, 37, 0.28));
@@ -328,7 +335,7 @@ input:focus, select:focus {
   padding: 8px 11px;
   font-size: 12.5px;
 }
-.edge-badge .label { color: #c4f7d8; }
+.edge-badge .label { color: #c4f7d8; flex: 1 1 auto; min-width: 0; }
 .edge-badge .ev {
   color: var(--green);
   font-weight: 750;
@@ -340,6 +347,106 @@ input:focus, select:focus {
   color: var(--muted);
 }
 .edge-badge.muted .ev { color: var(--muted); font-weight: 400; }
+
+/* ---------- 可下注高亮（比普通信号更醒目） ---------- */
+
+.card.bettable {
+  border-color: rgba(34, 197, 94, 0.6);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28), 0 12px 28px rgba(22, 163, 74, 0.18);
+}
+.card.bettable::before { width: 4px; }
+
+.bettable-strip {
+  margin: -15px -16px 11px;
+  padding: 5px 16px;
+  background: linear-gradient(90deg, var(--green-strong), var(--green-deep));
+  color: #04220f;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+}
+
+.edge-badge.bettable {
+  background: linear-gradient(180deg, rgba(22, 163, 74, 0.55), rgba(16, 66, 37, 0.45));
+  border-color: var(--green-strong);
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.28);
+}
+.edge-badge.bettable .ev { color: #e2ffec; font-size: 14px; }
+.edge-badge .chip-bettable {
+  flex: none;
+  background: var(--green-strong);
+  color: #04220f;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* 今日可下注面板 */
+
+#bettable-panel { margin: 0 0 16px; }
+.bp-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; flex-wrap: wrap; }
+.bp-title { font-weight: 800; font-size: 13px; letter-spacing: 1px; color: var(--green); }
+.bp-count {
+  background: var(--green-strong);
+  color: #04220f;
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11.5px;
+  font-weight: 800;
+}
+.bp-hint { color: var(--muted); font-size: 11.5px; }
+.bp-list { display: grid; gap: 7px; }
+.bp-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr) 76px 100px 72px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: linear-gradient(90deg, rgba(22, 163, 74, 0.18), rgba(17, 24, 37, 0.92));
+  border: 1px solid #2f6a45;
+  border-radius: 10px;
+  padding: 9px 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.bp-row:hover { border-color: var(--green-strong); box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.25); }
+.bp-match { font-weight: 750; }
+.bp-pick { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-price { font-weight: 750; color: #d9ffe7; text-align: right; font-variant-numeric: tabular-nums; }
+.bp-book { color: var(--muted); font-size: 11px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-ev { color: var(--green); font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+.bp-empty {
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px dashed #24324a;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.bettable-banner {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(22, 163, 74, 0.16);
+  border: 1px solid #2f6a45;
+  color: #c4f7d8;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+tr.row-bettable td { background: rgba(22, 163, 74, 0.12); }
+tr.row-bettable td:first-child { font-weight: 750; color: #c4f7d8; }
+
+@media (max-width: 560px) {
+  .bp-row { grid-template-columns: 1fr auto auto; }
+  .bp-pick { grid-column: 1 / -1; white-space: normal; }
+  .bp-book, .bp-hint { display: none; }
+}
 
 .notice {
   margin-top: 26px;
