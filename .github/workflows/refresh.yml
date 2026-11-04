@@ -50,7 +50,7 @@ jobs:
       - name: Run tests
         run: |
           set -o pipefail
-          if ! pytest -q 2>&1 | tee pytest.log; then
+          if ! python -m pytest -q 2>&1 | tee pytest.log; then
             # 把 FAILED/ERROR 行与日志尾部作为 annotation 暴露（无 token 也能在 checks API 看到）
             grep -E "^(FAILED|ERROR)" pytest.log | while IFS= read -r line; do
               echo "::error title=pytest::$line"
