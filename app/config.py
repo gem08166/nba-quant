@@ -61,7 +61,8 @@ REQUEST_TIMEOUT = float(os.getenv("NBAQ_TIMEOUT", "25"))
 REQUEST_SLEEP = float(os.getenv("NBAQ_SLEEP", "0.25"))
 
 # Closing-line capture: refresh odds for games starting within this window.
-CLOSING_WINDOW_MIN = float(os.getenv("NBAQ_CLOSING_WINDOW", "10"))
+# 120 分钟：收盘前能抓到多个时点的快照（线移动检验的样本来源）
+CLOSING_WINDOW_MIN = float(os.getenv("NBAQ_CLOSING_WINDOW", "120"))
 
 # Push notifications. Any provider left empty is disabled.
 NTFY_SERVER = os.getenv("NBAQ_NTFY_SERVER", "https://ntfy.sh")

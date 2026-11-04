@@ -17,6 +17,13 @@ concurrency:
   group: refresh
   cancel-in-progress: false
 
+env:
+  # 数据源与推送的密钥（Settings → Secrets and variables → Actions 配置；
+  # 未配置时对应源自动跳过，不报错）
+  NBAQ_ODDS_API_KEY: ${{ secrets.NBAQ_ODDS_API_KEY }}
+  HOOPS_API_KEY: ${{ secrets.HOOPS_API_KEY }}
+  NBAQ_NTFY_TOPIC: ${{ secrets.NBAQ_NTFY_TOPIC }}
+
 jobs:
   refresh:
     runs-on: ubuntu-latest

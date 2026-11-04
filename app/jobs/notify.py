@@ -40,10 +40,15 @@ def _send_telegram(text: str) -> None:
 
 
 def _send_ntfy(title: str, text: str) -> None:
+    # HTTP header 只允许 latin-1：中文标题用 UTF-8 字节传（ntfy 按 UTF-8 解码）
     response = httpx.post(
         f"{NTFY_SERVER}/{NTFY_TOPIC}",
         content=text.encode("utf-8"),
-        headers={"Title": title, "Tags": "basketball", "Priority": "default"},
+        headers={
+            "Title": title.encode("utf-8"),
+            "Tags": "basketball",
+            "Priority": "default",
+        },
         timeout=15,
     )
     response.raise_for_status()

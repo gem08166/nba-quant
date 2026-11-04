@@ -1,0 +1,93 @@
+name: odds-refresh-light
+
+# 轻量盘口刷新：每 30 分钟一次（只抓数据 + 收盘快照 + 结算 + 预测 + 推送，
+# 不跑回测/holdout/线移动报告——那些在 refresh-and-deploy 里一天两次）。
+# 目的：给线移动检验积累多时点快照，并让 Pages 上的盘口保持新鲜。
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+env:
+  NBAQ_ODDS_API_KEY: ${{ secrets.NBAQ_ODDS_API_KEY }}
+  HOOPS_API_KEY: ${{ secrets.HOOPS_API_KEY }}
+  NBAQ_NTFY_TOPIC: ${{ secrets.NBAQ_NTFY_TOPIC }}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore database from data branch
+        run: |
+          mkdir -p data
+          if git fetch origin data --depth=1 2>/dev/null; then
+            git show origin/data:nba.db > data/nba.db
+            echo "restored data/nba.db from origin/data"
+          fi
+          if [ ! -s data/nba.db ]; then
+            echo "::error::no database available. Seed the data branch once."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Watch tick (ingest + closing + settle + predict + notify)
+        run: python -m app.cli watch --once
+
+      - name: Export static site
+        run: python -m scripts.export_static --out site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      # 数据库快照 force-push 到 data 分支（单 commit，历史不增长）。
+      # 注意：本 job 不提交 main（site/ 由 refresh-and-deploy 一天两次落库，
+      # 避免主仓每天多出几十个 auto refresh 提交）。
+      - name: Persist database to data branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -c "import sqlite3; c=sqlite3.connect('data/nba.db'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()"
+          rm -rf "$RUNNER_TEMP/db-repo"
+          mkdir -p "$RUNNER_TEMP/db-repo"
+          cp data/nba.db "$RUNNER_TEMP/db-repo/nba.db"
+          cd "$RUNNER_TEMP/db-repo"
+          git init -q
+          git checkout -q -b data
+          git add nba.db
+          git -c user.name="nba-quant-bot" -c user.email="nba-quant@users.noreply.github.com" \
+            commit -q -m "db snapshot: $(date -u +%FT%TZ)"
+          git push -q --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data:data
+
+  deploy:
+    needs: tick
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
