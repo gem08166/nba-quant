@@ -184,6 +184,7 @@ def run(test_start: str, test_end: str | None = None, out_path: str | None = Non
             "overall": _metrics(rows),
             "monthly": {month: _metrics(items) for month, items in sorted(monthly.items())},
             "calibration": _calibration(rows),
+            "isotonic": _isotonic_oos(rows),
             "rows": rows,
         }
         path = out_path or str(DATA_DIR / "backtest_report.json")
@@ -192,6 +193,45 @@ def run(test_start: str, test_end: str | None = None, out_path: str | None = Non
         return report
     finally:
         conn.close()
+
+
+def _isotonic_oos(rows: list[dict], fit_n: int = 600) -> dict:
+    """校准层拟合/验证（第三方审查 P1-1 的正确姿势）：
+
+    - 前 fit_n 场（时间序）拟合 isotonic 映射（原始模型概率 → 实际胜率）
+    - 后段（out-of-sample）验证：ECE before/after + 被选注单校准
+    - ECE 改善才写 calibration.json（生产 predict 读取应用）；否则不写（默认关闭）
+    """
+    from ..models.calibration import ece, isotonic_fit, isotonic_predict
+
+    if len(rows) < fit_n + 50:
+        return {"status": "insufficient_rows", "n": len(rows)}
+    fit_rows = rows[:fit_n]
+    oos_rows = rows[fit_n:]
+    blocks = isotonic_fit([r["home_win_prob"] for r in fit_rows], [float(r["home_win"]) for r in fit_rows])
+
+    oos_probs = [r["home_win_prob"] for r in oos_rows]
+    oos_outcomes = [float(r["home_win"]) for r in oos_rows]
+    calibrated = [isotonic_predict(blocks, p) for p in oos_probs]
+
+    ece_before = ece(oos_probs, oos_outcomes)
+    ece_after = ece(calibrated, oos_outcomes)
+
+    result = {
+        "status": "ok",
+        "fit_rows": len(fit_rows),
+        "oos_rows": len(oos_rows),
+        "ece_before": round(ece_before, 4),
+        "ece_after": round(ece_after, 4),
+        "improved": ece_after < ece_before,
+        "blocks": [[round(w, 1), round(m, 4), round(s, 3), round(e, 3)] for w, m, s, e in blocks],
+    }
+    # ECE 改善才持久化校准曲线（生产 predict 读取应用）
+    if result["improved"]:
+        cal_path = DATA_DIR / "calibration.json"
+        cal_path.write_text(json.dumps({"blocks": result["blocks"], "fit_rows": len(fit_rows)}, ensure_ascii=False), encoding="utf-8")
+        result["saved"] = True
+    return result
 
 
 def print_report(report: dict) -> None:
