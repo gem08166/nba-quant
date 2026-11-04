@@ -180,8 +180,9 @@ def run(start: str, end: str | None = None) -> dict:
 
         # --- 市场基准（对照组）：收盘线自身的预测误差 + 按收盘公允价下注热门侧的 ROI ---
         # 预期 ROI ≈ −vig（约 −4.5%）；模型若显著低于此基线即为负贡献。
+        # 覆盖全部有收盘线的比赛（不是最后一个月）。
         margin_errs, total_errs, baseline_rows = [], [], []
-        for g in month_games:
+        for g in games:
             close = closing[g["id"]]
             sp = close.get("spread", {})
             if sp.get("home") and sp["home"].get("line") is not None:
@@ -201,7 +202,7 @@ def run(start: str, end: str | None = None) -> dict:
         baseline_decided = [b for b in baseline_rows if b["result"] != "push"]
         baseline_profit = sum(b["profit"] for b in baseline_rows)
         market_baseline = {
-            "n_games": len(month_games),
+            "n_games": len(games),
             "closing_margin_mae": round(float(np.mean(margin_errs)), 2) if margin_errs else None,
             "closing_total_mae": round(float(np.mean(total_errs)), 2) if total_errs else None,
             "favorite_bet_roi_at_closing": round(baseline_profit / len(baseline_decided), 4) if baseline_decided else None,
