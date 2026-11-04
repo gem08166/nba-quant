@@ -76,7 +76,16 @@ function staticApi(path) {
     return payload.rapm;
   }
   if (path.startsWith("/api/model-clv")) {
-    return payload.model_clv || { report: null };
+    // 静态导出时已裁剪 model_clv 的形状（无 report 包装），这里补上 API 结构
+    const mc = payload.model_clv;
+    if (mc && mc.overall) return { report: mc };
+    return { report: null };
+  }
+  if (path.startsWith("/api/linemove")) {
+    return payload.linemove || { overall: null };
+  }
+  if (path.startsWith("/api/holdout")) {
+    return payload.holdout || { error: "no holdout report" };
   }
   if (path.startsWith("/api/trends")) {
     return payload.trends;

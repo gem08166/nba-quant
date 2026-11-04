@@ -59,19 +59,34 @@ def fair_two_way(price_a: float | None, price_b: float | None) -> tuple[float, f
 def cover_prob(mu_margin: float, home_line: float, sigma: float) -> float:
     """P(home covers), where home_line is the home spread (e.g. -5.5).
 
-    Uses a half-point continuity correction for integer lines.
+    Integer lines can push: return P(win) + 0.5·P(push) using a continuity
+    correction on the integer margin distribution. Half/quarter lines have no
+    push, so they use the plain normal tail.
     """
     if sigma <= 0:
         raise ValueError("sigma must be positive")
-    threshold = math.floor(-home_line) + 0.5
-    return 1.0 - norm_cdf((threshold - mu_margin) / sigma)
+    target = -home_line
+    nearest = round(target)
+    if abs(target - nearest) < 1e-9:
+        # P(margin > k) + 0.5·P(margin = k)
+        return 1.0 - 0.5 * (
+            norm_cdf((nearest + 0.5 - mu_margin) / sigma)
+            + norm_cdf((nearest - 0.5 - mu_margin) / sigma)
+        )
+    return 1.0 - norm_cdf((target - mu_margin) / sigma)
 
 
 def over_prob(mu_total: float, total_line: float, sigma: float) -> float:
+    """P(over) with the same push-aware integer-line treatment as cover_prob."""
     if sigma <= 0:
         raise ValueError("sigma must be positive")
-    threshold = math.floor(total_line) + 0.5
-    return 1.0 - norm_cdf((threshold - mu_total) / sigma)
+    nearest = round(total_line)
+    if abs(total_line - nearest) < 1e-9:
+        return 1.0 - 0.5 * (
+            norm_cdf((nearest + 0.5 - mu_total) / sigma)
+            + norm_cdf((nearest - 0.5 - mu_total) / sigma)
+        )
+    return 1.0 - norm_cdf((total_line - mu_total) / sigma)
 
 
 def moneyline_prob(mu_margin: float, sigma: float) -> float:

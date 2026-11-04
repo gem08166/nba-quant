@@ -15,6 +15,9 @@ function resultBadge(result) {
   return `<span class="pill ${result === "won" ? "signal" : ""} ${cls}">${resultLabel(result)}</span>`;
 }
 
+const fmtLineMove = (value) =>
+  value == null ? "—" : `${value > 0 ? "+" : ""}${Number(value).toFixed(1)} 分`;
+
 function renderBetStats(s) {
   const stats = [
     ["已结算", `${s.settled} (胜${s.wins}/负${s.losses}/走${s.pushes})`],
@@ -23,6 +26,8 @@ function renderBetStats(s) {
     ["命中率", fmtPct(s.hit_rate)],
     ["平均 CLV", fmtSignedPct(s.avg_clv), s.avg_clv > 0 ? "green" : ""],
     ["CLV 为正", fmtPct(s.clv_positive_rate)],
+    ["平均线移动", fmtLineMove(s.avg_clv_line), s.avg_clv_line > 0 ? "green" : ""],
+    ["线移动为正", fmtPct(s.clv_line_positive_rate)],
     ["未结算", String(s.open)],
   ];
   document.getElementById("bets-stats").innerHTML = stats
@@ -39,12 +44,13 @@ function renderMarkets(byMarket) {
   }
   box.innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>市场</th><th>n</th><th>投入</th><th>盈亏</th><th>ROI</th><th>平均 CLV</th></tr></thead>
+      <thead><tr><th>市场</th><th>n</th><th>投入</th><th>盈亏</th><th>ROI</th><th>平均 CLV</th><th>平均线移动</th></tr></thead>
       <tbody>
         ${entries
           .map(([market, s]) => {
             const roi = s.roi != null ? fmtSignedPct(s.roi) : "—";
             const clv = s.avg_clv != null ? fmtSignedPct(s.avg_clv) : "—";
+            const clvLine = fmtLineMove(s.avg_clv_line);
             return `<tr>
               <td>${marketLabel(market)}</td>
               <td>${s.n}</td>
@@ -52,6 +58,7 @@ function renderMarkets(byMarket) {
               <td class="${s.profit >= 0 ? "pos" : "neg"}">${s.profit >= 0 ? "+" : ""}${s.profit.toFixed(2)}</td>
               <td class="${s.roi >= 0 ? "pos" : "neg"}">${roi}</td>
               <td>${clv}</td>
+              <td>${clvLine}</td>
             </tr>`;
           })
           .join("")}
@@ -67,7 +74,7 @@ function renderLedger(bets) {
   }
   box.innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>比赛日</th><th>比赛</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th></tr></thead>
+      <thead><tr><th>比赛日</th><th>比赛</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th></tr></thead>
       <tbody>
         ${bets
           .slice()
@@ -76,6 +83,7 @@ function renderLedger(bets) {
             const line =
               bet.line == null ? "—" : bet.market === "spread" ? fmtSpread(bet.line) : fmtTotal(bet.line);
             const clv = bet.clv != null ? fmtSignedPct(bet.clv) : "—";
+            const clvLine = fmtLineMove(bet.clv_line);
             const ev = bet.ev != null ? fmtSignedPct(bet.ev) : "—";
             const profit =
               bet.result === "open" || bet.profit == null
@@ -93,6 +101,7 @@ function renderLedger(bets) {
               <td>${resultBadge(bet.result)}</td>
               <td>${profit}</td>
               <td class="${bet.clv != null && bet.clv >= 0 ? "pos" : "neg"}">${clv}</td>
+              <td class="${bet.clv_line != null && bet.clv_line >= 0 ? "pos" : "neg"}">${clvLine}</td>
             </tr>`;
           })
           .join("")}

@@ -8,8 +8,8 @@ dist/
 
 # 数据与运行时产物（Actions 云端计算的基底 + 静态站数据随仓库走）
 # 注意：用 /* 而不是 data/，否则子文件例外不生效
+# nba.db 不进主仓：由 Actions 持久化到独立的 data 分支（见 refresh.yml）
 data/*
-!data/nba.db
 !data/odds_api_state.json
 !data/hoops_state.json
 !data/backup/

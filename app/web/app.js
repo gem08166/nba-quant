@@ -96,7 +96,8 @@ function edgeText(edge, game) {
           : "小分";
   const line = edge.market === "spread" ? ` ${fmtSpread(edge.line)}` : "";
   const label = edge.market === "total" ? "大小分" : edge.market === "spread" ? "让分" : "胜负";
-  return `${label} · ${side}${line} @ ${fmtPrice(edge.price)} · EV ${fmtSignedPct(edge.ev)}`;
+  const tag = edge.bettable ? "" : " · 仅观察";
+  return `${label} · ${side}${line} @ ${fmtPrice(edge.price)} · EV ${fmtSignedPct(edge.ev)}${tag}`;
 }
 
 function noOdds(game) {
@@ -107,14 +108,17 @@ function renderStats(data) {
   const gamesWithEdges = data.games.filter((game) => (game.edges || []).some((e) => e.signal));
   const allEdges = data.games.flatMap((game) => game.edges || []);
   const signals = allEdges.filter((edge) => edge.signal);
+  const bettable = signals.filter((edge) => edge.bettable);
   const best = signals.sort((a, b) => b.ev - a.ev)[0];
+  const bestBettable = bettable.sort((a, b) => b.ev - a.ev)[0];
   const noOdds = data.games.filter((game) => !game.prediction?.lines?.spread && !game.prediction?.lines?.total).length;
   const predTime = data.games.find((g) => g.prediction?.created_at)?.prediction?.created_at;
   $("#stats").innerHTML = `
     <div class="stat"><div class="k">比赛</div><div class="v">${data.count}</div></div>
-    <div class="stat"><div class="k">信号场次</div><div class="v ${gamesWithEdges.length ? "green" : ""}">${gamesWithEdges.length}</div></div>
     <div class="stat"><div class="k">信号条数</div><div class="v">${signals.length}</div></div>
+    <div class="stat"><div class="k">可下注</div><div class="v ${bettable.length ? "green" : ""}" title="通过软书/共识深度/同场互斥闸门的信号">${bettable.length}</div></div>
     <div class="stat"><div class="k">最佳 EV</div><div class="v ${best ? "green" : ""}">${best ? fmtSignedPct(best.ev) : "—"}</div></div>
+    <div class="stat"><div class="k">可下注最佳 EV</div><div class="v ${bestBettable ? "green" : ""}">${bestBettable ? fmtSignedPct(bestBettable.ev) : "—"}</div></div>
     <div class="stat"><div class="k">无盘口场次</div><div class="v" style="color:${noOdds ? "var(--muted)" : "inherit"}">${noOdds}</div></div>
     <div class="stat"><div class="k">日期</div><div class="v" style="font-size:14px">${esc(data.date)}</div></div>
     ${predTime ? `<div class="stat"><div class="k">预测时间</div><div class="v" style="font-size:13px">${fmtDayTime(predTime)}</div></div>` : ""}
@@ -285,7 +289,9 @@ function renderModal(data) {
         <td class="${edge.edge >= 0 ? "pos" : "neg"}">${fmtSignedPct(edge.edge)}</td>
         <td class="${edge.ev >= 0 ? "pos" : "neg"}">${fmtSignedPct(edge.ev)}</td>
         <td style="color:var(--muted)">${edge.created_at ? fmtSignalTime(edge.created_at) : "—"}</td>
-        <td>${edge.signal ? `<span class="pill signal">信号</span>` : `<span class="pill">观察</span>`}</td>
+        <td>${edge.signal ? `<span class="pill signal">信号</span>` : `<span class="pill">观察</span>`}
+          ${edge.signal && edge.bettable ? `<span class="pill signal pos" title="通过可下注闸门">可下</span>` : ""}
+          ${edge.signal && !edge.bettable && edge.bettable_note ? `<span class="pill" title="${esc(edge.bettable_note)}" style="color:var(--muted)">仅观察</span>` : ""}</td>
         <td>${edge.signal ? action : "—"}</td>
       </tr>`;
       }

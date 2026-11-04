@@ -6,7 +6,18 @@ import sqlite3
 from datetime import datetime, timezone
 
 from .. import db
-from ..config import EDGE_THRESHOLD, KELLY_FRACTION, MARKET_BLEND, MAX_STAKE_PCT, MIN_EV
+from ..config import (
+    BETTABLE_MIN_BOOKS,
+    BETTABLE_PRICE_OUTLIER,
+    EDGE_THRESHOLD,
+    KELLY_FRACTION,
+    MARKET_BLEND,
+    MAX_STAKE_PCT,
+    MIN_EV,
+    MIN_FRESH_BOOKS,
+    MUTUAL_EXCLUSIVE,
+    SHARP_ANCHOR,
+)
 from ..models import rapm, ratings
 from ..pricing.devig import (
     cover_prob,
@@ -19,6 +30,12 @@ from ..pricing.devig import (
 )
 
 BOOK_PRIORITY = ("Draft Kings", "DraftKings", "ESPN BET", "BetMGM", "Caesars")
+
+# Sharp 书源：定价效率高、软书会跟随其移动。SHARP_ANCHOR 开启时，
+# fair 概率以 sharp 书去水为锚（软书价格只回答"哪里拿得到价"）。
+SHARP_BOOKS = {"pinnacle"}
+# 已知软书/聚合源：他们的"最优价"经常是延迟线或限注单，标记 sharp_doubt。
+SOFT_BOOKS = {"1xbet", "betway", "smarkets", "unibet", "betrivers", "hao-tiyu", "bovada"}
 
 # 书源别名归一化：同一 bookmaker 在不同数据源里的命名差异会被共识当成两家
 # （实测 Draft Kings/DraftKings、FanDuel/fanduel 重复计权）。统一到规范名。
@@ -103,6 +120,11 @@ def _is_fresh(captured_at: str | None) -> bool:
     return (_now_utc() - ts).total_seconds() < STALE_HOURS * 3600
 
 
+def _seen_at(row: dict) -> str | None:
+    """最后一次确认该报价仍有效的时间（旧库没有 last_seen_at 时退回 captured_at）。"""
+    return row.get("last_seen_at") or row.get("captured_at")
+
+
 def _devig_pair(price_a: float | None, price_b: float | None) -> tuple[float, float] | None:
     """乘法去水：返回 (a 侧公允概率, b 侧公允概率)。缺一边返回 None——
     单边价格无法去水，用它计算 edge 会产出假信号（审查 P0 项）。"""
@@ -111,6 +133,32 @@ def _devig_pair(price_a: float | None, price_b: float | None) -> tuple[float, fl
     inv_a, inv_b = 1.0 / price_a, 1.0 / price_b
     total = inv_a + inv_b
     return inv_a / total, inv_b / total
+
+
+def _apply_sharp_anchor(entries: list[dict], market: dict) -> dict:
+    """Sharp 锚定：把共识公允概率换成 sharp 书源的去水值。
+
+    全体平均公允概率会被软书迟滞线污染——真正的定价基准是 sharp 书
+    （Pinnacle 类）。软书价格仍然保留用于"最优价/中位价"（回答哪里拿得到价），
+    但 fair_* 换成 sharp 去水值，edge/EV 从此衡量"软书价 vs sharp 公允"。
+    无 sharp 书源参与该市场时原样返回（自动回退全体共识）。
+    """
+    if not SHARP_ANCHOR:
+        return market
+    sharp = [e for e in entries if e["book"] in SHARP_BOOKS]
+    if not sharp:
+        return market
+    fair_a = sum(e["fair_a"] for e in sharp) / len(sharp)
+    fair_b = sum(e["fair_b"] for e in sharp) / len(sharp)
+    out = dict(market)
+    # 按 market dict 实际使用的键名写回
+    for key_a, key_b in (("fair_home", "fair_away"), ("fair_over", "fair_under"), ("fair_a", "fair_b")):
+        if key_a in out:
+            out[key_a] = fair_a
+            out[key_b] = fair_b
+    out["sharp_anchor"] = True
+    out["sharp_books"] = sorted({e["book"] for e in sharp})
+    return out
 
 
 def _mode(values: list[float]) -> float | None:
@@ -179,8 +227,9 @@ def consensus_market(odds_rows: list[dict]) -> dict:
             continue
         book = _normalize_book(row.get("book"))
         key = (row["market"], row["side"])
+        seen_at = _seen_at(row)
         age_hours = None
-        ts = _parse_ts_local(row.get("captured_at"))
+        ts = _parse_ts_local(seen_at)
         if ts:
             age_hours = (now - ts).total_seconds() / 3600.0
         entry = {"book": book, "market": row["market"], "side": row["side"],
@@ -189,19 +238,31 @@ def consensus_market(odds_rows: list[dict]) -> dict:
         target = books.setdefault(book, {})
         existing = target.get(key)
         if existing is None or (existing.get("age_hours") or 0) >= (age_hours or 0):
-            target[key] = row
-        if _is_fresh(row.get("captured_at")):
+            target[key] = entry
+        if _is_fresh(seen_at):
             ftarget = fresh_books.setdefault(book, {})
             fexisting = ftarget.get(key)
             if fexisting is None or (fexisting.get("age_hours") or 0) >= (age_hours or 0):
-                ftarget[key] = row
+                ftarget[key] = entry
 
-    stale = not fresh_books  # 没有任何新鲜书源 → 全量回退模式
-    # 有新鲜书源只用新鲜的；否则回退全量（陈旧共识仍优于单书）
-    active_books = fresh_books if fresh_books else books
+    def _books_for_market(market: str) -> tuple[dict, bool]:
+        """新鲜书源足够多才只用新鲜的；否则回退全量并标记 stale。
 
-    result: dict[str, dict] = {"stale": stale}
+        只按"有没有任何新鲜书源"做 all-or-nothing 切换会让共识在一条线变动后
+        从 12 家退化成 1 家——单书共识的噪声远大于略旧的 12 家共识。
+        """
+        fresh_n = sum(
+            1 for by_key in fresh_books.values()
+            if any(key[0] == market for key in by_key)
+        )
+        if fresh_n >= MIN_FRESH_BOOKS:
+            return fresh_books, False
+        return books, True
+
+    result: dict[str, dict] = {"stale": False, "min_fresh_books": MIN_FRESH_BOOKS}
     # --- spread（home 线） ---
+    active_books, market_stale = _books_for_market("spread")
+    result["stale"] = result["stale"] or market_stale
     entries: list[dict] = []
     for book, by_key in active_books.items():
         h, a = by_key.get(("spread", "home")), by_key.get(("spread", "away"))
@@ -226,7 +287,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
                 for e in at_line
             ]
         )
-        result["spread"] = {
+        spread_out = {
             "line": consensus_line,
             "home_price": best_h,
             "away_price": best_a,
@@ -237,8 +298,11 @@ def consensus_market(odds_rows: list[dict]) -> dict:
             "away_book": book_a,
             "best_price_stale": stale_best,
         }
+        result["spread"] = _apply_sharp_anchor(at_line, spread_out)
 
     # --- total ---
+    active_books, market_stale = _books_for_market("total")
+    result["stale"] = result["stale"] or market_stale
     entries: list[dict] = []
     for book, by_key in active_books.items():
         o, u = by_key.get(("total", "over")), by_key.get(("total", "under"))
@@ -263,7 +327,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
                 for e in at_line
             ]
         )
-        result["total"] = {
+        total_out = {
             "line": consensus_line,
             "over_price": best_o,
             "under_price": best_u,
@@ -274,8 +338,11 @@ def consensus_market(odds_rows: list[dict]) -> dict:
             "under_book": book_u,
             "best_price_stale": stale_best,
         }
+        result["total"] = _apply_sharp_anchor(at_line, total_out)
 
     # --- moneyline ---
+    active_books, market_stale = _books_for_market("moneyline")
+    result["stale"] = result["stale"] or market_stale
     ml_entries: list[dict] = []
     for book, by_key in active_books.items():
         h, a = by_key.get(("moneyline", "home")), by_key.get(("moneyline", "away"))
@@ -293,7 +360,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
         # 价格"评估，而非碰运气的全场最优；最优价仍保留展示用于比较）。
         median_h = sorted(e["price_a"] for e in ml_entries)[len(ml_entries) // 2]
         median_a = sorted(e["price_b"] for e in ml_entries)[len(ml_entries) // 2]
-        result["moneyline"] = {
+        ml_out = {
             "home_price": best_h,
             "away_price": best_a,
             "home_price_median": median_h,
@@ -305,6 +372,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
             "away_book": book_a,
             "best_price_stale": stale_best,
         }
+        result["moneyline"] = _apply_sharp_anchor(ml_entries, ml_out)
     return result
 
 
@@ -346,6 +414,21 @@ def _make_edge(
         "signal": bool(edge >= EDGE_THRESHOLD and ev >= MIN_EV and kelly > 0),
         "created_at": created_at,
     }
+
+
+def _bettable_reason(edge: dict, n_books: int, best_book: str) -> str | None:
+    """可下注闸门：signal 只说明"模型算出来有 EV"，bettable 说明"这个价真实
+    可拿、共识足够深"。返回 None=可下注；返回字符串=降级原因。
+
+    与 signal 分开的理由：信号的历史 ROI 是 −11%，其中最大 edge 分位最差
+    （−27.7%）——主要死因是"最优价其实是延迟线/限注单"。这几条闸门直接
+    针对该死因，宁可少不可假。
+    """
+    if best_book and best_book.lower() in SOFT_BOOKS:
+        return f"最优价来自软书/聚合源 {best_book}（延迟线/限注单风险）"
+    if n_books < BETTABLE_MIN_BOOKS:
+        return f"共识书源数 {n_books} < {BETTABLE_MIN_BOOKS}（定价基准不可靠）"
+    return None
 
 
 def build_market(
@@ -512,6 +595,45 @@ def build_market(
                 edges.append(signal)
 
     edges.sort(key=lambda e: e["ev"], reverse=True)
+
+    # --- 可下注标注（bettable）：signal 与 bettable 分离 ---
+    # signal = 模型算出 EV；bettable = 价格真实可拿 + 共识深度够。
+    # 闸门依据：历史信号 ROI −11%，最大 edge 分位 −27.7%——主死因是
+    # "最优价其实是延迟线/限注单"。软书价、浅共识都降级为观察。
+    for edge in edges:
+        n_books = (
+            (spread_cons or {}).get("n_books", 0)
+            if edge["market"] == "spread"
+            else (total_cons or {}).get("n_books", 0)
+            if edge["market"] == "total"
+            else (cons.get("moneyline") or {}).get("n_books", 0)
+        )
+        # 可下注必须是"信号"且未被分歧闸门拦下——观察项（EV 为负、被 gated）
+        # 不能被标成可下注（旧版漏了这个前置条件，gated 的 ML 也会显示可下注）。
+        if not edge.get("signal") or edge.get("gated"):
+            edge["bettable"] = False
+            if edge.get("gated"):
+                edge["bettable_note"] = "分歧闸门已拦下（仅观察）"
+            continue
+        reason = _bettable_reason(edge, n_books, edge.get("book") or "")
+        edge["bettable"] = reason is None
+        if reason:
+            edge["bettable_note"] = reason
+
+    # --- 同场互斥：spread 与 moneyline 高度相关（大让分≈高胜率）---
+    # 同场两个市场同时触发时只保留 EV 最高的一条可下注，另一条降为观察，
+    # 防止相关性仓位叠加（组合层面的隐藏杠杆）。
+    if MUTUAL_EXCLUSIVE:
+        corr = [
+            e for e in edges
+            if e.get("signal") and e.get("bettable") and e["market"] in ("spread", "moneyline")
+        ]
+        if len(corr) > 1:
+            keep = corr[0]  # edges 已按 EV 降序
+            for e in corr[1:]:
+                e["bettable"] = False
+                e["bettable_note"] = f"同场与 {keep['market']}/{keep['side']} 相关（{e['market']} EV 更低），避免叠加仓位"
+
     return book, {
         "spread": spread_line,
         "total": total_line,
@@ -523,6 +645,9 @@ def build_market(
             "n_books_total": (total_cons or {}).get("n_books", 0),
             "n_books_ml": (cons.get("moneyline") or {}).get("n_books", 0),
             "stale": cons.get("stale", False),
+            "sharp_anchor_spread": bool((spread_cons or {}).get("sharp_anchor")),
+            "sharp_anchor_total": bool((total_cons or {}).get("sharp_anchor")),
+            "sharp_anchor_ml": bool((cons.get("moneyline") or {}).get("sharp_anchor")),
         },
         "pricing": {
             "market_blend": MARKET_BLEND,
@@ -582,6 +707,7 @@ def predict_game(
         "pricing": market["pricing"],
         "edges": market["edges"],
         "consensus": market.get("consensus"),
+        "divergence_risk": market.get("divergence_risk"),
         "injury_suggestions": injury_suggestions,
         "components": {
             "elo_home": elo.get(home_id, 1500.0),

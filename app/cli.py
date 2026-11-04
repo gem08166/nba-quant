@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from datetime import date, timedelta
+from pathlib import Path
 
 from . import db
 from .config import DB_PATH, REQUEST_SLEEP
@@ -100,6 +102,23 @@ def cmd_signal_backtest(args: argparse.Namespace) -> None:
 
     report = signal_backtest.run(start=args.start, end=args.end)
     signal_backtest.print_report(report)
+
+
+def cmd_linemove(args: argparse.Namespace) -> None:
+    """信号→线移动方向检验（可下注闸门的第 0 层验收）。"""
+    import subprocess
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "linemove_analysis.py"
+    cmd = [sys.executable, "-X", "utf8", "-u", str(script)]
+    if getattr(args, "start", None):
+        cmd += ["--start", args.start]
+    proc = subprocess.run(cmd, encoding="utf-8", errors="replace", capture_output=True)
+    out = (proc.stdout or "") + (proc.stderr or "")
+    try:
+        print(out.strip() or "(no output)")
+    except UnicodeEncodeError:  # Windows GBK console
+        sys.stdout.buffer.write((out.strip() + "\n").encode("utf-8", "replace"))
+    raise SystemExit(proc.returncode)
 
 
 def cmd_odds_api(args: argparse.Namespace) -> None:
@@ -240,6 +259,14 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     backtest.print_report(report)
 
 
+def cmd_holdout(args: argparse.Namespace) -> None:
+    """冻结 holdout：前 X% 训练 → 后 (1-X%) 一次性考试。"""
+    from scripts.holdout_eval import print_report, run
+
+    report = run(split=args.split)
+    print_report(report)
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     import uvicorn
 
@@ -293,6 +320,10 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--end", default=None)
     sb.set_defaults(func=cmd_signal_backtest)
 
+    lm = sub.add_parser("linemove", help="signal→line-move direction gate (bettable acceptance layer 0)")
+    lm.add_argument("--start", default=None)
+    lm.set_defaults(func=cmd_linemove)
+
     oa = sub.add_parser("odds-api", help="fetch The Odds API multi-book odds (quota-aware)")
     oa.add_argument("--date", default=None)
     oa.add_argument("--force", action="store_true", help="ignore the min-interval guard")
@@ -314,6 +345,10 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--test-start", default="2026-01-01")
     bt.add_argument("--test-end", default=None)
     bt.set_defaults(func=cmd_backtest)
+
+    ho = sub.add_parser("holdout", help="frozen holdout eval: fit on first X%, one-shot test the rest")
+    ho.add_argument("--split", type=float, default=0.7, help="train fraction (default 0.7)")
+    ho.set_defaults(func=cmd_holdout)
 
     closing = sub.add_parser("closing", help="capture closing odds for imminent games")
     closing.set_defaults(func=cmd_closing)

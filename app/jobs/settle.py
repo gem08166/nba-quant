@@ -46,6 +46,27 @@ def outcome(bet: dict, home_score: int, away_score: int) -> str:
     return "void"
 
 
+def _line_clv(bet: dict, closing_line: float | None) -> float | None:
+    """线移动 CLV（单位：分），符号约定为"正数 = 下注时拿到了更好的线"。
+
+    - 让分：下注线 − 收盘线（主 -3 vs 收盘 -5 → +2）
+    - 大小分：大球 收盘线 − 下注线；小球 下注线 − 收盘线
+    - 胜负：无线，返回 None
+    """
+    line = bet.get("line")
+    if line is None or closing_line is None:
+        return None
+    market = bet.get("market")
+    if market == "spread":
+        return float(line) - float(closing_line)
+    if market == "total":
+        if bet.get("side") == "over":
+            return float(closing_line) - float(line)
+        if bet.get("side") == "under":
+            return float(line) - float(closing_line)
+    return None
+
+
 def _closing_snapshot(
     conn: sqlite3.Connection, game_id: str, market: str, side: str, tipoff: str | None
 ) -> sqlite3.Row | None:
@@ -106,14 +127,15 @@ def settle(conn: sqlite3.Connection | None = None) -> list[dict]:
             clv = None
             if closing_price and closing_price > 1.0 and bet["price"] > 1.0:
                 clv = bet["price"] / closing_price - 1.0
+            clv_line = _line_clv(bet, closing_line)
 
             conn.execute(
                 """
                 UPDATE bets
-                SET result=?, profit=?, closing_line=?, closing_price=?, clv=?
+                SET result=?, profit=?, closing_line=?, closing_price=?, clv=?, clv_line=?
                 WHERE id=?
                 """,
-                (result, profit, closing_line, closing_price, clv, bet["id"]),
+                (result, profit, closing_line, closing_price, clv, clv_line, bet["id"]),
             )
             settled.append(
                 {
@@ -128,6 +150,7 @@ def settle(conn: sqlite3.Connection | None = None) -> list[dict]:
                     "closing_line": closing_line,
                     "closing_price": closing_price,
                     "clv": clv,
+                    "clv_line": clv_line,
                 }
             )
         conn.commit()
@@ -184,18 +207,21 @@ def summarize(conn: sqlite3.Connection) -> dict:
     profit = sum(bet["profit"] or 0.0 for bet in decided)
 
     clvs = [bet["clv"] for bet in decided if bet["clv"] is not None]
+    clv_lines = [bet["clv_line"] for bet in decided if bet.get("clv_line") is not None]
     by_market: dict[str, dict] = {}
     for market in sorted({bet["market"] for bet in decided}):
         rows = [bet for bet in decided if bet["market"] == market]
         m_stake = sum(bet["stake"] for bet in rows)
         m_profit = sum(bet["profit"] or 0.0 for bet in rows)
         m_clv = [bet["clv"] for bet in rows if bet["clv"] is not None]
+        m_clv_line = [bet["clv_line"] for bet in rows if bet.get("clv_line") is not None]
         by_market[market] = {
             "n": len(rows),
             "stake": m_stake,
             "profit": m_profit,
             "roi": (m_profit / m_stake) if m_stake else None,
             "avg_clv": (sum(m_clv) / len(m_clv)) if m_clv else None,
+            "avg_clv_line": (sum(m_clv_line) / len(m_clv_line)) if m_clv_line else None,
         }
 
     return {
@@ -211,5 +237,10 @@ def summarize(conn: sqlite3.Connection) -> dict:
         "clv_n": len(clvs),
         "avg_clv": (sum(clvs) / len(clvs)) if clvs else None,
         "clv_positive_rate": (sum(1 for value in clvs if value > 0) / len(clvs)) if clvs else None,
+        "clv_line_n": len(clv_lines),
+        "avg_clv_line": (sum(clv_lines) / len(clv_lines)) if clv_lines else None,
+        "clv_line_positive_rate": (
+            sum(1 for value in clv_lines if value > 0) / len(clv_lines)
+        ) if clv_lines else None,
         "by_market": by_market,
     }

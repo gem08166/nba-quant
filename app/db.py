@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
     line        REAL,
     price       REAL,
     captured_at TEXT NOT NULL,
+    last_seen_at TEXT,
     source      TEXT NOT NULL DEFAULT 'espn',
     UNIQUE(game_id, book, market, side, line, price, captured_at)
 );
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS bets (
     closing_line  REAL,
     closing_price REAL,
     clv           REAL,
+    clv_line      REAL,
     note          TEXT
 );
 
@@ -168,7 +170,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(bets)")}
     if columns and "profit" not in columns:
         conn.execute("ALTER TABLE bets ADD COLUMN profit REAL")
-        conn.commit()
+    if columns and "clv_line" not in columns:
+        conn.execute("ALTER TABLE bets ADD COLUMN clv_line REAL")
+    # last_seen_at: captured_at 只在报价变化时更新，稳定的线会被误判超龄。
+    # 每次抓取都刷新 last_seen_at，新鲜度判断用它而不是 captured_at。
+    odds_columns = {row["name"] for row in conn.execute("PRAGMA table_info(odds_snapshots)")}
+    if odds_columns and "last_seen_at" not in odds_columns:
+        conn.execute("ALTER TABLE odds_snapshots ADD COLUMN last_seen_at TEXT")
+        conn.execute(
+            "UPDATE odds_snapshots SET last_seen_at = captured_at WHERE last_seen_at IS NULL"
+        )
+    conn.commit()
     # Tables added in 0.3 (players / PBP / RAPM). CREATE IF NOT EXISTS is
     # idempotent, but skip the DDL entirely when the tables already exist:
     # it is a write transaction on every connect and can hit "database is

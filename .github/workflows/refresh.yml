@@ -22,6 +22,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # SQLite 不再进 main：每次从独立 data 分支取回，跑完再覆盖回去。
+      - name: Restore database from data branch
+        run: |
+          mkdir -p data
+          if git fetch origin data --depth=1 2>/dev/null; then
+            git show origin/data:nba.db > data/nba.db
+            echo "restored data/nba.db from origin/data"
+          else
+            echo "no data branch; falling back to data/nba.db in the repo if present"
+          fi
+          if [ ! -s data/nba.db ]; then
+            echo "::error::no database available. Seed the data branch once (see README / CONTEXT.md)."
+            exit 1
+          fi
 
       - uses: actions/setup-python@v5
         with:
@@ -30,21 +47,26 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
 
+      - name: Run tests
+        run: pytest -q
+
       - name: Compute slate date
         id: slate
         run: echo "slate=$(python -c 'from app.dates import current_slate_date; print(current_slate_date())')" >> "$GITHUB_OUTPUT"
 
-      - name: Ingest + train + predict
+      # 先抓齐所有盘口（ESPN + 第二书源），再训练/预测：
+      # 旧顺序在抓第二书源之前 predict，导致共识只能看到 ESPN 一家。
+      - name: Ingest games + odds
         run: |
           python -m app.cli ingest --date ${{ steps.slate.outputs.slate }}
-          python -m app.cli train
-          python -m app.cli predict --date ${{ steps.slate.outputs.slate }}
-
-      - name: Second-book odds (best-effort)
-        run: |
           python -m app.cli hao-odds --date ${{ steps.slate.outputs.slate }} || true
           python -m app.cli odds-api --date ${{ steps.slate.outputs.slate }} || true
           python -m app.cli hoops-sync || true
+
+      - name: Train + predict
+        run: |
+          python -m app.cli train
+          python -m app.cli predict --date ${{ steps.slate.outputs.slate }}
 
       - name: Settle + closing
         run: |
@@ -61,19 +83,58 @@ jobs:
       - name: Backtest
         run: python -m app.cli backtest --test-start 2026-01-01 || true
 
+      - name: Frozen holdout eval (70/30 temporal split)
+        run: python -m app.cli holdout --split 0.7 || true
+
+      - name: MARKET_BLEND sweep (freeze the selection-quality baseline)
+        run: python -m scripts.blend_sweep || true
+
       - name: Model vs closing-line report
         run: python -m scripts.model_clv_history --start 2025-10-21 || true
+
+      - name: Signal → line-move gate report
+        run: python -m scripts.linemove_analysis || true
 
       - name: Export static site
         run: python -m scripts.export_static --out site
 
-      - name: Commit updated data
+      # 关键：Pages artifact 在本 job 内、用本 run 刚生成的 site/ 上传。
+      # deploy job 不再 checkout（旧写法拿到的是触发 SHA，永远部署上一轮数据）。
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Commit static site + API state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           git config user.name "nba-quant-bot"
           git config user.email "nba-quant@users.noreply.github.com"
-          git add data/nba.db data/odds_api_state.json data/hoops_state.json site || true
+          # 只提交静态站和抓取状态；数据库走 data 分支，避免主仓膨胀
+          git add site data/odds_api_state.json data/hoops_state.json
           git commit -m "auto refresh: ${{ steps.slate.outputs.slate }} [skip ci]" || echo "nothing to commit"
           git push
+
+      # 数据库以单 commit 快照推到 data 分支（每次 force，历史不增长）。
+      - name: Persist database to data branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -c "import sqlite3; c=sqlite3.connect('data/nba.db'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()"
+          rm -rf "$RUNNER_TEMP/db-repo"
+          mkdir -p "$RUNNER_TEMP/db-repo"
+          cp data/nba.db "$RUNNER_TEMP/db-repo/nba.db"
+          cd "$RUNNER_TEMP/db-repo"
+          git init -q
+          git checkout -q -b data
+          git add nba.db
+          git -c user.name="nba-quant-bot" -c user.email="nba-quant@users.noreply.github.com" \
+            commit -q -m "db snapshot: ${{ steps.slate.outputs.slate }}"
+          git push -q --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data:data
 
   deploy:
     needs: refresh
@@ -82,9 +143,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
+      # artifact 由 refresh job 上传，deploy job 直接发布同一个 run 的产物。
       - id: deployment
         uses: actions/deploy-pages@v4

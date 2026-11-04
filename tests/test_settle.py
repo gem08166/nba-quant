@@ -1,4 +1,6 @@
-from app.jobs.settle import outcome
+import pytest
+
+from app.jobs.settle import _line_clv, outcome
 
 
 def _bet(market: str, side: str, line: float | None = None) -> dict:
@@ -31,3 +33,16 @@ def test_total():
 def test_moneyline():
     assert outcome(_bet("moneyline", "away"), 110, 117) == "won"
     assert outcome(_bet("moneyline", "home"), 112, 117) == "lost"
+
+
+def test_line_clv_is_sign_correct():
+    # Positive means the bettor got a better number than the close.
+    assert _line_clv(_bet("spread", "home", -3), -5) == pytest.approx(2)
+    assert _line_clv(_bet("spread", "away", 8), 6) == pytest.approx(2)
+    assert _line_clv(_bet("total", "over", 220), 222) == pytest.approx(2)
+    assert _line_clv(_bet("total", "under", 222), 220) == pytest.approx(2)
+    # A worse number is negative.
+    assert _line_clv(_bet("spread", "home", -5), -3) == pytest.approx(-2)
+    # No line / moneyline -> no line CLV.
+    assert _line_clv(_bet("moneyline", "home"), 0) is None
+    assert _line_clv(_bet("spread", "home", -5), None) is None

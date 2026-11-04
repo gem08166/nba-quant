@@ -1,140 +1,239 @@
-# CONTEXT.md — 项目交接文档（给今晚继续开发的你 / 或任何 AI 会话）
+# CONTEXT.md — 项目交接文档（2026-11-04 全量工程优化后）
 
-> 用途：把项目的全部上下文压缩在一页里。继续开发时，把本文档 + README.md 一起交给 AI 或自己阅读即可无缝接上。
-> 更新时间：2026-11-03（北京时间晚上，第二次更新）
-
----
-
-## 0. 环境变更（2026-11-03 晚）
-
-- 项目已从 `D:\nba-quant` 迁到 **`F:\量化\nba-quant-20261103`**（旧盘的 venv 没带过来，本机 Python 也被清理过）
-- 现用 **uv** 重建：uv.exe 在 `C:\Users\Administrator\tools\uv\uv.exe`，venv 为本目录 `.venv`（CPython 3.12.16）
-- 恢复环境：`& "$env:USERPROFILE\tools\uv\uv.exe" pip install --python .venv\Scripts\python.exe -e ".[dev]"`
-- 跑命令统一用 `.\.venv\Scripts\python.exe -m app.cli ...`（本机 PATH 里没有独立 Python）
-- 注意：`scripts\inspect.py` 会遮蔽标准库 `inspect`，凡是要 import numpy 的临时脚本请放在仓库根目录跑
+> 用途：把项目的全部上下文压缩在一页里。继续开发时，把本文档 + README.md + OPTIMIZATION_NOTES.md 一起交给 AI 或自己阅读即可无缝接上。
+> 本版覆盖：从"项目是什么"到"两轮全量工程优化的全部结论与验收数据"。
+> 更新日期：2026-11-04（北京时间晚间；已在 `F:\量化\nba-quant-20261103` 完成合并与本地复核，见第 10 节）
 
 ---
 
-## 1. 项目是什么
+## 0. 项目是什么
 
-**个人研究用 NBA 赛前量化分析工具**（注意边界）：
+**个人研究用** NBA 赛前量化分析工具（注意边界）：
 
 - 定位：个人研究 + 决策辅助 + 纸面跟踪。**不做**自动下注、不接资金、不承诺盈利（合规：大陆体育投注违法，工具只做数据分析）
 - 用户三个决策（已确认）：个人研究 / 先做赛前 / 免费数据源起步 / 后续要能在安卓端用
-- 数据源：ESPN 免费接口（scoreboard + summary），无 API key
+- 数据源：ESPN 免费接口（scoreboard + summary）、SBR 历史收盘线、The Odds API、HoopsAPI、好体育亚盘
 - 技术栈：Python 3.12 + FastAPI + SQLite + 原生 HTML/JS PWA（无构建步骤）
-- 位置：`D:\nba-quant`（venv 已建好：`.venv`，依赖已装，`pip install -e ".[dev]"`）
+- 本机工作副本（打包来源）：`D:\YYMODEL\nba-quant`（从 GitHub zip 解压，无 `.git`）
+- **当前活跃工作副本**：`F:\量化\nba-quant-20261103`（有 `.git` 与 `origin`，`.venv` 已就绪，可直接 commit/push；`data/nba.db` 现在由 `data` 分支承载）
 
-## 2. 当前状态（截至本文档更新）
+---
+
+## 1. 环境（本机）
+
+- Python 3.12.10（全局安装，依赖已装：fastapi 0.162.0、numpy 2.5.4、httpx、pytest、python-dotenv）
+- **本机（F:）有 git**：`origin` = `https://github.com/gem08166/nba-quant.git`；网络走 TUN 代理时推送不稳，失败就先 `git pull --rebase origin main` 再重推（**不要**用 `-X ours`，会静默丢本地提交）
+- 依赖装法：`python -m pip install -e ".[dev]"`（注意：早前装过 Temp 目录里的旧副本，已重装为工作副本 editable；**跑脚本时务必 `cd D:\YYMODEL\nba-quant`**，否则 `import app` 会解析到错误路径）
+- `scripts/inspect.py` 会遮蔽标准库 `inspect`——任何需要 import numpy 的临时脚本请放在仓库根目录跑
+- 磁盘 D 盘剩余约 22GB
+
+---
+
+## 2. 当前状态
 
 | 项 | 状态 |
 |---|---|
-| 数据库 | `data/nba.db`：1427 场比赛（2025-26 全季 1239 + 2026-27 当前 174+），25 条盘口快照，1409 场已完赛；**新增 PBP：107 场本赛季 play-by-play（2026-10-20~11-02），players/starters/pbp_plays 表** |
-| 模型 | 球队模型：n=1342，sigma_margin=14.50，sigma_total=19.92，**含总分 regime 修正（shift=-2.64）**；**球员 RAPM v1：107 场 3370 stints，单数字（净分/100回合），Luka +10.3 / SGA +6.7 量级合理** |
-| 回测 | walk-forward 2026-01~04+10~11（841 场）：分差 MAE 11.92，总分 **MAE 15.31 / RMSE 19.15**（bias +0.76），Brier 0.2031。**已剔除全明星周末表演赛污染**（Team Stars/Stripes/World、London Lions 共 4 场，见 ratings.load_finals 的 id 过滤） |
-| 功能 | 数据抓取✅ 模型✅ 预测/Edge✅ PWA 看板✅（**空比赛日自动跳到最近有比赛的日期**） 手动录盘口✅ 伤停 impact✅（**RAPM 建议一键采用**） 纸面注单✅（**记一笔已完善：内联表单可改价格/盘口、重复防抖、本场注单列表+撤销**） **每日自动备份✅（data/backup/ 滚动 7 份）** 收盘价捕获✅ 自动结算+CLV✅ **结算结果推送✅** Telegram/ntfy 推送✅ **watch 加固✅（日志落盘 data/watch.log、连续失败/空赛程告警、每日 PBP+RAPM+第二盘口）** 赛时看板✅（ESPN 实时源+剩余时间投影，未在真实 live 场次验证） 收益页✅ **第二盘口源✅（hao-tiyu 入 odds_snapshots，watch 每日抓取；观察期后可参与融合定价）** **信号级回测✅（`signal-backtest`，等快照积累）** |
-| 测试 | 23 个 pytest 全过（`.\.venv\Scripts\python.exe -m pytest -q`） |
-| 可视化 | PWA"研究图表"标签页（原生 canvas 零依赖）：月度 bias/MAE、联盟得分趋势、RAPM 排行、预测vs实际散点、校准曲线。新增 `/api/trends`、`app/web/research.js`。**修复了 sqlite 跨线程 bug（db.connect 加 check_same_thread=False，此前所有 API 端点都在赌线程池运气）** |
-| 注单 | 1 条演示注单（OKC ML，已结算 won，CLV +3%）— 可删可留 |
+| 数据库 | `data/nba.db`：1427 场（2025-26 全季 1239 + 2026-27 季前 67 + 常规赛 121），8538 条盘口快照，1409 场已完赛，224 条预测，19 个模型 |
+| 模型 | 球队模型 n=1338，sigma=(15.20, 19.14)；**新增跨季季前赛锚定**（默认 0.5） |
+| 盘口数据 | 实时管线（非 sbr-*）：15 场 / 449 行 / 20 个快照时点 / 12 家书源（刚起步 2 天）；SBR 收盘回填：194 场 × 8 书源（**单时点，无法做线移动检验**） |
+| PBP | 107 场 play-by-play（54231 行），players 468、starters 1070 |
+| RAPM | 18 个模型，v1 |
+| 纸面注单 | **0 条**（演示单 id=1 已在本机删除并备份，避免 ROI +106% 假头条污染收益页） |
+| 测试 | **46 passed**（本轮 +8） |
+| 数据库托管 | `data/nba.db` 已移出 main，改由独立 `data` 分支（单 commit 快照）承载；本机已 seed |
 
-## 3. 架构与文件地图
+---
 
-```
-数据流：ESPN API → ingest(归一化+落库) → ratings(Elo+岭回归) → predict(概率+融合定价)
-       → edges(EV/凯利) → PWA 看板 / Telegram 推送 → 纸面注单 → closing 收盘价 → settle 结算+CLV
+## 3. 核心结论（这是本项目最有价值的部分，别推翻）
 
-app/
-  config.py      # 所有阈值/路径/环境变量（先看这个）
-  dates.py       # current_slate_date(): NBA比赛日=美国东部日期, 用 UTC-5 近似（北京时间白天=前一晚美国比赛日）
-  db.py          # SQLite schema + connect()内置轻量迁移(_migrate)
-  api.py         # FastAPI 路由（/api/games /edges /bets /bets/summary /model /backtest ...）
-  main.py        # app 装配 + token 认证 + PWA 静态服务
-  ingest/espn.py     # ESPN 抓取/解析（注意 dates 参数要 YYYYMMDD 无横线）；parse_plays/parse_starters(PBP)
-  ingest/service.py  # 落库、盘口去重（价格没变就不存）、refresh_game_odds(收盘价用)、backfill_pbp
-  models/ratings.py  # Elo(无未来函数) + Massey式分差模型 + 得分环境总分模型，加权岭回归；总分截距向近30天常规赛均分回归（regime修正）
-  models/rapm.py     # 球员RAPM：ESPN PBP换人事件重建阵容→stint→加权岭回归（净分/100回合）+ 伤停impact建议
-  pricing/devig.py   # 去水/cover_prob/over_prob/EV/凯利（有0.5连续性修正）
-  jobs/predict.py    # 预测 + 市场融合定价 + edge 生成（跳过 POSTPONED/CANCELED；附带 injury_suggestions）
-  jobs/settle.py     # 结算/CLV/收盘价捕获/报表汇总
-  jobs/notify.py     # Telegram + ntfy 推送（按game/market/side/line/price去重）
-  jobs/watch.py      # 常驻循环：每日抓取+训练(+PBP回填+RAPM) → 收盘价 → 结算 → 预测 → 推送
-  jobs/backtest.py   # 按月 walk-forward
-  jobs/live.py       # 赛时看板：ESPN scoreboard 实时状态 + winprobability + 剩余时间投影
-  jobs/backup.py     # 每日数据库备份（VACUUM INTO，data/backup/ 滚动 7 份）
-  jobs/signal_backtest.py  # 信号级回测：历史 edge 按当时价格入场、收盘快照算 CLV
-  ingest/hao.py      # 第二盘口源（好体育亚盘站）：多镜像故障转移 + checksum 自动发现
-  ingest/theodds.py  # The Odds API 多书源客户端（省额度：状态文件限流 + 剩余额度追踪）
-  web/               # PWA 前端（index.html/app.js/research.js(研究图表)/live.js(赛时)/bets.js(收益)/styles.css/manifest/sw.js/icon.svg）
-scripts/
-  inspect.py       # 查看月度总分/分差均值 + 未完赛场次（文件名会遮蔽标准库inspect，import numpy 的脚本别放本目录直接运行）
-  show_edges.py    # 打印某日预测与全部 edge（取最新一条预测）
-  seed_bet.py      # 手动插注单（可模拟收盘价，用于测试结算）
-  backfill_pbp.py  # 回填ESPN PBP（断点续跑）；python -m scripts.backfill_pbp --start ... --end ...
-```
+### 3.1 模型有预测力，但相对市场无增量信息
 
-## 4. 关键设计决策（为什么是这样）
+| 检验 | 结果 |
+|---|---|
+| walk-forward 回测（841 场） | 分差 MAE **11.92** / 总分 MAE **15.31** / Brier **0.2035** / 方向 69.4% / ATS 47.6% (n=105) / O-U 50.5% (n=107) |
+| 冻结 holdout（943 训 → 395 考） | 分差 MAE **12.13**（常数基线 14.46）/ 总分 **15.57**（基线 16.39）/ Brier **0.1916** / ECE 0.077 / 方向 70.9% |
+| 收盘线基准（177 场） | 分差 MAE **9.89** / 总分 MAE **14.99** |
+| 模型 vs 收盘线（498 注） | 平均 edge **+6.07%**（t=28.8），但收盘价下注 ROI **−11.32%**，命中 **43.15%** |
+| 控制收盘线回归 | 分差 β=**−0.013**（t=−0.04）；总分 β=**−0.507**（t=−1.63） |
+| Brier 对比 | 模型 0.2084 vs 市场 0.1844 |
+| 最大 edge 分位 | ROI **−27.7%** / 命中 32.8%（胜负最大分位 −42.8% / 19.0%） |
 
-1. **市场融合定价 `MARKET_BLEND=0.55`**（最重要）：免费源只有 DraftKings 一家软盘，且早期赛季球队评分来自上赛季、对阵容变化不敏感。实测纯模型会让 PHI@DET 出现"模型+9.8 vs 盘口-1.5"的 8 分假分歧。融合后 edge 缩水但可信。**若要做纯模型研究，`NBAQ_MARKET_BLEND=1.0`**
-2. **σ 下限**：margin 10.5 / total 13.5（config），防过度自信。实测模型原始 sigma 14.5/19.7，高于经验值 11-13/14-16，回测 RMSE 15.07/22.02 大致自洽
-3. **比赛日 = 美国东部日期**：ESPN `dates=YYYYMMDD`（无横线！）按美国日期返回该日 19:00-22:30 ET 的比赛（UTC 时间是次日 00:00Z-03:30Z）。`dates.py` 用 UTC-5 近似取当前比赛日
-4. **总分 regime 修正（已实现，2026-11-03）**：2025-26 赛季总分从 10-12 月的 233-235 降到 1-2 月的 225-226，全季加权回归追不上。现在 `ratings.fit` 会把总分截距向"近 30 天常规赛实际均分"回归（只算常规赛、跨休赛期自动跳过）。回测 bias 从 +2.59 降到 +0.91，RMSE 21.80→21.71。参数：`NBAQ_TOTAL_REGIME_WINDOW`(30天)/`NBAQ_TOTAL_REGIME_BLEND`(1.0)/`NBAQ_TOTAL_REGIME_MAX_GAP`(10天)。剩余 bias 靠市场融合缓解；进一步可试把 total 的 `MARKET_BLEND` 单独调到 0.4
-5. **盘口快照去重**：`insert_odds` 只在 line/price 变化时插新行，避免每天全量刷爆
-6. **推送去重**：notifications 表按 (game, market, side, line, price) 唯一，同一信号只推一次
-7. **ESPN 免费盘口只有部分比赛有**（约 4/14），没有的比赛靠 UI 手动录盘口（`POST /api/odds`），录完自动重算
-8. **历史盘口拿不到**：回测的让分/大小分方向命中率永远空，靠 `watch` 前向积累收盘价，坚持 1 个月才有 CLV 样本
+**结论**：模型优于"无脑预测 0 分"（MAE 11.24 vs 12.85），但这些信息已被收盘线定价；控制收盘线后 β≈0 → **模型没有可检测的增量信息**。
 
-## 5. 已验证的环境事实（省得再踩坑）
+### 3.2 三条独立证据指向同一结论（"信号是乐观偏差"）
 
-- ESPN `site.api.espn.com/.../nba/scoreboard?dates=YYYYMMDD`：免费稳定，无 key；**日期必须无横线**
-- ESPN summary（`?event=ID`）含 injuries / odds / boxscore / winprobability
-- `cdn.nba.com` liveData 直接请求 **403**（需要浏览器头/签名，赛中阶段再解决）
-- ESPN 历史日期查询**没有盘口**（odds=0），只有比分
-- 2026-11-03 是 NBA 休赛日（0 场），下一批是 11-04 的 14 场
-- `stats.nba.com` 未接（需要特殊 header，被云 IP 屏蔽风险）
-- Windows 终端中文乱码：`chcp 65001` 即可，纯显示问题
+1. **β≈0**：控制收盘线后模型系数不显著
+2. **线移动反向**（`scripts/linemove_analysis.py`）：61 条信号中 36 条有线移动，顺线比例仅 **30.6%**（z=**−2.33**）——模型看好的那侧，市场随后**显著反向**移动
+3. **blend 扫描**（`scripts/blend_sweep.py`）：blend=0（纯市场线选边）ROI **+3.14%**；blend≥0.15 全为负（−5.3%~−9.5%）；平均 edge 随 blend 单调上升（+0.4%→+10.2%）——**模型权重伤害选边**
+
+→ **信号定位为「模型 vs 市场分歧观察」，不构成下注依据。** 项目自己的 `research.js` 基准对照卡已诚实写明。
+
+### 3.3 "照信号下注"方向的闸门体系（已建好，等数据）
+
+| 层 | 实现 | 状态 |
+|---|---|---|
+| 第 0 层：线移动验收 | `scripts/linemove_analysis.py` / `app.cli linemove` / 研究页 gate-card | **首验未通过**（z=−2.33） |
+| 第 2 层：bettable 闸门 | `signal`（模型算出 EV）与 `bettable`（价格真实可拿）分离：软书价降级、共识<3 家降级、同场让分/ML 互斥 | 已上线；今日 7 信号 → 1 条 bettable |
+| 第 2 层：sharp 锚定 | `NBAQ_SHARP_ANCHOR=1` 用 Pinnacle 类 sharp 书去水值当 fair | 已实现，默认关（实时源暂无 sharp 书） |
+| 第 3 层：组合保护 | 同场互斥 `NBAQ_MUTUAL_EXCLUSIVE=1` | 已上线 |
+
+---
+
+## 4. 本轮（两轮）全量工程优化的交付清单
+
+### 第一轮：工程正确性
+- **P0-1 Pages 部署慢一个 run**：deploy job 原来重新 checkout 触发 SHA → 永远发布上一轮数据。现在 refresh job 上传 artifact，deploy 只发布同一 run 产物。
+- **P0-2 共识退化成单书**：① workflow 里第二书源移到 predict 之前 ② `odds_snapshots.last_seen_at`（报价未变也刷新，修复"稳定线被误判超龄"）③ `NBAQ_MIN_FRESH_BOOKS=3` 新鲜书源不足时回退全量共识并标 stale（旧逻辑有 1 家新鲜就丢掉其余 11 家）。
+- **P1-1 PWA sw.js 404**：`export_static.py` 现在把 `sw.js` 复制到站点根目录。
+- **P1-2 演示注单**：已删（DB 备份在临时目录）。
+- **P1-3 CI 跑 pytest**。
+- **P2-1 SQLite 移出 Git**：DB 走独立 `data` 分支（Actions restore + force-push 单 commit 快照），主仓只留 `site/` 和抓取状态。
+- **P2-2 CLV 加线移动**：`bets.clv_line`（分，正=拿到更好的线），收益页新增统计卡/列。
+- **P2-3 整数盘口走盘感知**：`cover_prob/over_prob` 改为 `P(win)+0.5·P(push)`；`model_clv_history` 改用共享概率函数（spread ROI −7.02%→−5.88%，是口径修正不是数据变化）。
+- **P2-4** README 重写 + MIT LICENSE。
+
+### 第二轮：可下注闸门 + 验证体系
+- `scripts/linemove_analysis.py`（线移动验收）+ `tests/test_linemove.py`
+- `bettable` 闸门（`app/config.py`/`app/jobs/predict.py`/`app/web/app.js`）+ `tests/test_bettable.py`
+- `scripts/holdout_eval.py`（冻结 holdout 70/30）+ `app.cli holdout` + `tests/test_holdout.py`
+- `scripts/blend_sweep.py`（blend 扫描固化）+ `tests/test_blend_sweep.py`
+- 跨季 regime 修正（季前赛锚定）+ `tests/test_season_carry.py`
+- 前端：看板"可下注/可下注最佳 EV"统计卡、"可下/仅观察"pill；研究页 gate-card 面板（线移动 + holdout vs walk-forward vs 基线）
+
+---
+
+## 5. 关键设计决策与踩坑记录
+
+### 5.1 切分必须按时间，严禁随机
+随机 70/30 会让测试期比赛通过 Elo/球队强度泄漏进训练集。holdout 与 blend_sweep 都按时间切（同日比赛不拆）。
+
+### 5.2 walk-forward vs 冻结 holdout 的分工
+- walk-forward（每月重拟合，841 场全用）：模拟真实生产使用，统计功效高，但超参（σ 下限/MARKET_BLEND/regime 修正）是看着全部数据定的
+- 冻结 holdout（943→395）：模型参数/σ/Elo 终值全在 cutoff 前生成，量化超参过拟合
+- 结论：两者接近（11.92 vs 12.13）→ **无超参过拟合**
+
+### 5.3 跨季 regime 修正：失败方案也要记录
+- 第一版"上赛季尾月残差外推"**验收失败**：2026-10 开局 16 场 MAE 13.68→14.25、|bias| 5.36→7.65（方向反：上赛季末得分上行但新赛季低开）→ 废弃
+- 替代"本赛季季前赛锚定"（季前赛被训练集排除，但无泄漏且直接测量新赛季环境）：MAE 13.68→**13.39**、|bias| 5.36→**4.19** ✅
+- 教训：holdout 场景（as_of 在赛季中）**根本触发不到**跨季分支，必须用生产路径（逐日重训）重放才测得出来
+- 局限：只在赛季开局 ~1 周有意义（之后逐日重训自愈），样本仅 16 场 1 个赛季，明年开季需复核
+
+### 5.4 定价层细节（都来自实际踩坑）
+- 书源别名归一化（Draft Kings/DraftKings 曾被当两家）
+- 离群书源剔除（hao-tiyu ML 反向案例）
+- 陈旧最优价降级（1xbet 12h 未更新的 4.01 会虚造 edge → 用共识公允反推"可成交价上限"）
+- 单边报价不出 edge（不按 50/50 造假信号）
+- ML EV 用共识中位价（最优价仅展示）
+- EV 用同一 `ev_price` 算（不做价差假设）
+
+### 5.5 `_next_season_label` 的坑
+写错过成 `start+1`/`start+2` → 产出 "2026-26" 这种不存在标签 → 跨季分支静默失效。正确：`f"{start+1}-{str((start+2)%100).zfill(2)}"`。已有测试锁定。
+
+---
 
 ## 6. 常用命令
 
 ```powershell
-cd F:\量化\nba-quant-20261103; .\.venv\Scripts\Activate.ps1; chcp 65001
-# 若 venv 不在：& "$env:USERPROFILE\tools\uv\uv.exe" pip install --python .venv\Scripts\python.exe -e ".[dev]"
-
-python -m app.cli refresh --date 2026-11-04   # ingest+train+predict(+推送)
-python -m app.cli watch                       # 常驻：全部自动化（推荐挂着）
-python -m app.cli serve                       # Web/PWA, http://127.0.0.1:8000
-python -m app.cli closing / settle / report   # 收盘价 / 结算 / 报表
-python -m app.cli backtest --test-start 2026-01-01
-python -m app.cli notify-test                 # Telegram 配置验证
-python -m app.cli status                      # 数据量
-.\.venv\Scripts\python.exe -m pytest -q       # 测试
+cd D:\YYMODEL\nba-quant
+python -m pytest -q                                    # 46 passed
+python -m app.cli status
+python -m app.cli predict --date 2026-11-04
+python -m app.cli backtest --test-start 2026-01-01     # walk-forward
+python -m app.cli holdout --split 0.7                  # 冻结 holdout
+python -m scripts.blend_sweep                          # blend 扫描
+python -m scripts.linemove_analysis                    # 线移动验收
+python -m scripts.model_clv_history --start 2025-10-21 # 收盘线基准
+python -m scripts.export_static --out site             # 导出静态站
 ```
 
-环境变量：`NBAQ_TG_TOKEN`/`NBAQ_TG_CHAT_ID`（Telegram）、`NBAQ_NTFY_TOPIC`、`NBAQ_WATCH_INTERVAL`(300s)、`NBAQ_CLOSING_WINDOW`(10min)、`NBAQ_EDGE`(3%)、`NBAQ_MARKET_BLEND`(0.55)、`NBAQ_TOKEN`（API 认证）。
+---
 
-## 7. 待办（按优先级，今晚可挑着做）
+## 7. 待办与下一步（按优先级）
 
-1. ~~**总分 bias 校准**~~ ✅ 已完成（2026-11-03，见 §4 第 4 条；bias +2.59→+0.91）。后续可选：total 单独用更激进的 `MARKET_BLEND`（如 0.4）
-2. ~~**球员级 RAPM**~~ ✅ v1 已完成（2026-11-03）。**ESPN summary 自带完整 PBP（含 Substitution 事件）**，不需要 cdn.nba.com（403）。管线：`scripts/backfill_pbp.py` 抓 PBP → `app/models/rapm.py` 换人重建阵容→stint 分差/回合数→加权岭回归（单数字，净分/100回合，lam=300）→ `predict` 时自动给 Out/Day-To-Day 球员出 `injury_suggestions`（不动手动 impact 数学）。命令：`python -m app.cli rapm-train`；API：`GET /api/rapm`。watch 每天自动补前两天 PBP 并重训。
-   已知局限：a) 107 场小样本，弱队效应会漏进球员系数（无 team fixed effects）；b) 上赛季评分未接入（球员流动，先验混合待做）；c) lam 未网格搜索。后续：ORAAM/DRAPM 拆分、把 suggestion 写入 UI
-3. **球员盘（props）**：分钟模型（GBM/分层）+ 负二项产出率 → 蒙特卡洛。ESPN summary 里有球员数据，**现在 players 表和 PBP 管线已就绪**
-4. **自动伤停影响**：给常见球星维护一个 impact 先验表（config 或 DB），Out 时自动扣分
-5. **The Odds API 交叉验证** → ✅ 已接入（2026-11-03）：key 放 `.env`（`NBAQ_ODDS_API_KEY`，已 gitignore）。**省额度策略**：状态文件 `data/odds_api_state.json` 控制间隔，默认 20h 内只拉一次（h2h+spreads+totals × us = 3 credits/次 ≈ 90/月）；watch 每日自动 + CLI `odds-api --date [--force]`；每次打印剩余额度（响应头 x-requests-remaining），额度状态持久化。首日实测 3 credits 入库 150 行、额度剩 497
-5b. **融合定价升级为多书共识** → ✅ 已完成（2026-11-04）：`predict.consensus_market()`——每家书源分别去水取平均公允概率、线取众数、每侧取共识线下最优价；单书源自动退化兼容。用户追加 **HoopsAPI**（hoopsapi.com，key 在 .env `HOOPS_API_KEY`）：书源含 **Pinnacle**（最强基准），已完赛比赛从归档返回多书收盘价。现共识池 **12 家书源**（HoopsAPI 5 + OddsAPI 5 + hao + ESPN），实测 PHI@DET n_books=12/12/12
-5c. **历史收盘回测**：The Odds API 历史端点 401（套餐不含，勿再试）；HoopsAPI 归档需先有 game_id → **前向积累方案**：新表 `hoops_games`（hoops_id↔espn_id 映射）+ watch 每日 `hoops.sync_games()`（建映射+主盘入库）+ `hoops.archive_closing()`（完赛后拉多书收盘价入库）+ CLI `hoops-sync`。`signal-backtest` 已扩展"模型 vs 收盘共识"分析（对所有有快照的完赛场：模型融合概率 − 多书共识公允 = edge，模拟收盘价下注 ROI）——**明天首场比赛完赛后即开始产出真实数据**，一周后有统计意义样本
-5d. **SBR 历史收盘线（未打通，备选方案）**：kyleskom/NBA-ML 项目用的 `sbrscrape` 库（SBR=Sportsbook Review，有任意历史日期的收盘让分/大小/ML+比分，可整季回填）——本网络实测 SBR 返回 403（Cloudflare 按 IP 拦截，curl_cffi Chrome 指纹伪装无效）。**若将来挂上出口 IP 可用的代理，装 `sbrscrape`（需补 requests/pandas）即可整季回填收盘线，历史模型 CLV 回测立刻可跑**。注意该库静默吞异常（返回空列表），调试需直测 https://www.sportsbookreview.com 状态码
-5e. **nba_api（swar/nba_api，3.9k star，MIT）评估（2026-11-04）**：NBA.com 官方 API 的标准 Python 客户端，已装 v1.12.0。实测结论：① **cdn.nba.com 实时端点可用**——nba_api 的请求头绕过了之前 403 的拦截（live scoreboard/PBP/BoxScore），给待办 #7 赛中 PBP 增强、#3 球员盘（官方 boxscore 上场时间）提供了数据通路；② **stats.nba.com 仍被拦**——返回 Akamai HTML 挑战页（IP 级封锁，nba_api 的 headers 不解决），pace/ORtg/DRtg 等高级统计暂不可得，同 SBR 一样需要出口 IP 未被封的代理；③ stats.nba.com 对云 IP 封锁更狠，nba_api 文档也明说。注意 live scoreboard 的"today"按 NBA 日界，白天查前一天可能为 0 场
-5f. **路线 A/B 落地（2026-11-04）**：**Route A**（产品口径改为诚实研究面板）✅——research 页新增"基准对照"卡（模型分差 MAE 11.92 vs 收盘 9.89、分歧处 ROI vs 市场热门侧 ≈ 抽水、无增量信息结论），`/api/model-clv` + 静态导出。**Route B 第一步**（赛程密度特征：背靠背×2 + 3 天赛场次×2）❌ **A/B 验收失败**——ON 使收盘价下注 ROI -11.3%→-12.5%（分歧处乐观偏差加大），默认关闭（`NBAQ_DENSITY_FEATURES=0`），代码保留可复现。审查的验收标准（β 显著>0 且 ROI 不为负，样本内 MAE 下降不算）已作为后续所有模型实验的强制门槛
-5b. **好体育免费亚盘源**（与 Odds API 互补、零额度）：`app/ingest/hao.py` 已逆向并验证——`tournament/info`(sid=2) 内嵌 matches 列表 + `match/simple` 单场盘口（`ah` 多档亚盘/港式水位、`ou` 多档大小、`ml`）；x-checksum=base64("按域名绑定hex|<镜像域名>|<uuid>|<毫秒>|")。**多镜像确认**：39374.app 与 333ty331.app 是同一 tiger-fluid 产品的不同部署实例（数据逐字节相同），hao.py 已实现跨镜像故障转移 + 从首页 HTML 自动发现新 checksum。watch 每日入库（book='hao-tiyu'）；对比脚本 `python -m scripts.compare_books`。首日观察：与 ESPN 价差 0.02-0.06 级别、覆盖 5/14 场但含 ESPN 空缺场次，互补
-6. **注单管理 UI**：现在只有 `/api/bets` 和首页一个统计块，可以加一个"注单"标签页（列表+CLV）
-7. ~~**赛中实时**~~ ✅ v1 已完成（2026-11-03）：**不需要 cdn.nba.com**——ESPN scoreboard 就是实时源（clock 秒数/period/state pre|in|post），summary 的 `winprobability` 给逐 play 主胜率曲线。实现：`app/jobs/live.py`（live_projection：投影=当前比分+赛前模型×剩余时间比例，σ 按 √剩余时间收缩）+ `GET /api/live?date=` + PWA"赛时"标签页（30 秒自动刷新，进行中卡片含 ESPN 胜率条/动量箭头/投影四格/赛前盘口覆盖概率/最近 plays）。**注意：11-03 休赛日，"in 状态"渲染只在合成数据下验证过，11-04 有真实比赛时看一眼**
-8. ~~**小问题：延期赛**~~ ✅ 已修（predict 跳过 `STATUS_POSTPONED/CANCELED`，`SKIP_STATUSES` in predict.py）
-9. **安卓 APK**：PWA 已可用（Tailscale Serve 走 HTTPS 才能安装），Capacitor 打包见 README §9
+1. ~~【用户操作】git 提交推送~~ **已完成（2026-11-04 晚，本机 F:）**：`data` 分支已 seed，main 已切换到"db 不进主仓"策略。
+2. **复核线移动闸门**：实时快照积累 2-4 周后重跑 `app.cli linemove`。若 z 仍 <0 → "照信号下注"方向正式关闭，资源转球员盘（props niche）。**本机复跑（63 信号 / 35 有移动）：顺线 31.4%，z=−2.2，仍未通过。**
+3. **评估加固**：7 家 SBR 共识收盘线（现在用单家 sbr-fanduel）、bootstrap CI、回测复用生产 `build_market`。
+4. **sharp 书源接入**：`NBAQ_SHARP_ANCHOR` 需要 Pinnacle 进入实时管线（HoopsAPI 侧）。
+5. **球员盘（props）**：PBP 107 场 + 阵容重建 + RAPM 已有，是最可能有真实 edge 的 niche（props 市场效率低于主盘）。
+6. **明年 10 月**：复核跨季修正（见 5.3）。
 
-## 8. 继续开发时的注意事项
+---
 
-- 改了模型/定价逻辑后：先 `pytest`，再 `backtest --test-start 2026-01-01` 对比指标，别只看一晚的信号
-- `predictions` 表每次 predict 都插新行（保留历史），API/脚本永远取最新一条；新写查询时注意
-- settle 的 CLV 依赖"开赛前"的快照（按 tipoff 过滤时间戳），手动测试可用 `seed_bet.py --closing-price` 模拟
-- ESPN 接口字段是宽松解析的（tolerant parser），遇到解析失败先看 `data/raw/<date>/` 里存的原始 JSON
-- 版本管理：✅ git 已初始化（`data/`、`.venv`、日志已 gitignore；改完代码 `git add -A && git commit`）
-- 本项目数据库已纳入每日自动备份（data/backup/ 滚动 7 份）
+## 8. 边界与免责
+
+- 仅个人数据分析/建模/回测研究，不提供下注执行、资金通道或收益承诺
+- 大陆体育投注违法；执行层面只适用于合规辖区
+- 数据源脆弱：SBR 网页抓取、好体育逆向 checksum 多镜像；存在 ToS 风险
+- 时区近似：`dates.py` 固定 UTC−5，夏令时期间有 1 小时偏移（影响很小，注释已承认）
+
+---
+
+## 9. 文件索引
+
+```
+app/
+  config.py            # 阈值与开关（EDGE 5%、MIN_FRESH_BOOKS、BETTABLE_*、SHARP_ANCHOR、SEASON_CARRY）
+  db.py                # schema + 迁移（last_seen_at / clv_line）
+  api.py               # REST（含 /api/linemove、/api/holdout）
+  jobs/
+    predict.py         # 共识/定价/bettable 闸门/同场互斥
+    settle.py          # 结算 + 价格 CLV + 线移动 CLV
+    signal_backtest.py # 信号级回测
+    backtest.py        # walk-forward
+  models/ratings.py    # 分差/总分模型 + regime 修正 + 跨季季前赛锚定
+  pricing/devig.py     # 去水 + 走盘感知概率
+  web/                 # PWA 前端（app.js/bets.js/research.js/static.js/live.js）
+scripts/
+  export_static.py     # 静态站导出（含根级 sw.js）
+  holdout_eval.py      # 冻结 holdout
+  blend_sweep.py       # MARKET_BLEND 扫描
+  linemove_analysis.py # 信号→线移动验收
+  model_clv_history.py # 模型 vs 收盘线
+data/                  # nba.db（现已不进主仓）+ 各报告 JSON
+site/                  # 静态站产物（进主仓）
+tests/                 # 46 个测试
+OPTIMIZATION_NOTES.md  # 两轮优化详解 + git 操作步骤
+README.md              # 用户文档（含第 0 节验证结论）
+```
+
+
+---
+
+## 10. 2026-11-04 晚间：合并「新版本」包到本机工作副本
+
+**来源**：`F:\量化\新\nba-quant-20261104-1807.zip`（另一台机器 `D:\YYMODEL\nba-quant` 在基线 `e9fd412` 上做的两轮工程优化，含第 3 轮审查修复）。
+
+### 10.1 合并结论
+
+- 该包对代码是**严格超集**：本机在 `6387939` 的三连修（跨市场闸门 / 共识中位价 EV / 分歧风险分级）都在包内，包额外带：`last_seen_at` 新鲜度、`MIN_FRESH_BOOKS=3`、sharp 锚定、bettable 闸门、同场互斥、走盘感知概率、CLV 线移动、holdout/blend/linemove 三件验收仪器、跨季季前赛锚定。
+- 合并方式：代码/测试/脚本整体采用包内版本；`data/nba.db` 保留本机（含 SBR 194 场回填 + 最新盘口）；报告 JSON 全部用本机 DB 重算（不复制对方产物）；`site/` 重新导出。
+- 合并时补的两个小修：
+  1. `bettable` 增加前置条件（必须 `signal` 且未被 `gated`）——包内旧逻辑会把被分歧闸门拦下的 ML 也标成"可下注"；
+  2. `divergence_risk` 写入 prediction details 并在 `/api/games` 暴露（前端此前自己重算）。
+- `app/web/sw.js` 缓存版本 `nbaq-v13` → **`nbaq-v14`**（research/app/bets 均有改动，不升版本会让已装 PWA 继续吃旧缓存）。
+
+### 10.2 数据库托管方式变更（重要）
+
+- `data/nba.db` 不再进 main：`.gitignore` 改为 `data/*`（仅放行 `odds_api_state.json` / `hoops_state.json` / `backup/`）。
+- 已在本机 seed `data` 分支（孤儿单 commit，仅 `nba.db`）：`git fetch origin data && git show origin/data:nba.db > data/nba.db`。
+- Actions 每次 run 从 `data` 分支 restore、跑完 `wal_checkpoint` 后 force-push 回去，主仓只提交 `site/` 与抓取状态。
+- **本机以后同步 DB**：`git fetch origin data` 后 `git show origin/data:nba.db > data/nba.db`（本地改了 DB 也不要 `git add data/nba.db`，它已被忽略）。
+
+### 10.3 本机复核数据（2026-11-04 20:1x，14 场 slate）
+
+| 项 | 结果 |
+|---|---|
+| `pytest -q` | **46 passed** |
+| walk-forward（test-start 2026-01-01） | 分差 MAE 11.9x / 总分 MAE **15.30** / RMSE 19.14 / bias +0.70 |
+| 冻结 holdout（70/30，395 场考试） | 分差 12.133 / 总分 15.567 / Brier 0.1916 / ECE 0.0774 |
+| blend 扫描（98 注） | blend=0 → ROI **+3.14%**；blend=0.55 → **−9.51%**（模型权重仍伤害选边） |
+| 收盘线报告（498 注） | ROI **−10.94%**（ML −15.28 / spread −5.88 / total −11.61），hit 43.35% |
+| 线移动（63 信号） | 顺线 **31.4%**（z=−2.2）→ 未通过 |
+| 今日信号 | 7 条 signal / **1 条 bettable**（CLE ML +4.8%）；MIN@HOU ML +26.8% 因 1xbet 软书被降级观察 |
+| 收益页 | 演示单已删，`0 结算 · ROI —` |
+
+### 10.4 下一步（合并后）
+
+1. 推送本机改动并等 Actions 用 `data` 分支跑通一轮（重点看 restore 是否成功、`site/data/static.json` 的 `generated_at` 是否等于本 run）。
+2. 线移动检验需继续积累实时快照（当前 63 信号 / 35 有移动），2-4 周后复跑。
+3. 收盘线基准下一步从单家 `sbr-fanduel` 改成 8 家共识（`backfill_closing` 已回填 8 书源，报告侧尚未用共识）。

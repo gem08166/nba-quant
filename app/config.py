@@ -20,6 +20,25 @@ MIN_EV = float(os.getenv("NBAQ_MIN_EV", "0.01"))
 KELLY_FRACTION = float(os.getenv("NBAQ_KELLY", "0.25"))
 MAX_STAKE_PCT = float(os.getenv("NBAQ_MAX_STAKE", "0.03"))
 
+# 共识新鲜度：某市场新鲜书源少于该数量时，回退到全量书源并标记 stale。
+# 只用 1-2 家新鲜书源会让共识退化成单书，比"略旧的 12 家共识"更差。
+MIN_FRESH_BOOKS = int(os.getenv("NBAQ_MIN_FRESH_BOOKS", "3"))
+
+# Sharp 锚定共识（散户真实 edge 来源的转变：模型 vs 全体共识 → 软书 vs sharp 书）。
+# 开启后：若共识里有 sharp 书源（如 Pinnacle），fair 概率取 sharp 书去水值，
+# 软书价格只用来回答"哪里能拿到价"；signals 额外输出 sharp_ev（按 sharp 公允
+# 概率对最优软书价的纯价差 EV，不依赖模型）。无 sharp 书源时自动回退全体共识。
+SHARP_ANCHOR = os.getenv("NBAQ_SHARP_ANCHOR", "0") == "1"
+
+# 同场互斥：让分与胜负高度相关（大让分 ≈ 高胜率），同场两者同时触发信号时
+# 只保留 EV 最高的一条为可下注，另一条降级为观察（防止相关性叠加仓位）。
+MUTUAL_EXCLUSIVE = os.getenv("NBAQ_MUTUAL_EXCLUSIVE", "1") == "1"
+
+# 信号可下注（bettable）标注的共识深度要求：低于此书源数的信号只算观察。
+BETTABLE_MIN_BOOKS = int(os.getenv("NBAQ_BETTABLE_MIN_BOOKS", "3"))
+# 最优价相对共识中位价的离群容忍（超过视为"拿不到的价"，只观察不下注）。
+BETTABLE_PRICE_OUTLIER = float(os.getenv("NBAQ_BETTABLE_PRICE_OUTLIER", "0.08"))
+
 # How much weight to give the model vs the market line when pricing.
 # 0.55 is deliberately conservative: single-book free lines are noisy, and
 # early-season team ratings are stale. Set NBAQ_MARKET_BLEND=1.0 for pure model.

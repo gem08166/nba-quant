@@ -26,18 +26,7 @@ from app import db
 from app.config import DATA_DIR, MARKET_BLEND, SIGMA_MARGIN_FLOOR, SIGMA_TOTAL_FLOOR
 from app.jobs.signal_backtest import settle_edge
 from app.models import ratings
-
-
-def _devig_pair(price_a: float, price_b: float) -> tuple[float, float] | None:
-    if not price_a or not price_b or price_a <= 1.0 or price_b <= 1.0:
-        return None
-    inv_a, inv_b = 1.0 / price_a, 1.0 / price_b
-    total = inv_a + inv_b
-    return inv_a / total, inv_b / total
-
-
-def _norm_cdf(x: float) -> float:
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+from app.pricing.devig import cover_prob, fair_two_way, moneyline_prob, over_prob
 
 
 def load_closing(conn) -> dict[str, dict[str, dict]]:
@@ -98,11 +87,11 @@ def run(start: str, end: str | None = None) -> dict:
                 sp = close.get("spread", {})
                 if sp.get("home") and sp.get("away") and sp["home"].get("line") is not None:
                     line = sp["home"]["line"]
-                    pair = _devig_pair(sp["home"]["price"], sp["away"]["price"])
+                    pair = fair_two_way(sp["home"]["price"], sp["away"]["price"])
                     if pair:
                         market_mu = -line
                         pricing_mu = MARKET_BLEND * mu_m + (1 - MARKET_BLEND) * market_mu
-                        p_home_model = 1 - _norm_cdf((math.floor(-line) + 0.5 - pricing_mu) / sigma_m)
+                        p_home_model = cover_prob(pricing_mu, line, sigma_m)
                         fair_home, fair_away = pair
                         take_home = p_home_model >= fair_home  # 模型看好的侧
                         prob = p_home_model if take_home else 1 - p_home_model
@@ -122,10 +111,10 @@ def run(start: str, end: str | None = None) -> dict:
                 t = close.get("total", {})
                 if t.get("over") and t.get("under") and t["over"].get("line") is not None:
                     line = t["over"]["line"]
-                    pair = _devig_pair(t["over"]["price"], t["under"]["price"])
+                    pair = fair_two_way(t["over"]["price"], t["under"]["price"])
                     if pair:
                         pricing_mu_t = MARKET_BLEND * mu_t + (1 - MARKET_BLEND) * line
-                        p_over_model = 1 - _norm_cdf((math.floor(line) + 0.5 - pricing_mu_t) / sigma_t)
+                        p_over_model = over_prob(pricing_mu_t, line, sigma_t)
                         fair_over, fair_under = pair
                         take_over = p_over_model >= fair_over
                         prob = p_over_model if take_over else 1 - p_over_model
@@ -143,11 +132,11 @@ def run(start: str, end: str | None = None) -> dict:
                 # --- 独赢 ---
                 ml = close.get("moneyline", {})
                 if ml.get("home") and ml.get("away"):
-                    pair = _devig_pair(ml["home"]["price"], ml["away"]["price"])
+                    pair = fair_two_way(ml["home"]["price"], ml["away"]["price"])
                     if pair:
                         market_mu = 0.0  # ML 无线：市场预期即公允 50/50 吗？不——用让分线推市场 mu 更准，
                         # 但 ML 的公允直接来自去水价格；融合应作用于概率层面：
-                        p_home_model_pure = _norm_cdf(mu_m / sigma_m)
+                        p_home_model_pure = moneyline_prob(mu_m, sigma_m)
                         fair_home, fair_away = pair
                         # 概率层面融合（与生产 build_market 的 mu 融合等价近似）
                         p_home_model = MARKET_BLEND * p_home_model_pure + (1 - MARKET_BLEND) * fair_home

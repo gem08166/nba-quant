@@ -121,6 +121,18 @@ def main() -> None:
             mcv = json.loads(mcv_path.read_text(encoding="utf-8"))
             mcv.pop("rows", None)  # 裁剪逐场明细
             payload["model_clv"] = mcv
+
+        # 信号→线移动方向检验（可下注闸门的第 0 层验收数据）
+        linemove_path = DATA_DIR / "linemove_report.json"
+        if linemove_path.exists():
+            lm = json.loads(linemove_path.read_text(encoding="utf-8"))
+            lm.pop("rows", None)
+            payload["linemove"] = lm
+
+        # 冻结 holdout 验证（前 70% 训练 → 后 30% 一次性考试）
+        holdout_path = DATA_DIR / "holdout_report.json"
+        if holdout_path.exists():
+            payload["holdout"] = json.loads(holdout_path.read_text(encoding="utf-8"))
         (out_dir / "static.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
         # 组装完整可部署站点：web 静态文件 + data
@@ -132,14 +144,14 @@ def main() -> None:
         if static_dir.exists():
             shutil.rmtree(static_dir)
         shutil.copytree(web_src, static_dir)
-        for name in ("index.html", "manifest.webmanifest"):
+        for name in ("index.html", "manifest.webmanifest", "sw.js"):
             if (web_src / name).exists():
                 shutil.copy2(web_src / name, site_root / name)
 
         print(f"exported: {out_dir / 'static.json'}")
         print(f"  board: {board['date']} {board['count']} games, signals={board['signals']}")
         print(f"  bets: {bets['summary']['settled']} settled, curve={len(bets['curve'])}")
-        print(f"  site ready: {site_root} (index.html + static/ + data/)")
+        print(f"  site ready: {site_root} (index.html + sw.js + static/ + data/)")
     finally:
         conn.close()
 

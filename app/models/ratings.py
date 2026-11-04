@@ -41,6 +41,17 @@ TOTAL_REGIME_MIN_GAMES = int(os.getenv("NBAQ_TOTAL_REGIME_MIN_GAMES", "10"))
 # Skip recalibration across an offseason: last season's scoring regime says
 # nothing about opening night, and applying it actively hurts.
 TOTAL_REGIME_MAX_GAP = int(os.getenv("NBAQ_TOTAL_REGIME_MAX_GAP", "10"))
+# 跨季 regime 修正（offseason gap > MAX_GAP 时生效）。两个候选先验的验收
+# （2026-11-04，2026-10 开局 16 场，生产路径逐日重训）：
+# - 上赛季尾月残差外推：**失败**——MAE 13.68→14.25、|bias| 5.36→7.65（方向反了：
+#   上赛季末得分上行，新赛季却低开），废弃；
+# - 本赛季季前赛锚定（season_type=1，n=66；模型训练集刻意排除季前赛，但它是
+#   唯一直接测量新赛季得分环境的数据）：MAE 13.68→13.39、|bias| 5.36→4.19
+#   （方向一致；样本小，1.0 实测最优，0.5 为保守默认）。
+# SEASON_CARRY = 季前赛残差的应用比例（0=关闭回到 skip；小样本按 MIN_BLEND 收缩）。
+TOTAL_REGIME_SEASON_CARRY = float(os.getenv("NBAQ_TOTAL_REGIME_SEASON_CARRY", "0.5"))
+# 赛季初样本太少时按此比例保守收缩（n=MIN_GAMES → MIN_BLEND，n≥30 → 1.0）
+TOTAL_REGIME_SEASON_MIN_BLEND = float(os.getenv("NBAQ_TOTAL_REGIME_SEASON_MIN_BLEND", "0.5"))
 
 
 def _now() -> str:
@@ -49,6 +60,15 @@ def _now() -> str:
 
 def _d(value: str) -> date_cls:
     return date_cls.fromisoformat(value[:10])
+
+
+def _next_season_label(season: str) -> str | None:
+    """'2025-26' → '2026-27'。无法解析时返回 None（跨季分支安全跳过）。"""
+    try:
+        start = int(season.split("-")[0])
+    except (AttributeError, ValueError, IndexError):
+        return None
+    return f"{start + 1}-{str((start + 2) % 100).zfill(2)}"
 
 
 def load_finals(
@@ -216,6 +236,7 @@ def fit(
     # Regular-season games only: playoff scoring environments differ and would
     # poison the estimate at the start of a new season.
     regime_shift = 0.0
+    season_carry_shift = 0.0
     if TOTAL_REGIME_BLEND > 0.0:
         as_of_day = _d(as_of) if as_of else max_day + timedelta(days=1)
         last_game_day = max(_d(g["slate_date"]) for g in games)
@@ -248,6 +269,57 @@ def fit(
             pred_avg = float(np.sum(rw * pred_arr) / np.sum(rw))
             regime_shift = float(actual_avg - pred_avg)
             beta_t[0] += TOTAL_REGIME_BLEND * regime_shift
+        elif gap_days > TOTAL_REGIME_MAX_GAP:
+            # 跨季（offseason gap > 10 天）：训练窗口里没有"即将预测的赛季"的
+            # 任何常规赛数据。两个候选先验中，上赛季尾月外推验收失败（方向反，
+            # 见 TOTAL_REGIME_SEASON_CARRY 注释），改用**本赛季季前赛**锚定：
+            # 季前赛被训练集刻意排除（season_type=1 不进 load_finals），但它是
+            # 唯一直接测量新赛季得分环境的数据，且发生在 as_of 之前、无泄漏。
+            current_season = None
+            prior = [g for g in games if _d(g["slate_date"]) < as_of_day]
+            if prior:
+                current_season = prior[-1].get("season")
+            else:
+                current_season = games[-1].get("season") if games else None
+            if current_season and TOTAL_REGIME_SEASON_CARRY > 0.0:
+                next_label = _next_season_label(str(current_season))
+                if next_label:
+                    preseason = [
+                        dict(row)
+                        for row in conn.execute(
+                            """
+                            SELECT home_id, away_id, home_score, away_score FROM games
+                            WHERE season_type = 1 AND season = ?
+                              AND home_score IS NOT NULL AND away_score IS NOT NULL
+                              AND home_id BETWEEN 1 AND 30 AND away_id BETWEEN 1 AND 30
+                            """,
+                            (next_label,),
+                        )
+                    ]
+                    if len(preseason) >= TOTAL_REGIME_MIN_GAMES:
+                        actual_arr = np.array(
+                            [float(g["home_score"]) + float(g["away_score"]) for g in preseason]
+                        )
+                        pred_arr = np.array(
+                            [
+                                beta_t[0] + beta_t[1 + index[int(g["home_id"])]]
+                                + beta_t[1 + index[int(g["away_id"])]]
+                                for g in preseason
+                            ]
+                        )
+                        raw_shift = float(np.mean(actual_arr) - np.mean(pred_arr))
+                        n_pre = len(preseason)
+                        # 小样本保守收缩：n=MIN_GAMES → MIN_BLEND，n≥30 → 1.0
+                        shrink = min(
+                            1.0,
+                            TOTAL_REGIME_SEASON_MIN_BLEND
+                            + (1.0 - TOTAL_REGIME_SEASON_MIN_BLEND)
+                            * (n_pre - TOTAL_REGIME_MIN_GAMES)
+                            / max(1, 30 - TOTAL_REGIME_MIN_GAMES),
+                        )
+                        season_carry_shift = TOTAL_REGIME_SEASON_CARRY * shrink * raw_shift
+                        beta_t[0] += season_carry_shift
+                        regime_shift = season_carry_shift
 
     res_m = np.asarray(y_margin) - np.asarray(X_margin) @ beta_m
     res_t = np.asarray(y_total) - np.asarray(X_total) @ beta_t
@@ -274,6 +346,7 @@ def fit(
         "density_features": DENSITY_FEATURES,
         "total_intercept": float(beta_t[0]),
         "total_regime_shift": regime_shift,
+        "total_season_carry_shift": season_carry_shift,
         "sigma_margin": max(sigma_m * SIGMA_OOS_SCALE_MARGIN, SIGMA_MARGIN_FLOOR),
         "sigma_total": max(sigma_t * SIGMA_OOS_SCALE_TOTAL, SIGMA_TOTAL_FLOOR),
         "raw_sigma_margin": sigma_m,

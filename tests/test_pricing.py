@@ -8,6 +8,7 @@ from app.pricing.devig import (
     devig_multiplicative,
     kelly_fraction,
     moneyline_prob,
+    norm_cdf,
     over_prob,
 )
 
@@ -36,7 +37,19 @@ def test_cover_prob_underdog():
 
 def test_over_prob():
     assert over_prob(225, 219.5, 14) == pytest.approx(0.6528, abs=0.002)
-    assert over_prob(225, 220, 14) == pytest.approx(0.6260, abs=0.002)
+    # 220 is an integer line: win + 0.5 * push accounts for the push mass.
+    assert over_prob(225, 220, 14) == pytest.approx(0.6394, abs=0.002)
+
+
+def test_integer_line_push_aware():
+    # Exactly on the line: win + half push -> 50%.
+    assert cover_prob(5, -5, 8) == pytest.approx(0.5)
+    assert over_prob(220, 220, 14) == pytest.approx(0.5)
+    # Integer line must sit between "push counts as loss" and "push counts as win".
+    low = 1 - norm_cdf((5.5 - 3) / 8)
+    high = 1 - norm_cdf((4.5 - 3) / 8)
+    assert low < cover_prob(3, -5, 8) < high
+    assert cover_prob(3, -5, 8) == pytest.approx(0.4015, abs=0.002)
 
 
 def test_moneyline_prob():

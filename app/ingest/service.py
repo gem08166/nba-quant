@@ -74,7 +74,7 @@ def insert_odds(conn: sqlite3.Connection, game_id: str, rows: list[dict], captur
             continue
         last = conn.execute(
             """
-            SELECT line, price FROM odds_snapshots
+            SELECT id, line, price FROM odds_snapshots
             WHERE game_id=? AND book=? AND market=? AND side=?
             ORDER BY id DESC LIMIT 1
             """,
@@ -83,11 +83,25 @@ def insert_odds(conn: sqlite3.Connection, game_id: str, rows: list[dict], captur
         same_line = last is not None and last["line"] == row.get("line")
         same_price = last is not None and last["price"] == row.get("price")
         if same_line and same_price:
+            # 报价没变也记录"最后一次看到"：captured_at 是最后变化时间，
+            # 用它判断新鲜度会把长期稳定的线误判为陈旧（共识退化成单书）。
+            conn.execute(
+                """
+                UPDATE odds_snapshots
+                SET last_seen_at = CASE
+                    WHEN last_seen_at IS NULL OR last_seen_at < ? THEN ? ELSE last_seen_at
+                END
+                WHERE id=?
+                """,
+                (captured_at, captured_at, last["id"]),
+            )
             continue
         conn.execute(
             """
-            INSERT INTO odds_snapshots(game_id, book, market, side, line, price, captured_at, source)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO odds_snapshots(
+                game_id, book, market, side, line, price, captured_at, last_seen_at, source
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 game_id,
@@ -96,6 +110,7 @@ def insert_odds(conn: sqlite3.Connection, game_id: str, rows: list[dict], captur
                 row["side"],
                 row.get("line"),
                 row.get("price"),
+                captured_at,
                 captured_at,
                 row.get("source", "espn"),
             ),

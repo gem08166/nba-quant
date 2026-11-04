@@ -60,6 +60,7 @@ def _game_payload(row: sqlite3.Row, prediction: dict | None) -> dict:
             "probabilities": details.get("probabilities"),
             "pricing": details.get("pricing"),
             "consensus": details.get("consensus"),
+            "divergence_risk": details.get("divergence_risk"),
             "created_at": prediction["created_at"],
         }
         payload["edges"] = details.get("edges", [])
@@ -451,6 +452,24 @@ def model_clv(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     if not path.exists():
         return {"report": None}
     return {"report": json.loads(path.read_text(encoding="utf-8"))}
+
+
+@router.get("/linemove")
+def linemove() -> dict:
+    """信号→线移动方向检验报告（信号是否预测线移动）。"""
+    path = DATA_DIR / "linemove_report.json"
+    if not path.exists():
+        return {"overall": None, "by_market": {}}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@router.get("/holdout")
+def holdout() -> dict:
+    """冻结 holdout 验证报告（前 70% 训练 → 后 30% 一次性考试）。"""
+    path = DATA_DIR / "holdout_report.json"
+    if not path.exists():
+        return {"error": "no holdout report; run 'nbaq holdout'"}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @router.get("/trends")

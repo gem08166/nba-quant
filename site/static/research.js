@@ -355,7 +355,76 @@ async function loadResearch() {
 }
 
 // 通用折线图暴露给其他标签页复用（收益页的累计收益曲线）
-// research.js 末尾：路线 A 基准对照面板（模型 vs 收盘线的诚实结论）
+// research.js 末尾：可下注闸门验收面板 + 路线 A 基准对照面板
+async function loadGateCard() {
+  const box = document.getElementById("gate-card");
+  if (!box) return;
+  try {
+    const data = await api("/api/linemove");
+    const o = data.overall;
+    const lm = o && o.n_signals
+      ? `
+        <div class="table-wrap"><table>
+          <thead><tr><th>检验</th><th>信号数</th><th>线有移动</th><th>顺线 / 反线</th><th>顺线比例</th><th>z 值</th><th>判定</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>信号→线移动方向</td>
+              <td>${o.n_signals}</td><td>${o.n_with_move}</td>
+              <td>${o.moved_toward} / ${o.moved_against}</td>
+              <td>${o.toward_rate != null ? (o.toward_rate * 100).toFixed(1) + "%" : "—"}</td>
+              <td>${o.z_stat != null ? o.z_stat : "—"}</td>
+              <td>${o.z_stat != null && o.z_stat > 2 ? '<span class="pill signal pos">通过</span>' : '<span class="pill">未通过</span>'}</td>
+            </tr>
+          </tbody>
+        </table></div>
+        <p class="notice" style="border:none;margin-top:8px;padding-top:0">
+          判定标准：顺线比例显著 &gt;50%（z&gt;2）说明模型信号包含市场尚未定价的信息，
+          是"beat the close"的必要条件。<b>未通过 = 当前信号继续只做观察，不升级为下注。</b>
+          实时盘口快照积累越多，本检验越可信。
+        </p>`
+      : `<p class="notice" style="border:none;margin:0">线移动检验还没有观察样本：需要实时盘口快照积累（watch / Actions 每日刷新）。
+          SBR 收盘回填只有单时点，无法做线移动对照。仪器已就绪（<code>python -m app.cli linemove</code>）。</p>`;
+
+    // 冻结 holdout（前 70% 训练 → 后 30% 一次性考试）
+    let holdoutHtml = "";
+    try {
+      const ho = await api("/api/holdout");
+      if (ho && ho.test && ho.test.n) {
+        const t = ho.test, b = ho.baseline || {};
+        holdoutHtml = `
+          <div class="table-wrap" style="margin-top:12px"><table>
+            <thead><tr><th>冻结 holdout（${ho.split ? Math.round(ho.split * 100) : 70}/${ho.split ? 100 - Math.round(ho.split * 100) : 30}）</th><th>分差 MAE</th><th>总分 MAE</th><th>Brier</th><th>ECE</th></tr></thead>
+            <tbody>
+              <tr><td>本模型（${ho.test_games} 场考试）</td><td>${t.margin_mae}</td><td>${t.total_mae}</td><td>${t.brier}</td><td>${t.ece}</td></tr>
+              <tr><td>常数基线（训练期均值）</td><td>${b.constant_margin_mae ?? "—"}</td><td>${b.constant_total_mae ?? "—"}</td><td>${b.constant_brier ?? "—"}</td><td>—</td></tr>
+              <tr><td>walk-forward（对照）</td><td>${window.STATIC_PAYLOAD?.backtest?.report?.overall?.margin_mae?.toFixed?.(2) ?? "—"}</td><td>${window.STATIC_PAYLOAD?.backtest?.report?.overall?.total_mae?.toFixed?.(2) ?? "—"}</td><td>${window.STATIC_PAYLOAD?.backtest?.report?.overall?.brier?.toFixed?.(4) ?? "—"}</td><td>—</td></tr>
+            </tbody>
+          </table></div>
+          <p class="notice" style="border:none;margin:8px 0 0;padding-top:0">
+            holdout 与 walk-forward 明显背离 = 超参对历史过拟合的信号。测试期 bias（分差 ${t.margin_bias >= 0 ? "+" : ""}${t.margin_bias} / 总分 ${t.total_bias >= 0 ? "+" : ""}${t.total_bias}）反映跨期 regime 偏移。
+          </p>`;
+      }
+    } catch (_) { /* holdout 报告缺失时不显示 */ }
+
+    const gateCount = (window.STATIC_PAYLOAD?.board?.games || [])
+      .flatMap((g) => g.edges || [])
+      .filter((e) => e.signal).length;
+    const bettableCount = (window.STATIC_PAYLOAD?.board?.games || [])
+      .flatMap((g) => g.edges || [])
+      .filter((e) => e.signal && e.bettable).length;
+    const bettableRow = window.STATIC_PAYLOAD
+      ? `<p class="notice" style="border:none;margin:8px 0 0;padding-top:0">
+          今日看板：信号 <b>${gateCount}</b> 条 · 通过可下注闸门（软书/共识深度/同场互斥）<b>${bettableCount}</b> 条。
+          闸门标准：最优价非软书源、共识 ≥3 家、同场让分/胜负不叠加。
+        </p>`
+      : "";
+    box.innerHTML = lm + holdoutHtml + bettableRow;
+  } catch (e) {
+    box.innerHTML = `<p class="notice" style="border:none;margin:0">闸门数据加载失败：${esc(e.message)}</p>`;
+  }
+}
+window.loadGateCard = loadGateCard;
+
 async function loadBaselineCard() {
   const box = document.getElementById("baseline-card");
   if (!box) return;
@@ -401,7 +470,7 @@ document.getElementById("tabs").addEventListener("click", (event) => {
     const panel = document.getElementById(`tab-${name}`);
     if (panel) panel.hidden = name !== target;
   });
-  if (target === "research") { window.loadResearch?.(); window.loadBaselineCard?.(); }
+  if (target === "research") { window.loadResearch?.(); window.loadBaselineCard?.(); window.loadGateCard?.(); }
   if (target === "live") window.loadLive?.();
   if (target === "bets") window.loadBets?.();
 });
