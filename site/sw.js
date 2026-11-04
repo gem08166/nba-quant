@@ -1,4 +1,4 @@
-const CACHE = "nbaq-v14";
+const CACHE = "nbaq-v15";
 const ASSETS = [
   "./",
   "static/styles.css",
@@ -65,7 +65,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // 其余静态资源（HTML/JS/CSS）：也走 network-first——每日部署后立刻拿到
+  // 新 UI，不再依赖"记得改 CACHE 版本"；断网时回落到缓存。
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((resp) => {
+        if (resp.ok && resp.type === "basic") {
+          const copy = resp.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return resp;
+      })
+      .catch(() => caches.match(event.request).then((cached) => cached || Response.error()))
   );
 });
