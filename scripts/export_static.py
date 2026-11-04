@@ -86,6 +86,23 @@ def main() -> None:
         ).fetchall()
         board["dates"] = [{"date": r["slate_date"], "n": r["n"]} for r in date_rows]
 
+        # 最近 10 天完赛比分：给静态模式的纸面注单做本地结算
+        board["results"] = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT g.id, g.slate_date, g.status, g.home_score, g.away_score,
+                       h.abbrev AS home_abbrev, a.abbrev AS away_abbrev
+                FROM games g
+                JOIN teams h ON h.id = g.home_id
+                JOIN teams a ON a.id = g.away_id
+                WHERE g.status = 'STATUS_FINAL' AND g.slate_date >= date(?, '-10 days')
+                ORDER BY g.slate_date
+                """,
+                (slate,),
+            )
+        ]
+
         bets = bets_analysis(conn)
         trends = api_trends(conn)
         rapm_data = rapm_top(limit=200, conn=conn)

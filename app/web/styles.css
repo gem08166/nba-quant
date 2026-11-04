@@ -766,15 +766,21 @@ td.neg { color: var(--muted); }
 #bets-stats { margin-bottom: 16px; }
 #bets-markets, #bets-ledger { margin-top: 4px; }
 
-/* ---------- 静态模式（GitHub Pages 只读） ---------- */
+/* ---------- 静态模式（GitHub Pages） ----------
+   盘口/伤停的手工修改仍隐藏（需要后端与模型重算）；
+   纸面注单改为浏览器 localStorage，可正常「记一笔」。 */
 
-body.static-mode [data-bet],
-body.static-mode [data-confirm-bet],
 body.static-mode [data-save-impact],
 body.static-mode [data-apply-impact],
 body.static-mode #m-submit,
 body.static-mode .form-grid {
   display: none !important;
+}
+
+body.static-mode .bets-scope::after {
+  content: "本机浏览器记录 · 不同步";
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
 /* ---------- 响应式 ---------- */

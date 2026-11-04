@@ -19,6 +19,14 @@ async function api(path, options = {}) {
   await detectMode();
   if (window.APP_MODE === "static") {
     if (options.method && options.method !== "GET") {
+      // 静态模式：纸面注单可写（本机 localStorage）；盘口/伤停等仍只读
+      if (window.LB && /^\/api\/bets(\/|$)/.test(path)) {
+        if (options.method === "POST") return window.LB.add(JSON.parse(options.body || "{}"));
+        if (options.method === "DELETE") {
+          window.LB.remove(path.split("/").pop());
+          return { ok: true };
+        }
+      }
       throw new Error("静态模式为只读（数据由 GitHub Actions 定时更新）");
     }
     return staticApi(path);
@@ -506,7 +514,7 @@ function renderModal(data) {
         : `<div class="inj" style="color:var(--muted)">没有可用盘口。可以在下方手动录入你看到的盘口。</div>`
     }
 
-    <h3>本场纸面注单（未结算）</h3>
+    <h3>本场纸面注单（未结算）${window.APP_MODE === "static" ? `<span class="bets-scope"></span>` : ""}</h3>
     <div class="inj-list">${betRows}</div>
 
     <h3>伤停 / 轮换（impact 为对分差的影响，正数表示该队损失）</h3>
@@ -642,6 +650,8 @@ async function confirmBet(index) {
       method: "POST",
       body: JSON.stringify({
         game_id: state.detail.game.id,
+        slate_date: state.date,
+        matchup: `${state.detail.game.away.abbrev}@${state.detail.game.home.abbrev}`,
         market: edge.market,
         side: edge.side,
         line,

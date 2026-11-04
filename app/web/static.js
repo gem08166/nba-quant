@@ -7,6 +7,26 @@
 window.APP_MODE = window.APP_MODE || null;
 window.STATIC_PAYLOAD = window.STATIC_PAYLOAD || null;
 
+// 静态模式的纸面注单：export 里带的服务端注单（只读）+ 本机 localStorage（可写）。
+// 结算用 payload.results（最近 N 天完赛比分）与当天看板兜底。
+let lbSettledOnce = false;
+
+function lbAllBets(payload) {
+  if (!lbSettledOnce) {
+    const games = ((payload && payload.results) || []).concat(((payload && payload.board && payload.board.games) || []));
+    window.LB?.settle(games);
+    lbSettledOnce = true;
+  }
+  const server = (((payload && payload.bets && payload.bets.bets) || [])).map((bet) => ({ ...bet, source: "server" }));
+  const local = (window.LB?.read() || []).map((bet) => ({ ...bet, source: "local" }));
+  return server.concat(local);
+}
+
+function lbAllAnalysis(payload) {
+  const bets = lbAllBets(payload);
+  return { summary: window.LB.summary(bets), bets, curve: window.LB.curve(bets) };
+}
+
 async function detectMode() {
   if (window.APP_MODE) return window.APP_MODE;
   try {
@@ -46,6 +66,9 @@ function staticApi(path) {
           odds: game.odds || [],
           injuries: game.injuries || [],
           injury_suggestions: game.injury_suggestions || [],
+          bets: lbAllBets(payload).filter(
+            (bet) => bet.result === "open" && String(bet.game_id) === String(gameId)
+          ),
         };
       }
       throw new Error("比赛不在当前导出的比赛日中");
@@ -56,16 +79,16 @@ function staticApi(path) {
     return { dates: payload.board.dates || [] };
   }
   if (path.startsWith("/api/bets/summary")) {
-    return payload.bets.summary;
+    return lbAllAnalysis(payload).summary;
   }
   if (path.startsWith("/api/bets/analysis")) {
-    return payload.bets;
+    return lbAllAnalysis(payload);
   }
   if (path.startsWith("/api/bets")) {
     const gameId = params.get("game_id");
     const result = params.get("result");
-    let bets = payload.bets.bets || [];
-    if (gameId) bets = bets.filter((b) => b.game_id === gameId);
+    let bets = lbAllBets(payload);
+    if (gameId) bets = bets.filter((b) => String(b.game_id) === String(gameId));
     if (result) bets = bets.filter((b) => b.result === result);
     return { bets };
   }

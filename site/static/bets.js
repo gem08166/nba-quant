@@ -134,6 +134,10 @@ async function loadBets() {
       ctx.fillText("暂无已结算注单：结算后这里会出现累计收益曲线", canvas.width / 2, 120);
     }
     betsLoaded = true;
+    document.getElementById("bets-mode-note").textContent =
+      window.APP_MODE === "static"
+        ? "（静态模式：注单存在本机浏览器 localStorage，换设备或清缓存会丢失；结算在看板更新后自动完成）"
+        : "";
   } catch (error) {
     document.getElementById("bets-stats").innerHTML =
       `<div class="empty" style="grid-column:1/-1">收益数据加载失败：${esc(error.message)}</div>`;

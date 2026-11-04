@@ -183,7 +183,7 @@ app/
   models/ratings.py    # 分差/总分模型 + regime 修正 + 跨季季前赛锚定
   pricing/devig.py     # 去水 + 走盘感知概率
   i18n.py              # 球员英文名 → 中文名（查 data/player_zh.json）
-  web/                 # PWA 前端（app.js/bets.js/research.js/static.js/live.js）
+  web/                 # PWA 前端（app.js/bets.js/research.js/static.js/live.js/localbets.js）
 scripts/
   export_static.py     # 静态站导出（含根级 sw.js）
   holdout_eval.py      # 冻结 holdout
@@ -212,6 +212,7 @@ README.md              # 用户文档（含第 0 节验证结论）
 - 合并时补的两个小修：
   1. `bettable` 增加前置条件（必须 `signal` 且未被 `gated`）——包内旧逻辑会把被分歧闸门拦下的 ML 也标成"可下注"；
   2. `divergence_risk` 写入 prediction details 并在 `/api/games` 暴露（前端此前自己重算）。
+  3. **静态站「记一笔」恢复**：原先 `body.static-mode [data-bet]` 直接 `display:none`，Pages 上无法记录纸面注单。现改为浏览器 localStorage（`app/web/localbets.js`，key `nbaq:bets:v1`），收益页本地结算（让分/大小分/胜负，含走盘），并标注「本机浏览器记录 · 不同步」；盘口/伤停的手工修改仍保持只读。
 - `app/web/sw.js` 缓存版本 `nbaq-v13` → **`nbaq-v14`**（research/app/bets 均有改动，不升版本会让已装 PWA 继续吃旧缓存）。
 
 ### 10.2 数据库托管方式变更（重要）
