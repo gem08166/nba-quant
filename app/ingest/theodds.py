@@ -107,18 +107,11 @@ def fetch_nba_odds(force: bool = False) -> tuple[list[dict], str]:
     return events, msg
 
 
-def store_odds_api(conn, slate_date: str | None = None, force: bool = False) -> str:
-    """The Odds API 多书源盘口入库（book=bookmaker 名），返回状态消息。
+def ingest_events(conn, events: list[dict], slate_date: str | None = None) -> int:
+    """把 events（The Odds API 形状）按队名匹配比赛后入库。
 
-    队名匹配：Odds API 与 ESPN 均为英文全名；日期口径同 hao（UTC-5 = 美国比赛日）。
+    手机采集端推送的快照 JSON 也用这个形状，PC 端复用同一套匹配+入库。
     """
-    import sqlite3  # noqa: F401
-    from datetime import datetime as dt
-
-    events, message = fetch_nba_odds(force=force)
-    if not events:
-        return message
-
     rows_by_key = events_to_rows(events)
     inserted = 0
     for event in events:
@@ -128,7 +121,7 @@ def store_odds_api(conn, slate_date: str | None = None, force: bool = False) -> 
         kickoff = event.get("commence_time")  # ISO UTC
         try:
             et_date = (
-                dt.fromisoformat(kickoff.replace("Z", "+00:00")).timestamp() - 5 * 3600
+                datetime.fromisoformat(kickoff.replace("Z", "+00:00")).timestamp() - 5 * 3600
             )
             et_slate = datetime.utcfromtimestamp(et_date).strftime("%Y-%m-%d")
         except (TypeError, ValueError):
@@ -147,6 +140,19 @@ def store_odds_api(conn, slate_date: str | None = None, force: bool = False) -> 
         if not game:
             continue
         inserted += insert_api_rows(conn, game["id"], rows_by_key.get(key) or [])
+    return inserted
+
+
+def store_odds_api(conn, slate_date: str | None = None, force: bool = False) -> str:
+    """The Odds API 多书源盘口入库（book=bookmaker 名），返回状态消息。
+
+    队名匹配：Odds API 与 ESPN 均为英文全名；日期口径同 hao（UTC-5 = 美国比赛日）。
+    """
+    events, message = fetch_nba_odds(force=force)
+    if not events:
+        return message
+
+    inserted = ingest_events(conn, events, slate_date=slate_date)
     return f"{message} · 入库 {inserted} 行"
 
 

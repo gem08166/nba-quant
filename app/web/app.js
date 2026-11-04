@@ -248,6 +248,13 @@ async function load({ repredict = false } = {}) {
     renderStats(data);
     renderBettablePanel(data.games);
     renderGames(data.games);
+    // APK：看板打开时顺手抓一份快照（ESPN 免费 + 可选 Odds API），失败静默
+    if (window.DAV?.davEnabled() && window.SnapCollector) {
+      window.SnapCollector.collectAndPush(state.date).catch(() => {});
+      $("#snapshot").hidden = false;
+    } else {
+      $("#snapshot").hidden = true;
+    }
     loadBankroll();
   } catch (error) {
     $("#games").innerHTML = `<div class="empty">加载失败：${esc(error.message)}</div>`;
@@ -728,6 +735,20 @@ $("#date").addEventListener("change", (event) => {
 $("#refresh").addEventListener("click", () => load({ repredict: true }));
 $("#close").addEventListener("click", () => {
   $("#modal").hidden = true;
+});
+$("#snapshot").addEventListener("click", async () => {
+  const button = $("#snapshot");
+  button.disabled = true;
+  button.textContent = "抓取中…";
+  try {
+    const result = await window.SnapCollector.collectAndPush(state.date);
+    toast(`快照已上传：${result.events} 场 / ${result.books} 家书源`);
+  } catch (error) {
+    toast(`快照失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "抓快照";
+  }
 });
 $("#modal").addEventListener("click", (event) => {
   if (event.target.id === "modal") $("#modal").hidden = true;

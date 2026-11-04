@@ -23,3 +23,9 @@ tmp_*.py
 .env
 .idea/
 .vscode/
+
+# 手机壳（Capacitor）构建产物
+mobile/node_modules/
+mobile/www/
+mobile/android/
+mobile/*.apk

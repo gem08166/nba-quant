@@ -198,4 +198,34 @@ window.LB = {
   curve: lbCurve,
   analysis: lbAnalysis,
   importRows: lbImport,
+  davSync: lbDavSync,
 };
+
+// 台账 ↔ 坚果云（仅 APK：浏览器直连 WebDAV 会被 CORS 拦）
+async function lbDavSync() {
+  if (!window.DAV?.davEnabled()) return { skipped: true };
+  let mergedIn = 0;
+  try {
+    const remoteText = await window.DAV.davGetText("nbaq/bets.json");
+    if (remoteText) mergedIn = window.LB.importRows(JSON.parse(remoteText)).added;
+  } catch (_) {
+    /* 云端还没有台账文件 */
+  }
+  const list = window.LB.read();
+  const body = JSON.stringify(list, null, 1);
+  const hash = await sha1Hex(body);
+  const lastHash = localStorage.getItem("nbaq:dav:ledger-hash");
+  let pushed = false;
+  if (hash !== lastHash) {
+    await window.DAV.davPutText("nbaq/bets.json", body);
+    localStorage.setItem("nbaq:dav:ledger-hash", hash);
+    pushed = true;
+  }
+  return { mergedIn, pushed };
+}
+
+async function sha1Hex(text) {
+  const data = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-1", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}

@@ -22,6 +22,8 @@ env:
   NBAQ_ODDS_API_KEY: ${{ secrets.NBAQ_ODDS_API_KEY }}
   HOOPS_API_KEY: ${{ secrets.HOOPS_API_KEY }}
   NBAQ_NTFY_TOPIC: ${{ secrets.NBAQ_NTFY_TOPIC }}
+  NBAQ_WEBDAV_USER: ${{ secrets.NBAQ_WEBDAV_USER }}
+  NBAQ_WEBDAV_PASS: ${{ secrets.NBAQ_WEBDAV_PASS }}
 
 jobs:
   tick:
@@ -64,6 +66,10 @@ jobs:
 
       - name: Export static site
         run: python -m scripts.export_static --out site
+
+      # 坚果云数据通道：手机 APK 优先从这里拉 static.json / bets.json / 推快照
+      - name: Jianguoyun sync (static + ledger + phone snapshots)
+        run: python -m app.cli bets-sync --push-static
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

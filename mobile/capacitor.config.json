@@ -1,0 +1,16 @@
+{
+  "appId": "com.gem08166.nbaq",
+  "appName": "NBA Quant",
+  "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

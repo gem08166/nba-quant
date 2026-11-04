@@ -23,6 +23,8 @@ env:
   NBAQ_ODDS_API_KEY: ${{ secrets.NBAQ_ODDS_API_KEY }}
   HOOPS_API_KEY: ${{ secrets.HOOPS_API_KEY }}
   NBAQ_NTFY_TOPIC: ${{ secrets.NBAQ_NTFY_TOPIC }}
+  NBAQ_WEBDAV_USER: ${{ secrets.NBAQ_WEBDAV_USER }}
+  NBAQ_WEBDAV_PASS: ${{ secrets.NBAQ_WEBDAV_PASS }}
 
 jobs:
   refresh:

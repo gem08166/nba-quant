@@ -16,7 +16,7 @@ import json
 import sqlite3
 
 from .. import db
-from ..config import DATA_DIR
+from ..config import DATA_DIR, ROOT
 from . import webdav
 
 STATE_PATH = DATA_DIR / "webdav_state.json"
@@ -128,8 +128,18 @@ def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
-def run(conn: sqlite3.Connection, force_push: bool = False) -> dict:
-    """一轮同步：inbox → 本地；云端台账 → 本地；本地 → 云端。"""
+def run(
+    conn: sqlite3.Connection,
+    force_push: bool = False,
+    push_static: bool = False,
+    slate_date: str | None = None,
+) -> dict:
+    """一轮同步：inbox → 本地；云端台账 → 本地；本地 → 云端。
+
+    push_static：把 site/data/static.json 推到云端（手机 APK 的数据通道）。
+    只在 CI（导出刚完成、数据最新）调用；PC 不推，避免旧数据覆盖新数据。
+    slate_date：手机快照合并时的比赛日过滤（默认按 event 的 ET 日期自动匹配）。
+    """
     if not webdav.enabled():
         return {"skipped": "webdav not configured"}
     stats: dict = {"inbox_merged": 0, "ledger_merged": 0, "pushed": False}
@@ -175,6 +185,36 @@ def run(conn: sqlite3.Connection, force_push: bool = False) -> dict:
             state["ledger_hash"] = digest
             _save_state(state)
             stats["pushed"] = True
+
+    # 4) 手机快照合并：nbaq/snapshots/inbox/*.json（Odds API events 形状）
+    for path in webdav.list_files(webdav.SNAP_INBOX):
+        if not path.endswith(".json"):
+            continue
+        try:
+            text = webdav.get_text(path)
+            payload_snap = json.loads(text or "{}")
+            events = payload_snap.get("events") or []
+            from ..ingest import theodds
+
+            stats["snapshot_rows"] = stats.get("snapshot_rows", 0) + theodds.ingest_events(
+                conn, events, slate_date=slate_date
+            )
+            stats["snapshot_files"] = stats.get("snapshot_files", 0) + 1
+            webdav.move(path, f"{webdav.SNAP_DONE}/{path.rsplit('/', 1)[-1]}")
+        except Exception as exc:  # noqa: BLE001 - 单个文件坏了不影响其他
+            stats[f"snapshot_error:{path}"] = str(exc)[:120]
+
+    # 5) 静态站数据通道（仅 CI：--push-static；PC 不推，避免旧数据覆盖新数据）
+    if push_static:
+        static_path = ROOT / "site" / "data" / "static.json"
+        if static_path.exists():
+            body_static = static_path.read_text(encoding="utf-8")
+            digest_s = hashlib.md5(body_static.encode("utf-8")).hexdigest()
+            if state.get("static_hash") != digest_s:
+                if webdav.put_text(webdav.STATIC, body_static):
+                    state["static_hash"] = digest_s
+                    _save_state(state)
+                    stats["static_pushed"] = True
     return stats
 
 

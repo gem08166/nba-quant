@@ -239,6 +239,13 @@ README.md              # 用户文档（含第 0 节验证结论）
 0. **投注助手 P0（2026-11-04 晚已完成）**：①收盘窗口 10→120 分钟（`CLOSING_WINDOW_MIN`）；②新增 `odds-refresh.yml` 每 30 分钟轻量 tick（`watch --once`：抓盘口/收盘/结算/预测/推送，**不提交 main**，只 force-push data 分支 + 部署 Pages）；③ntfy 推送接通（标题 UTF-8 字节修复 ascii 报错），本机 topic 在 `.env`，CI 走 repo secret `NBAQ_NTFY_TOPIC`（待用户在 Settings→Secrets 添加，同时加 `NBAQ_ODDS_API_KEY`、`HOOPS_API_KEY`——此前 CI 里这两个源一直没 key，多书共识只靠 hao-tiyu）；④本机 `app.cli watch` 常驻（会话内）。
 1. 推送本机改动并等 Actions 用 `data` 分支跑通一轮（重点看 restore 是否成功、`site/data/static.json` 的 `generated_at` 是否等于本 run）。
 2. 线移动检验需继续积累实时快照（当前 63 信号 / 35 有移动），2-4 周后复跑。
+### 10.6 手机 APK（Capacitor，2026-11-05 进行中）
+
+- 结论先行：APK 里用 **CapacitorHttp**（原生网络）绕过 CORS → 手机可直连坚果云 WebDAV，"手机做数据采集"和"独立运行"都成立；TWA/PWABuilder 套壳则不行（仍是浏览器内核）。
+- 架构：APK = 打包的静态站（`site/`）+ 原生网络桥。数据优先级：坚果云 `nbaq/static.json`（CI 每 30 分钟推）→ `github.io` 兜底；注单本地存 + 坚果云双向同步（`localbets.js::lbDavSync`，hash 去重）；设置（坚果云账号/应用密码/Odds API key）只存手机。
+- 阶段 2/3 采集：`collector.js` 把 ESPN scoreboard 的 odds 转成 The Odds API events 形状（价格换十进制），可选并入 Odds API 数据，推 `nbaq/snapshots/inbox/snap-*.json`；PC `betssync.run()` 拉取 → `theodds.ingest_events`（从 store_odds_api 重构出的共享入口）→ 入库 → MOVE done。
+- CI：`odds-refresh.yml` 在 export 后跑 `bets-sync --push-static`（推 static.json 到坚果云），secrets 加了 `NBAQ_WEBDAV_USER/PASS`。
+- 构建：`mobile/build.ps1`（npm install → 拷 www → cap add/sync → gradlew assembleDebug）→ `mobile/nbaq-debug.apk`。环境：Node 26 + Temurin JDK 17（winget 装好）+ 已有 Android SDK（`%LOCALAPPDATA%\Android\Sdk`）。
 3. 收盘线基准下一步从单家 `sbr-fanduel` 改成 8 家共识（`backfill_closing` 已回填 8 书源，报告侧尚未用共识）。
 
 ### 10.5 台账坚果云同步（2026-11-05）
