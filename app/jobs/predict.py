@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -40,32 +40,9 @@ BOOK_ALIASES = {
     "pinnacle": "pinnacle",
 }
 
-# 快照超龄（小时）：共识只用新鲜的报价，陈旧价会让"最优价"失真
+# 快照超龄（小时）：共识优先用新鲜报价，陈旧价会让"最优价"失真。
+# 若所有书源都超龄（数据源停更），回退全量并标记 stale——陈旧共识仍优于单书。
 STALE_HOURS = float(os.getenv("NBAQ_STALE_HOURS", "7"))
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _normalize_book(book: str) -> str:
-    return BOOK_ALIASES.get((book or "").strip().lower(), (book or "").strip().lower())
-
-
-def _is_fresh(captured_at: str | None) -> bool:
-    ts = _parse_ts_local(captured_at)
-    if ts is None:
-        return True
-    return (_now_utc() - ts).total_seconds() < STALE_HOURS * 3600
-
-
-def _parse_ts_local(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 # Never predict games that will never be played (postponed/canceled): they
 # would otherwise hang on the board as "未开赛" forever and accumulate
@@ -102,8 +79,33 @@ def pick_book(rows: list[dict]) -> str | None:
     return sorted(books)[0] if books else None
 
 
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _normalize_book(book: str) -> str:
+    return BOOK_ALIASES.get((book or "").strip().lower(), (book or "").strip().lower())
+
+
+def _parse_ts_local(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _is_fresh(captured_at: str | None) -> bool:
+    ts = _parse_ts_local(captured_at)
+    if ts is None:
+        return True
+    return (_now_utc() - ts).total_seconds() < STALE_HOURS * 3600
+
+
 def _devig_pair(price_a: float | None, price_b: float | None) -> tuple[float, float] | None:
-    """乘法去水：返回 (a 侧公允概率, b 侧公允概率)。缺一边返回 None。"""
+    """乘法去水：返回 (a 侧公允概率, b 侧公允概率)。缺一边返回 None——
+    单边价格无法去水，用它计算 edge 会产出假信号（审查 P0 项）。"""
     if not price_a or not price_b or price_a <= 1.0 or price_b <= 1.0:
         return None
     inv_a, inv_b = 1.0 / price_a, 1.0 / price_b
@@ -124,13 +126,10 @@ def _mode(values: list[float]) -> float | None:
     return tied[mid] if len(tied) % 2 else (tied[mid - 1] + tied[mid]) / 2
 
 
-def _robust_pair_stats(
-    entries: list[dict],
-    tol: float = 0.08,
-) -> tuple[float, float, float | None, float | None, int, str | None, str | None]:
+def _robust_pair_stats(entries: list[dict], tol: float = 0.08):
     """鲁棒聚合：各书源去水公允概率，剔除与中位数偏差 > tol 的离群书源
-    （防单源字段颠倒/坏数据污染共识），再取平均；价格为过滤后书源中的最优价，
-    并记录该价格的真实来源书名。"""
+    （防单源字段颠倒/坏数据污染共识，实测 hao-tiyu ML 反向案例），
+    再取平均；价格为过滤后书源中的最优价，并记录其真实来源书名。"""
     if not entries:
         return 0.0, 0.0, None, None, 0, None, None
     med_a = sorted(e["fair_a"] for e in entries)[len(entries) // 2]
@@ -156,32 +155,42 @@ def _robust_pair_stats(
 def consensus_market(odds_rows: list[dict]) -> dict:
     """多书共识：对每家书源分别去水后取平均公允概率；线取众数；每侧取共识线下的最优价。
 
-    书源名先归一化（同一 bookmaker 不同数据源的命名差异），超龄快照剔除。
-    返回 {spread: {...}, total: {...}, moneyline: {...}}，每项含 n_books 与
-    best price 的真实来源书名（home_book/away_book 等）。
+    书源名先归一化（同一 bookmaker 不同数据源的命名差异），超龄快照剔除；
+    若剔除后无可用书源（数据源停更），回退到全量并标记 stale=True——
+    陈旧共识仍优于 ESPN 单书。
+    返回 {spread/total/moneyline: {line?, prices, fair probs, n_books, 来源书名}}。
     单书源时退化为该书源的去水结果（与旧逻辑兼容）。
     """
-    now = _now_utc()
     books: dict[str, dict[tuple[str, str], dict]] = {}
+    fresh_books: dict[str, dict[tuple[str, str], dict]] = {}
     for row in odds_rows:
         if not row.get("price") or row["price"] <= 1.0:
             continue
-        if not _is_fresh(row.get("captured_at")):
-            continue  # 超龄报价剔除
         book = _normalize_book(row.get("book"))
-        # 同书同市场同侧取最新一条（captured_at 逆序防护）
         key = (row["market"], row["side"])
-        existing = books.setdefault(book, {}).get(key)
+        target = books.setdefault(book, {})
+        existing = target.get(key)
         if existing is None or _parse_ts_local(row.get("captured_at") or "") >= _parse_ts_local(
             existing.get("captured_at") or ""
         ):
-            books[book][key] = row
+            target[key] = row
+        if _is_fresh(row.get("captured_at")):
+            ftarget = fresh_books.setdefault(book, {})
+            fexisting = ftarget.get(key)
+            if fexisting is None or _parse_ts_local(row.get("captured_at") or "") >= _parse_ts_local(
+                fexisting.get("captured_at") or ""
+            ):
+                ftarget[key] = row
 
-    result: dict[str, dict] = {}
+    stale = not fresh_books  # 没有任何新鲜书源 → 全量回退模式
+    # 有新鲜书源只用新鲜的；否则回退全量（陈旧共识仍优于单书）
+    active_books = fresh_books if fresh_books else books
+
+    result: dict[str, dict] = {"stale": stale}
 
     # --- spread（home 线） ---
     entries: list[dict] = []
-    for book, by_key in books.items():
+    for book, by_key in active_books.items():
         h, a = by_key.get(("spread", "home")), by_key.get(("spread", "away"))
         if not h or not a or h.get("line") is None or a.get("line") is None:
             continue
@@ -216,7 +225,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
 
     # --- total ---
     entries: list[dict] = []
-    for book, by_key in books.items():
+    for book, by_key in active_books.items():
         o, u = by_key.get(("total", "over")), by_key.get(("total", "under"))
         if not o or not u or o.get("line") is None or u.get("line") is None:
             continue
@@ -251,7 +260,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
 
     # --- moneyline ---
     ml_entries: list[dict] = []
-    for book, by_key in books.items():
+    for book, by_key in active_books.items():
         h, a = by_key.get(("moneyline", "home")), by_key.get(("moneyline", "away"))
         if not h or not a:
             continue
@@ -312,7 +321,7 @@ def build_market(
     pred: dict,
     odds_rows: list[dict],
 ) -> tuple[str | None, dict]:
-    """定价：多书共识（多书源各自去水取平均公允概率、线取众数、价取共识线下最优），
+    """定价：多书共识（多书源各自去水取平均公允概率、线取众数、每侧取共识线下最优价），
     再与模型按 MARKET_BLEND 融合。只有单书源时自动退化为该书源。"""
     cons = consensus_market(odds_rows)
     book = pick_book(odds_rows)
@@ -349,7 +358,7 @@ def build_market(
     edges: list[dict] = []
 
     # 分歧闸门：模型与共识市场的分差分歧过大时，最可能是模型错（伤停/阵容
-    # 未建模）而非市场错，此类比赛不出信号（P0-5，第三方审查建议）。
+    # 未建模）而非市场错，此类比赛不出信号（第三方审查 P0-5）。
     divergence_gate = 6.0
     gated = (
         spread_line is not None
@@ -466,6 +475,7 @@ def build_market(
             "n_books_spread": (spread_cons or {}).get("n_books", 0),
             "n_books_total": (total_cons or {}).get("n_books", 0),
             "n_books_ml": (cons.get("moneyline") or {}).get("n_books", 0),
+            "stale": cons.get("stale", False),
         },
         "pricing": {
             "market_blend": MARKET_BLEND,

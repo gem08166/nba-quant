@@ -59,6 +59,7 @@ def _game_payload(row: sqlite3.Row, prediction: dict | None) -> dict:
             "lines": details.get("lines"),
             "probabilities": details.get("probabilities"),
             "pricing": details.get("pricing"),
+            "consensus": details.get("consensus"),
             "created_at": prediction["created_at"],
         }
         payload["edges"] = details.get("edges", [])

@@ -317,19 +317,82 @@ function renderModal(data) {
     : `<div class="inj" style="color:var(--muted)">暂无伤停数据（赛前刷新会从 ESPN 摘要抓取）</div>`;
 
   const odds = data.odds || [];
-  const oddsRows = odds
-    .map(
-      (row) => `
-      <tr>
-        <td>${esc(row.book)}</td>
-        <td>${row.market === "spread" ? "让分" : row.market === "total" ? "大小分" : "胜负"}</td>
-        <td>${esc(row.side)}</td>
-        <td>${row.line === null ? "—" : fmtSpread(row.line)}</td>
-        <td>${fmtPrice(row.price)}</td>
-        <td style="color:var(--muted)">${esc((row.captured_at || "").replace("T", " ").slice(0, 16))}</td>
-      </tr>`
-    )
-    .join("");
+  const cons = pred?.consensus || {};
+
+  function groupOdds(rows) {
+    const spread = {}, total = {}, moneyline = {};
+    for (const r of rows) {
+      const target =
+        r.market === "spread" ? spread : r.market === "total" ? total : r.market === "moneyline" ? moneyline : null;
+      if (!target) continue;
+      const t = target[r.book] || (target[r.book] = { book: r.book, captured: "" });
+      if (r.market === "spread") {
+        if (r.side === "home") { t.line = r.line; t.home_price = r.price; }
+        else { t.away_line = r.line; t.away_price = r.price; }
+      } else if (r.market === "total") {
+        if (r.side === "over") { t.line = r.line; t.over_price = r.price; }
+        else { t.under_price = r.price; }
+      } else {
+        if (r.side === "home") t.home_price = r.price; else t.away_price = r.price;
+      }
+      if ((r.captured_at || "") > t.captured) t.captured = r.captured_at;
+    }
+    return {
+      spread: Object.values(spread).sort((a, b) => (a.book > b.book ? 1 : -1)),
+      total: Object.values(total).sort((a, b) => (a.book > b.book ? 1 : -1)),
+      moneyline: Object.values(moneyline).sort((a, b) => (a.book > b.book ? 1 : -1)),
+    };
+  }
+  const grouped = groupOdds(odds);
+  const fmtT = (v) => (v ? esc(v.replace("T", " ").slice(5, 16)) : "—");
+
+  function oddsTable(head, rowsHtml) {
+    return `<div class="table-wrap odds-table"><table>
+      <thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+  }
+
+  let oddsBlocks = "";
+  if (grouped.spread.length) {
+    const bestH = Math.max(...grouped.spread.map((r) => r.home_price || 0));
+    const bestA = Math.max(...grouped.spread.map((r) => r.away_price || 0));
+    oddsBlocks += `<h4>让分（共识线 ${fmtSpread(cons.spread_line ?? grouped.spread[0]?.line)} · ${cons.n_books_spread || grouped.spread.length} 家）</h4>` +
+      oddsTable("<th>书源</th><th>主线</th><th>主价</th><th>客价</th><th>更新</th>",
+        grouped.spread.map((r) => `
+          <tr>
+            <td>${esc(r.book)}</td>
+            <td>${fmtSpread(r.line)}</td>
+            <td class="${r.home_price === bestH ? "pos" : ""}">${fmtPrice(r.home_price)}</td>
+            <td class="${r.away_price === bestA ? "pos" : ""}">${fmtPrice(r.away_price)}</td>
+            <td style="color:var(--muted)">${fmtT(r.captured)}</td>
+          </tr>`).join(""));
+  }
+  if (grouped.total.length) {
+    const bestO = Math.max(...grouped.total.map((r) => r.over_price || 0));
+    const bestU = Math.max(...grouped.total.map((r) => r.under_price || 0));
+    oddsBlocks += `<h4>大小分（共识线 ${fmtTotal(cons.total_line ?? grouped.total[0]?.line)} · ${cons.n_books_total || grouped.total.length} 家）</h4>` +
+      oddsTable("<th>书源</th><th>线</th><th>大价</th><th>小价</th><th>更新</th>",
+        grouped.total.map((r) => `
+          <tr>
+            <td>${esc(r.book)}</td>
+            <td>${fmtTotal(r.line)}</td>
+            <td class="${r.over_price === bestO ? "pos" : ""}">${fmtPrice(r.over_price)}</td>
+            <td class="${r.under_price === bestU ? "pos" : ""}">${fmtPrice(r.under_price)}</td>
+            <td style="color:var(--muted)">${fmtT(r.captured)}</td>
+          </tr>`).join(""));
+  }
+  if (grouped.moneyline.length) {
+    const bestH = Math.max(...grouped.moneyline.map((r) => r.home_price || 0));
+    const bestA = Math.max(...grouped.moneyline.map((r) => r.away_price || 0));
+    oddsBlocks += `<h4>独赢（${cons.n_books_ml || grouped.moneyline.length} 家）</h4>` +
+      oddsTable("<th>书源</th><th>主价</th><th>客价</th><th>更新</th>",
+        grouped.moneyline.map((r) => `
+          <tr>
+            <td>${esc(r.book)}</td>
+            <td class="${r.home_price === bestH ? "pos" : ""}">${fmtPrice(r.home_price)}</td>
+            <td class="${r.away_price === bestA ? "pos" : ""}">${fmtPrice(r.away_price)}</td>
+            <td style="color:var(--muted)">${fmtT(r.captured)}</td>
+          </tr>`).join(""));
+  }
 
   $("#modal-body").innerHTML = `
     <h2>${esc(game.away.name)} <span style="color:var(--muted)">@</span> ${esc(game.home.name)}</h2>
@@ -389,15 +452,8 @@ function renderModal(data) {
       <div style="grid-column: span 2"><button class="btn primary" id="m-submit">保存盘口并重算</button></div>
     </div>
 
-    <h3>最新盘口快照</h3>
-    ${
-      oddsRows
-        ? `<div class="table-wrap"><table>
-            <thead><tr><th>来源</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>时间</th></tr></thead>
-            <tbody>${oddsRows}</tbody>
-          </table></div>`
-        : `<div class="inj" style="color:var(--muted)">暂无盘口快照。</div>`
-    }
+    <h3>盘口快照（按市场分组 · 最优价高亮）</h3>
+    ${oddsBlocks || `<div class="inj" style="color:var(--muted)">暂无盘口快照。</div>`}
   `;
 
   const marketSelect = $("#m-market");
