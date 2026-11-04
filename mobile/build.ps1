@@ -35,8 +35,13 @@ if (-not (Test-Path "$PSScriptRoot\node_modules")) {
     Pop-Location
 }
 
-# --- 2. copy static site to www ---
+# --- 2. regenerate static site, copy to www ---
 if (-not $SkipWeb) {
+    Write-Output "== export static site =="
+    Push-Location "$PSScriptRoot\.."
+    & "$PSScriptRoot\..\.venv\Scripts\python.exe" -m scripts.export_static --out site
+    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "export_static failed" }
+    Pop-Location
     Write-Output "== copy site -> www =="
     $www = "$PSScriptRoot\www"
     if (Test-Path $www) { Remove-Item $www -Recurse -Force }
