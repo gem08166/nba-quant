@@ -4,16 +4,25 @@
 
 const DAV_KEY = "nbaq:dav";
 
+// 出厂默认（个人 APK 内置，手机开箱即用；设置界面可覆盖，存 localStorage）
+const DAV_DEFAULTS = {
+  url: "https://dav.jianguoyun.com/dav/",
+  user: "13622913166@163.com",
+  pass: "a4hepfmfcktpte4h",
+};
+
 function isApk() {
   return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 }
 
 function davCfg() {
+  let stored = {};
   try {
-    return JSON.parse(localStorage.getItem(DAV_KEY) || "null");
+    stored = JSON.parse(localStorage.getItem(DAV_KEY) || "null") || {};
   } catch (_) {
-    return null;
+    stored = {};
   }
+  return { ...DAV_DEFAULTS, ...stored };
 }
 
 function davSave(cfg) {
@@ -24,7 +33,6 @@ function davEnabled() {
   const cfg = davCfg();
   return !!(isApk() && cfg && cfg.user && cfg.pass);
 }
-
 async function davFetch(path, options = {}) {
   const cfg = davCfg();
   if (!cfg) throw new Error("WebDAV 未配置");

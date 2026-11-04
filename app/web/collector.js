@@ -97,8 +97,8 @@ async function collectSnapshots(date) {
     /* ESPN 拉不到就只用 Odds API */
   }
 
-  // 2) The Odds API（可选：设置里填 key；注意消耗额度）
-  const oddsKey = localStorage.getItem("nbaq:oddsapi-key");
+  // 2) The Odds API（默认 key 内置在本机配置里；设置里可改/清空）
+  const oddsKey = localStorage.getItem("nbaq:oddsapi-key") ?? "401ac0d0bfe89e015aa8ca7c19dd56c6";
   if (oddsKey) {
     try {
       const resp = await fetch(
