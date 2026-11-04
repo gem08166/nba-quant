@@ -51,9 +51,12 @@ jobs:
         run: |
           set -o pipefail
           if ! pytest -q 2>&1 | tee pytest.log; then
-            # 把 FAILED/ERROR 行作为 annotation 暴露出来（无 token 也能在 checks API 看到）
+            # 把 FAILED/ERROR 行与日志尾部作为 annotation 暴露（无 token 也能在 checks API 看到）
             grep -E "^(FAILED|ERROR)" pytest.log | while IFS= read -r line; do
               echo "::error title=pytest::$line"
+            done
+            tail -n 30 pytest.log | while IFS= read -r line; do
+              echo "::error title=pytest-log::$(printf '%s' "$line" | cut -c1-220)"
             done
             exit 1
           fi
