@@ -53,6 +53,15 @@ jobs:
       - name: Watch tick (ingest + closing + settle + predict + notify)
         run: python -m app.cli watch --once
 
+      # 报告也要生成：轻量运行同样部署 Pages，缺了报告研究页会显示「暂无」
+      - name: Reports (backtest + holdout + blend + closing-line + linemove)
+        run: |
+          python -m app.cli backtest --test-start 2026-01-01 || true
+          python -m app.cli holdout --split 0.7 || true
+          python -m scripts.blend_sweep || true
+          python -m scripts.model_clv_history --start 2025-10-21 || true
+          python -m scripts.linemove_analysis || true
+
       - name: Export static site
         run: python -m scripts.export_static --out site
 
@@ -85,6 +94,10 @@ jobs:
   deploy:
     needs: tick
     runs-on: ubuntu-latest
+    # Pages 部署全局串行：两个 workflow 都会部署，并发会互相顶掉（deploy failure）
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

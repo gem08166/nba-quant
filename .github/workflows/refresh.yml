@@ -157,6 +157,10 @@ jobs:
   deploy:
     needs: refresh
     runs-on: ubuntu-latest
+    # Pages 部署全局串行（与 odds-refresh-light 共用一把锁）
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
