@@ -443,8 +443,10 @@ tr.row-bettable td { background: rgba(22, 163, 74, 0.12); }
 tr.row-bettable td:first-child { font-weight: 750; color: #c4f7d8; }
 
 @media (max-width: 560px) {
-  .bp-row { grid-template-columns: 1fr auto auto; }
-  .bp-pick { grid-column: 1 / -1; white-space: normal; }
+  .bp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; }
+  .bp-match { flex: 1 1 100%; }
+  .bp-pick { flex: 1 1 100%; }
+  .bp-price { margin-left: auto; }
   .bp-book, .bp-hint { display: none; }
 }
 
