@@ -131,7 +131,7 @@ def _robust_pair_stats(entries: list[dict], tol: float = 0.08):
     （防单源字段颠倒/坏数据污染共识，实测 hao-tiyu ML 反向案例），
     再取平均；价格为过滤后书源中的最优价，并记录其真实来源书名。"""
     if not entries:
-        return 0.0, 0.0, None, None, 0, None, None
+        return 0.0, 0.0, None, None, 0, None, None, None
     med_a = sorted(e["fair_a"] for e in entries)[len(entries) // 2]
     med_b = sorted(e["fair_b"] for e in entries)[len(entries) // 2]
     kept = [
@@ -149,7 +149,17 @@ def _robust_pair_stats(entries: list[dict], tol: float = 0.08):
     best_b = best_b_entry["price_b"] if best_b_entry else None
     book_a = best_a_entry["book"] if best_a_entry else None
     book_b = best_b_entry["book"] if best_b_entry else None
-    return mean_a, mean_b, best_a, best_b, n, book_a, book_b
+    # 陈旧价检测：最优价的书源比其余书源平均更新时间明显更老 → 该价不可信
+    stale_a = stale_b = False
+    ages = [e.get("age_hours") for e in kept if e.get("age_hours") is not None]
+    if ages and len(ages) >= 3:
+        if best_a_entry and best_a_entry.get("age_hours") is not None:
+            mean_age = sum(ages) / len(ages)
+            stale_a = best_a_entry["age_hours"] > mean_age * 1.5 + 0.5
+        if best_b_entry and best_b_entry.get("age_hours") is not None:
+            mean_age = sum(ages) / len(ages)
+            stale_b = best_b_entry["age_hours"] > mean_age * 1.5 + 0.5
+    return mean_a, mean_b, best_a, best_b, n, book_a, book_b, (stale_a or stale_b)
 
 
 def consensus_market(odds_rows: list[dict]) -> dict:
@@ -163,23 +173,27 @@ def consensus_market(odds_rows: list[dict]) -> dict:
     """
     books: dict[str, dict[tuple[str, str], dict]] = {}
     fresh_books: dict[str, dict[tuple[str, str], dict]] = {}
+    now = _now_utc()
     for row in odds_rows:
         if not row.get("price") or row["price"] <= 1.0:
             continue
         book = _normalize_book(row.get("book"))
         key = (row["market"], row["side"])
+        age_hours = None
+        ts = _parse_ts_local(row.get("captured_at"))
+        if ts:
+            age_hours = (now - ts).total_seconds() / 3600.0
+        entry = {"book": book, "market": row["market"], "side": row["side"],
+                 "line": row.get("line"), "price": row["price"],
+                 "captured_at": row.get("captured_at"), "age_hours": age_hours}
         target = books.setdefault(book, {})
         existing = target.get(key)
-        if existing is None or _parse_ts_local(row.get("captured_at") or "") >= _parse_ts_local(
-            existing.get("captured_at") or ""
-        ):
+        if existing is None or (existing.get("age_hours") or 0) >= (age_hours or 0):
             target[key] = row
         if _is_fresh(row.get("captured_at")):
             ftarget = fresh_books.setdefault(book, {})
             fexisting = ftarget.get(key)
-            if fexisting is None or _parse_ts_local(row.get("captured_at") or "") >= _parse_ts_local(
-                fexisting.get("captured_at") or ""
-            ):
+            if fexisting is None or (fexisting.get("age_hours") or 0) >= (age_hours or 0):
                 ftarget[key] = row
 
     stale = not fresh_books  # 没有任何新鲜书源 → 全量回退模式
@@ -187,7 +201,6 @@ def consensus_market(odds_rows: list[dict]) -> dict:
     active_books = fresh_books if fresh_books else books
 
     result: dict[str, dict] = {"stale": stale}
-
     # --- spread（home 线） ---
     entries: list[dict] = []
     for book, by_key in active_books.items():
@@ -201,14 +214,15 @@ def consensus_market(odds_rows: list[dict]) -> dict:
         if not pair:
             continue
         entries.append({"book": book, "line": line_h, "fair_h": pair[0], "fair_a": pair[1],
-                        "price_h": h["price"], "price_a": a["price"]})
+                        "price_h": h["price"], "price_a": a["price"],
+                        "age_h": h.get("age_hours")})
     if entries:
         consensus_line = _mode([e["line"] for e in entries])
         at_line = [e for e in entries if abs(e["line"] - consensus_line) < 1e-9]
-        mean_a, mean_b, best_h, best_a, n_kept, book_h, book_a = _robust_pair_stats(
+        mean_a, mean_b, best_h, best_a, n_kept, book_h, book_a, stale_best = _robust_pair_stats(
             [
                 {"book": e["book"], "fair_a": e["fair_h"], "fair_b": e["fair_a"],
-                 "price_a": e["price_h"], "price_b": e["price_a"]}
+                 "price_a": e["price_h"], "price_b": e["price_a"], "age_hours": e["age_h"]}
                 for e in at_line
             ]
         )
@@ -221,6 +235,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
             "n_books": n_kept,
             "home_book": book_h,
             "away_book": book_a,
+            "best_price_stale": stale_best,
         }
 
     # --- total ---
@@ -236,14 +251,15 @@ def consensus_market(odds_rows: list[dict]) -> dict:
         if not pair:
             continue
         entries.append({"book": book, "line": line_o, "fair_a": pair[0], "fair_b": pair[1],
-                        "price_a": o["price"], "price_b": u["price"]})
+                        "price_a": o["price"], "price_b": u["price"],
+                        "age_h": o.get("age_hours"), "age_h_b": u.get("age_hours")})
     if entries:
         consensus_line = _mode([e["line"] for e in entries])
         at_line = [e for e in entries if abs(e["line"] - consensus_line) < 1e-9]
-        mean_o, mean_u, best_o, best_u, n_kept, book_o, book_u = _robust_pair_stats(
+        mean_o, mean_u, best_o, best_u, n_kept, book_o, book_u, stale_best = _robust_pair_stats(
             [
                 {"book": e["book"], "fair_a": e["fair_a"], "fair_b": e["fair_b"],
-                 "price_a": e["price_a"], "price_b": e["price_b"]}
+                 "price_a": e["price_a"], "price_b": e["price_b"], "age_hours": e["age_h"]}
                 for e in at_line
             ]
         )
@@ -256,6 +272,7 @@ def consensus_market(odds_rows: list[dict]) -> dict:
             "n_books": n_kept,
             "over_book": book_o,
             "under_book": book_u,
+            "best_price_stale": stale_best,
         }
 
     # --- moneyline ---
@@ -268,17 +285,25 @@ def consensus_market(odds_rows: list[dict]) -> dict:
         if not pair:
             continue
         ml_entries.append({"book": book, "fair_a": pair[0], "fair_b": pair[1],
-                           "price_a": h["price"], "price_b": a["price"]})
+                           "price_a": h["price"], "price_b": a["price"],
+                           "age_h": h.get("age_hours")})
     if ml_entries:
-        mean_h, mean_a, best_h, best_a, n_kept, book_h, book_a = _robust_pair_stats(ml_entries)
+        mean_h, mean_a, best_h, best_a, n_kept, book_h, book_a, stale_best = _robust_pair_stats(ml_entries)
+        # 共识中位价（EV 计算用——最优价常有跨书价差，模型 EV 应按"可确定拿到的
+        # 价格"评估，而非碰运气的全场最优；最优价仍保留展示用于比较）。
+        median_h = sorted(e["price_a"] for e in ml_entries)[len(ml_entries) // 2]
+        median_a = sorted(e["price_b"] for e in ml_entries)[len(ml_entries) // 2]
         result["moneyline"] = {
             "home_price": best_h,
             "away_price": best_a,
+            "home_price_median": median_h,
+            "away_price_median": median_a,
             "fair_home": mean_h,
             "fair_away": mean_a,
             "n_books": n_kept,
             "home_book": book_h,
             "away_book": book_a,
+            "best_price_stale": stale_best,
         }
     return result
 
@@ -296,12 +321,16 @@ def _make_edge(
     fair_prob: float,
     book: str,
     created_at: str,
+    ev_price: float | None = None,
 ) -> dict | None:
+    """edge 用共识公允概率；EV 用 ev_price（共识中位价——可确定拿到的价格），
+    展示价 price 保留最优价用于比较。"""
     if price is None or price <= 1.0:
         return None
-    ev = expected_value(model_prob, price)
+    ev_p = ev_price or price
+    ev = expected_value(model_prob, ev_p)
     edge = edge_value(model_prob, fair_prob)
-    kelly = kelly_fraction(model_prob, price)
+    kelly = kelly_fraction(model_prob, ev_p)
     return {
         "market": market,
         "side": side,
@@ -361,13 +390,16 @@ def build_market(
     probabilities: dict[str, float] = {}
     edges: list[dict] = []
 
-    # 分歧闸门：模型与共识市场的分差分歧过大时，最可能是模型错（伤停/阵容
-    # 未建模）而非市场错，此类比赛不出信号（第三方审查 P0-5）。
+    # 分歧闸门（P0-5 修正版）：分差分歧只拦分差市场，不再跨市场连坐——
+    # PHI@DET 的 total 与分差分歧无关（220.4 vs 218.5 仅差 1.9），却被旧版拦掉。
+    # 同时分歧本身不做二值拦截（收盘线检验显示 5.4 与 8.3 分歧的下注 ROI 无统计
+    # 差异，闸门只减数量不提质量），改为标记风险等级供前端展示。
     divergence_gate = 6.0
-    gated = (
-        spread_line is not None
-        and abs(model_mu_m - (-spread_line)) > divergence_gate
+    spread_divergence = (
+        abs(model_mu_m - (-spread_line)) if spread_line is not None else 0.0
     )
+    gated = spread_divergence > divergence_gate
+    divergence_risk = "high" if spread_divergence > divergence_gate else ("medium" if spread_divergence > 3.0 else "low")
 
     if spread_line is not None:
         p_home = cover_prob(pricing_mu_m, spread_line, sigma_m)
@@ -399,7 +431,7 @@ def build_market(
             signal = _make_edge("spread", side, side_line, price, p, fair, price_book, created_at)
             if signal and gated:
                 signal["signal"] = False
-                signal["gated"] = f"模型与市场分差分歧 >{divergence_gate:g}，仅记录不下注"
+                signal["gated"] = f"模型与市场分差分歧 {spread_divergence:.1f} >{divergence_gate:g}，仅记录不下注"
             if signal:
                 edges.append(signal)
 
@@ -430,9 +462,6 @@ def build_market(
             if price is None or fair is None:
                 continue
             signal = _make_edge("total", side, total_line, price, p, fair, price_book, created_at)
-            if signal and gated:
-                signal["signal"] = False
-                signal["gated"] = f"模型与市场分差分歧 >{divergence_gate:g}，仅记录不下注"
             if signal:
                 edges.append(signal)
 
@@ -456,16 +485,29 @@ def build_market(
         away_price = ml_cons.get("away_price") or (away_ml["price"] if away_ml else None)
         home_book = ml_cons.get("home_book") or book or ""
         away_book = ml_cons.get("away_book") or book or ""
+        # 陈旧最优价防护（审查第二轮 #2）：最优价来自明显超龄的书源（如 1xbet
+        # 12h 未更新的 4.01）会虚造 edge——此时该侧降级用共识公允概率反推的
+        # "可成交价上限"（fair 概率对应的无 vig 价格），保证 EV 不虚高。
+        stale_flag = ml_cons.get("best_price_stale")
+        if stale_flag and ml_cons.get("fair_home") and ml_cons.get("fair_away"):
+            implied_home = round(1.0 / ml_cons["fair_home"], 3)
+            implied_away = round(1.0 / ml_cons["fair_away"], 3)
+            if home_price and home_price > implied_home:
+                home_price = implied_home
+            if away_price and away_price > implied_away:
+                away_price = implied_away
         for side, p, fair, price, price_book in (
             ("home", p_home_ml, fair_home, home_price, home_book),
             ("away", 1.0 - p_home_ml, fair_away, away_price, away_book),
         ):
             if price is None or fair is None:
                 continue
-            signal = _make_edge("moneyline", side, None, price, p, fair, price_book, created_at)
+            # EV 用共识中位价（可确定拿到的价格）；最优价仅供展示比较
+            ev_price = (ml_cons.get("home_price_median") if side == "home" else ml_cons.get("away_price_median")) or price
+            signal = _make_edge("moneyline", side, None, price, p, fair, price_book, created_at, ev_price=ev_price)
             if signal and gated:
                 signal["signal"] = False
-                signal["gated"] = f"模型与市场分差分歧 >{divergence_gate:g}，仅记录不下注"
+                signal["gated"] = f"模型与市场分差分歧 {spread_divergence:.1f} >{divergence_gate:g}，仅记录不下注（跨市场保留观察）"
             if signal:
                 edges.append(signal)
 
@@ -475,6 +517,7 @@ def build_market(
         "total": total_line,
         "probabilities": probabilities,
         "edges": edges,
+        "divergence_risk": divergence_risk,
         "consensus": {
             "n_books_spread": (spread_cons or {}).get("n_books", 0),
             "n_books_total": (total_cons or {}).get("n_books", 0),
