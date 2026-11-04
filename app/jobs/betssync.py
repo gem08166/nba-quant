@@ -51,8 +51,16 @@ def bets_payload(conn: sqlite3.Connection) -> list[dict]:
     return payload
 
 
+def normalize_refs(conn: sqlite3.Connection) -> int:
+    """给没有 ref 的历史注单补上 `srv-<id>`（服务端创建的都走这个规则），
+    否则云端合回时会因为 ref 对不上而产生重复。"""
+    cur = conn.execute("UPDATE bets SET ref = 'srv-' || id WHERE ref IS NULL")
+    conn.commit()
+    return cur.rowcount
+
+
 def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
-    """把 PWA 形状的注单合并进 bets 表（按 ref 去重）。"""
+    """把 PWA 形状的注单合并进 bets 表（按 ref 去重，自然键二次兜底）。"""
     added = skipped = 0
     for row in rows or []:
         if not isinstance(row, dict) or not row.get("game_id") or not row.get("market") or not row.get("side"):
@@ -64,6 +72,16 @@ def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
             skipped += 1
             continue
         exists = conn.execute("SELECT 1 FROM bets WHERE ref=?", (ref,)).fetchone()
+        if not exists:
+            # 自然键兜底：同场同市场同方向同线同时间的注单视为同一条
+            # （防止 ref 规则不一致时产生重复）
+            exists = conn.execute(
+                """
+                SELECT 1 FROM bets WHERE game_id=? AND market=? AND side=?
+                  AND line IS ? AND COALESCE(placed_at,'')=COALESCE(?,'')
+                """,
+                (row.get("game_id"), row.get("market"), row.get("side"), row.get("line"), row.get("placed_at")),
+            ).fetchone()
         if exists:
             skipped += 1
             continue
@@ -115,6 +133,9 @@ def run(conn: sqlite3.Connection, force_push: bool = False) -> dict:
     if not webdav.enabled():
         return {"skipped": "webdav not configured"}
     stats: dict = {"inbox_merged": 0, "ledger_merged": 0, "pushed": False}
+
+    # 先给历史注单补 ref（服务端创建的 = srv-<id>），否则云端合回会重复
+    stats["refs_normalized"] = normalize_refs(conn)
 
     webdav.ensure_folders()
 
