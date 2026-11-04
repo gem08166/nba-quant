@@ -68,6 +68,14 @@ function fmtDayTime(iso) {
   return `${day} ${week} ${time}`;
 }
 
+function fmtSignalTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const day = d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${day} ${time}`;
+}
+
 function statusInfo(game) {
   if (game.status === "STATUS_FINAL") return { text: "已结束", cls: "final" };
   if (game.status === "STATUS_IN_PROGRESS" || game.status === "STATUS_HALFTIME") {
@@ -101,6 +109,7 @@ function renderStats(data) {
   const signals = allEdges.filter((edge) => edge.signal);
   const best = signals.sort((a, b) => b.ev - a.ev)[0];
   const noOdds = data.games.filter((game) => !game.prediction?.lines?.spread && !game.prediction?.lines?.total).length;
+  const predTime = data.games.find((g) => g.prediction?.created_at)?.prediction?.created_at;
   $("#stats").innerHTML = `
     <div class="stat"><div class="k">比赛</div><div class="v">${data.count}</div></div>
     <div class="stat"><div class="k">信号场次</div><div class="v ${gamesWithEdges.length ? "green" : ""}">${gamesWithEdges.length}</div></div>
@@ -108,6 +117,7 @@ function renderStats(data) {
     <div class="stat"><div class="k">最佳 EV</div><div class="v ${best ? "green" : ""}">${best ? fmtSignedPct(best.ev) : "—"}</div></div>
     <div class="stat"><div class="k">无盘口场次</div><div class="v" style="color:${noOdds ? "var(--muted)" : "inherit"}">${noOdds}</div></div>
     <div class="stat"><div class="k">日期</div><div class="v" style="font-size:14px">${esc(data.date)}</div></div>
+    ${predTime ? `<div class="stat"><div class="k">预测时间</div><div class="v" style="font-size:13px">${fmtDayTime(predTime)}</div></div>` : ""}
   `;
 }
 
@@ -133,7 +143,7 @@ function renderGames(games) {
           ? `<span class="score">${game.away_score} : ${game.home_score}</span>`
           : "";
       const badge = best
-        ? `<div class="edge-badge"><span class="label">${edgeText(best, game)}</span><span class="ev">${fmtSignedPct(best.ev)}</span></div>`
+        ? `<div class="edge-badge"><span class="label">${edgeText(best, game)}</span><span class="ev">${fmtSignedPct(best.ev)}${best.created_at ? `<span class="edge-time" title="信号生成时间">${fmtSignalTime(best.created_at)}</span>` : ""}</span></div>`
         : noOdds(game)
           ? `<div class="edge-badge muted"><span>暂无盘口报价</span><span>—</span></div>`
           : `<div class="edge-badge muted"><span>暂无正 EV 信号</span><span>—</span></div>`;
@@ -157,11 +167,14 @@ function renderGames(games) {
     .join("");
 }
 
-async function load() {
+async function load({ repredict = false } = {}) {
   const button = $("#refresh");
   button.disabled = true;
-  button.textContent = "加载中…";
+  button.textContent = repredict ? "重算中…" : "加载中…";
   try {
+    if (repredict && window.APP_MODE === "api") {
+      await api("/api/predict", { method: "POST", body: JSON.stringify({ date: state.date }) });
+    }
     const data = await api(`/api/games?date=${encodeURIComponent(state.date)}`);
     if (!data.count) {
       const jumped = await autoAdjustDate();
@@ -271,6 +284,7 @@ function renderModal(data) {
         <td>${fmtPct(edge.fair_prob)}</td>
         <td class="${edge.edge >= 0 ? "pos" : "neg"}">${fmtSignedPct(edge.edge)}</td>
         <td class="${edge.ev >= 0 ? "pos" : "neg"}">${fmtSignedPct(edge.ev)}</td>
+        <td style="color:var(--muted)">${edge.created_at ? fmtSignalTime(edge.created_at) : "—"}</td>
         <td>${edge.signal ? `<span class="pill signal">信号</span>` : `<span class="pill">观察</span>`}</td>
         <td>${edge.signal ? action : "—"}</td>
       </tr>`;
@@ -424,7 +438,7 @@ function renderModal(data) {
     ${
       edgeRows
         ? `<div class="table-wrap"><table>
-            <thead><tr><th>市场</th><th>方向</th><th>赔率</th><th>模型</th><th>公允</th><th>Edge</th><th>EV</th><th>状态</th><th></th></tr></thead>
+            <thead><tr><th>市场</th><th>方向</th><th>赔率</th><th>模型</th><th>公允</th><th>Edge</th><th>EV</th><th>时间</th><th>状态</th><th></th></tr></thead>
             <tbody>${edgeRows}</tbody>
           </table></div>`
         : `<div class="inj" style="color:var(--muted)">没有可用盘口。可以在下方手动录入你看到的盘口。</div>`
@@ -639,7 +653,7 @@ $("#date").addEventListener("change", (event) => {
   load();
   window.loadLive?.();
 });
-$("#refresh").addEventListener("click", load);
+$("#refresh").addEventListener("click", () => load({ repredict: true }));
 $("#close").addEventListener("click", () => {
   $("#modal").hidden = true;
 });

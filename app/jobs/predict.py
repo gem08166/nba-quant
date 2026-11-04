@@ -295,6 +295,7 @@ def _make_edge(
     model_prob: float,
     fair_prob: float,
     book: str,
+    created_at: str,
 ) -> dict | None:
     if price is None or price <= 1.0:
         return None
@@ -314,15 +315,18 @@ def _make_edge(
         "kelly": kelly,
         "stake_pct": min(kelly * KELLY_FRACTION, MAX_STAKE_PCT),
         "signal": bool(edge >= EDGE_THRESHOLD and ev >= MIN_EV and kelly > 0),
+        "created_at": created_at,
     }
 
 
 def build_market(
     pred: dict,
     odds_rows: list[dict],
+    created_at: str | None = None,
 ) -> tuple[str | None, dict]:
     """定价：多书共识（多书源各自去水取平均公允概率、线取众数、每侧取共识线下最优价），
     再与模型按 MARKET_BLEND 融合。只有单书源时自动退化为该书源。"""
+    created_at = created_at or _now()
     cons = consensus_market(odds_rows)
     book = pick_book(odds_rows)
     by_key = {(row["market"], row["side"]): row for row in odds_rows if row["book"] == book}
@@ -392,7 +396,7 @@ def build_market(
         ):
             if price is None or fair is None:
                 continue
-            signal = _make_edge("spread", side, side_line, price, p, fair, price_book)
+            signal = _make_edge("spread", side, side_line, price, p, fair, price_book, created_at)
             if signal and gated:
                 signal["signal"] = False
                 signal["gated"] = f"模型与市场分差分歧 >{divergence_gate:g}，仅记录不下注"
@@ -425,7 +429,7 @@ def build_market(
         ):
             if price is None or fair is None:
                 continue
-            signal = _make_edge("total", side, total_line, price, p, fair, price_book)
+            signal = _make_edge("total", side, total_line, price, p, fair, price_book, created_at)
             if signal and gated:
                 signal["signal"] = False
                 signal["gated"] = f"模型与市场分差分歧 >{divergence_gate:g}，仅记录不下注"
@@ -458,7 +462,7 @@ def build_market(
         ):
             if price is None or fair is None:
                 continue
-            signal = _make_edge("moneyline", side, None, price, p, fair, price_book)
+            signal = _make_edge("moneyline", side, None, price, p, fair, price_book, created_at)
             if signal and gated:
                 signal["signal"] = False
                 signal["gated"] = f"模型与市场分差分歧 >{divergence_gate:g}，仅记录不下注"
@@ -520,7 +524,7 @@ def predict_game(
         density.get(away_id, 0),
     )
     odds_rows = latest_odds(conn, game["id"])
-    book, market = build_market(pred, odds_rows)
+    book, market = build_market(pred, odds_rows, created_at=_now())
 
     try:
         injury_suggestions = rapm.suggest_impacts(conn, game["id"])
