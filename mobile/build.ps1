@@ -17,9 +17,12 @@ $env:ANDROID_HOME = $sdk
 $env:ANDROID_SDK_ROOT = $sdk
 
 $jdk = Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like "jdk-17*" } | Sort-Object Name -Descending | Select-Object -First 1
+    Where-Object { $_.Name -like "jdk-21*" } | Sort-Object Name -Descending | Select-Object -First 1
 if ($jdk) { $env:JAVA_HOME = $jdk.FullName }
-elseif (-not $env:JAVA_HOME) { throw "JDK 17 not found. Install: winget install EclipseAdoptium.Temurin.17.JDK" }
+else {
+    # Capacitor 7 requires Java 21; 17 is not enough for javac source release 21
+    throw "JDK 21 not found. Install: winget install EclipseAdoptium.Temurin.21.JDK"
+}
 Write-Output "JAVA_HOME = $env:JAVA_HOME"
 Write-Output "ANDROID_HOME = $env:ANDROID_HOME"
 
@@ -48,6 +51,11 @@ if (-not (Test-Path "$PSScriptRoot\android")) {
     npx cap add android
     if ($LASTEXITCODE -ne 0) { Pop-Location; throw "cap add failed" }
     Pop-Location
+}
+# AGP refuses non-ASCII paths (F:\...\nba-quant). Keep the override in sync.
+$gp = "$PSScriptRoot\android\gradle.properties"
+if ((Test-Path $gp) -and -not (Select-String -Path $gp -Pattern "android.overridePathCheck" -Quiet)) {
+    Add-Content -Path $gp -Value "android.overridePathCheck=true" -Encoding ascii
 }
 Write-Output "== cap sync =="
 Push-Location $PSScriptRoot
