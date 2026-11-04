@@ -61,6 +61,9 @@ jobs:
       - name: Backtest
         run: python -m app.cli backtest --test-start 2026-01-01 || true
 
+      - name: Model vs closing-line report
+        run: python -m scripts.model_clv_history --start 2025-10-21 || true
+
       - name: Export static site
         run: python -m scripts.export_static --out site
 
