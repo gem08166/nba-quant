@@ -1,9 +1,11 @@
-const CACHE = "nbaq-v19";
+const CACHE = "nbaq-v20";
 const ASSETS = [
   "./",
   "static/styles.css",
   "static/app.js",
+  "static/dav.js",
   "static/localbets.js",
+  "static/collector.js",
   "static/research.js",
   "static/live.js",
   "static/bets.js",

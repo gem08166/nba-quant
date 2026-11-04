@@ -116,12 +116,15 @@ function renderBetsToolbar() {
     box.innerHTML = "";
     return;
   }
+  const apk = window.DAV?.isApk();
   box.innerHTML = `
     <div class="bets-toolbar">
       <button class="btn small" id="bets-export">导出台账</button>
       <button class="btn small" id="bets-import">导入台账</button>
+      ${apk ? `<button class="btn small" id="bets-dav-sync">立即同步</button>
+      <button class="btn small" id="bets-dav-settings">同步设置</button>` : ""}
       <input type="file" id="bets-import-file" accept=".json,application/json" hidden>
-      <span class="hint">手机：导出 → 坚果云 app 上传到 nbaq/inbox/；PC 端 30 分钟内自动合并</span>
+      ${apk ? `<span class="hint">坚果云自动同步已启用</span>` : `<span class="hint">手机：导出 → 坚果云 app 上传到 nbaq/inbox/；PC 端 30 分钟内自动合并</span>`}
     </div>`;
   document.getElementById("bets-export").addEventListener("click", () => {
     const rows = window.LB.read();
@@ -147,6 +150,60 @@ function renderBetsToolbar() {
     } finally {
       fileInput.value = "";
     }
+  });
+  if (apk) {
+    document.getElementById("bets-dav-sync").addEventListener("click", async () => {
+      try {
+        const result = await window.LB.davSync();
+        toast(`同步完成：拉入 ${result.mergedIn ?? 0} 条${result.pushed ? "，已上传" : ""}`);
+        await loadBets();
+      } catch (error) {
+        toast(`同步失败：${error.message}`);
+      }
+    });
+    document.getElementById("bets-dav-settings").addEventListener("click", openSyncSettings);
+  }
+}
+
+function openSyncSettings() {
+  const cfg = window.DAV.davCfg() || { url: "https://dav.jianguoyun.com/dav/", user: "", pass: "" };
+  const oddsKey = localStorage.getItem("nbaq:oddsapi-key") || "";
+  const overlay = document.createElement("div");
+  overlay.className = "modal";
+  overlay.style.zIndex = "60";
+  overlay.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <button class="close" aria-label="关闭">×</button>
+      <h2>同步设置（仅存本机）</h2>
+      <div class="form-grid">
+        <div style="grid-column: span 2"><label>WebDAV 地址</label>
+          <input id="dav-url" type="text" value="${esc(cfg.url || "https://dav.jianguoyun.com/dav/")}"></div>
+        <div><label>坚果云账号（邮箱）</label>
+          <input id="dav-user" type="text" value="${esc(cfg.user || "")}" autocomplete="off"></div>
+        <div><label>应用密码（非登录密码）</label>
+          <input id="dav-pass" type="password" value="${esc(cfg.pass || "")}" autocomplete="off"></div>
+        <div style="grid-column: span 2"><label>The Odds API key（可选，抓多书快照用）</label>
+          <input id="odds-key" type="text" value="${esc(oddsKey)}" autocomplete="off"></div>
+        <div style="grid-column: span 2"><button class="btn primary" id="dav-save">保存</button></div>
+      </div>
+      <p class="notice" style="border:none;margin-top:10px;padding-top:0">
+        应用密码在坚果云网页：账户信息 → 安全选项 → 第三方应用管理 生成。
+      </p>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector(".close").addEventListener("click", () => overlay.remove());
+  overlay.querySelector("#dav-save").addEventListener("click", () => {
+    window.DAV.davSave({
+      url: overlay.querySelector("#dav-url").value.trim() || "https://dav.jianguoyun.com/dav/",
+      user: overlay.querySelector("#dav-user").value.trim(),
+      pass: overlay.querySelector("#dav-pass").value,
+    });
+    const odds = overlay.querySelector("#odds-key").value.trim();
+    if (odds) localStorage.setItem("nbaq:oddsapi-key", odds);
+    else localStorage.removeItem("nbaq:oddsapi-key");
+    toast("已保存。同步在下次打开看板/收益页时自动执行");
+    overlay.remove();
+    loadBets();
   });
 }
 

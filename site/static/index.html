@@ -22,6 +22,7 @@
       </div>
       <div class="controls">
         <input type="date" id="date" aria-label="比赛日期">
+        <button class="btn" id="snapshot" hidden title="把当前盘口快照推到坚果云，供 PC 合并入库">抓快照</button>
         <button class="btn primary" id="refresh">刷新</button>
       </div>
     </header>
@@ -131,7 +132,9 @@
   <div class="toast" id="toast"></div>
 
   <script src="static/static.js"></script>
+  <script src="static/dav.js"></script>
   <script src="static/localbets.js"></script>
+  <script src="static/collector.js"></script>
   <script src="static/app.js"></script>
   <script src="static/live.js"></script>
   <script src="static/research.js"></script>

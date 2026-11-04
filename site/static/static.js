@@ -29,14 +29,36 @@ function lbAllAnalysis(payload) {
 
 async function detectMode() {
   if (window.APP_MODE) return window.APP_MODE;
+  // 数据通道优先级（APK）：坚果云 static.json（国内网络稳）→ github.io 兜底
+  if (window.DAV?.davEnabled()) {
+    try {
+      const remote = await window.DAV.davGetText("nbaq/static.json");
+      if (remote) {
+        window.STATIC_PAYLOAD = JSON.parse(remote);
+        window.APP_MODE = "static";
+        window.STATIC_SOURCE = "webdav";
+        document.body.classList.add("static-mode");
+        const brand = document.querySelector(".brand p");
+        if (brand) brand.textContent = "本机模式 · 数据经坚果云同步";
+        return "static";
+      }
+    } catch (_) {
+      /* 坚果云不可达时回落到 Pages */
+    }
+  }
   try {
     const resp = await fetch("data/static.json", { cache: "no-store" });
     if (resp.ok) {
       window.STATIC_PAYLOAD = await resp.json();
       window.APP_MODE = "static";
+      window.STATIC_SOURCE = "pages";
       document.body.classList.add("static-mode");
       const brand = document.querySelector(".brand p");
-      if (brand) brand.textContent = "静态模式 · 数据由 GitHub Actions 定时更新";
+      if (brand) {
+        brand.textContent = window.DAV?.isApk()
+          ? "本机模式 · 数据来自 GitHub Pages"
+          : "静态模式 · 数据由 GitHub Actions 定时更新";
+      }
       return "static";
     }
   } catch (_) {
