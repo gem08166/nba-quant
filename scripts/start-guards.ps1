@@ -1,4 +1,4 @@
-# NBA Quant 常驻服务启动器
+﻿# NBA Quant 常驻服务启动器
 # 关键点：用 WMI (Win32_Process.Create) 创建守护进程，父进程是 WMI 服务，
 # 因此不会被 IDE/终端的 Job Object (KILL_ON_JOB_CLOSE) 连带杀掉。
 # 普通 Start-Process / schtasks / cmd start 都做不到这一点。

@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 rem NBA Quant resident services launcher (login autostart).
 rem Both guardians use CREATE_BREAKAWAY_FROM_JOB so they are not killed
 rem when the Startup wscript/cmd job object closes.

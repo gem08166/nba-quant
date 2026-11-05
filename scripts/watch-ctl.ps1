@@ -1,4 +1,4 @@
-# NBA Quant watch 常驻控制脚本（无需管理员权限）
+﻿# NBA Quant watch 常驻控制脚本（无需管理员权限）
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File scripts\watch-ctl.ps1 start
 #   powershell -ExecutionPolicy Bypass -File scripts\watch-ctl.ps1 stop
