@@ -77,7 +77,8 @@ function espnEventToOddsApiShape(event) {
   };
 }
 
-async function collectSnapshots(date) {
+async function collectSnapshots(date, options = {}) {
+  const useOddsApi = options.oddsApi === true;
   const ymd = date.replace(/-/g, "");
   const events = [];
 
@@ -97,8 +98,11 @@ async function collectSnapshots(date) {
     /* ESPN 拉不到就只用 Odds API */
   }
 
-  // 2) The Odds API（默认 key 内置在本机配置里；设置里可改/清空）
+  // 2) The Odds API（仅手动「抓快照」且距上次 ≥30 分钟才用：6 额度/次，防烧配额）
   const oddsKey = localStorage.getItem("nbaq:oddsapi-key") ?? "401ac0d0bfe89e015aa8ca7c19dd56c6";
+  const lastOdds = Number(localStorage.getItem("nbaq:oddsapi-last") || 0);
+  const oddsCooldownOver = Date.now() - lastOdds >= 30 * 60 * 1000;
+  if (useOddsApi && oddsKey && oddsCooldownOver) {
   if (oddsKey) {
     try {
       const resp = await fetch(
@@ -108,6 +112,7 @@ async function collectSnapshots(date) {
       );
       if (resp.ok) {
         const apiEvents = await resp.json();
+        localStorage.setItem("nbaq:oddsapi-last", String(Date.now()));
         const byTeams = new Map(events.map((e) => [e.home_team + "|" + e.away_team, e]));
         for (const ev of apiEvents) {
           const target = byTeams.get(ev.home_team + "|" + ev.away_team);
@@ -131,12 +136,13 @@ async function collectSnapshots(date) {
     taker: SNAP_TAKER,
     slate_date: date,
     events,
+    oddsApiUsed: useOddsApi && oddsCooldownOver,
   };
 }
 
-async function collectAndPush(date) {
+async function collectAndPush(date, options = {}) {
   if (!window.DAV?.davEnabled()) throw new Error("坚果云未配置（同步设置里填账号和应用密码）");
-  const payload = await collectSnapshots(date);
+  const payload = await collectSnapshots(date, options);
   const books = payload.events.reduce((sum, e) => sum + e.bookmakers.length, 0);
   await window.DAV.davPutText(
     `nbaq/snapshots/inbox/snap-${Date.now()}.json`,

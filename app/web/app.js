@@ -961,8 +961,11 @@ $("#snapshot").addEventListener("click", async () => {
   button.disabled = true;
   button.textContent = "抓取中…";
   try {
-    const result = await window.SnapCollector.collectAndPush(state.date);
-    toast(`快照已上传：${result.events} 场 / ${result.books} 家书源`);
+    const result = await window.SnapCollector.collectAndPush(state.date, { oddsApi: true });
+    toast(
+      `快照已上传：${result.events} 场 / ${result.books} 家书源` +
+      (result.oddsApiUsed ? "（含 Odds API）" : "（Odds API 冷却中，仅 ESPN）")
+    );
   } catch (error) {
     toast(`快照失败：${error.message}`);
   } finally {
