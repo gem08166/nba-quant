@@ -421,11 +421,17 @@ async function loadPost(force = false) {
 async function jumpToLastFinished() {
   const btn = document.getElementById("post-jump");
   try {
+    await detectMode();
     const dates = await api("/api/dates");
     const list = (dates.dates || []).map((d) => d.date);
+    // 从最近的日期往回找，第一个有完赛的日期就是目标
     for (const day of [...list].reverse()) {
       if (day >= state.date && day !== state.date) continue;
-      const data = await api(`/api/live?date=${encodeURIComponent(day)}`);
+      // 静态模式没有 /api/live，要用 ESPN 直连 + 快照数据（espnLive）
+      const data =
+        window.APP_MODE === "static"
+          ? await espnLive(day)
+          : await api(`/api/live?date=${encodeURIComponent(day)}`);
       const done = (data.games || []).filter((g) => g.state === "post").length;
       if (done > 0) {
         state.date = day;

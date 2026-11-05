@@ -389,11 +389,16 @@ async function espnLive(date) {
   if (!resp.ok) throw new Error(`ESPN ${resp.status}`);
   const payload = await resp.json();
   const board = (window.STATIC_PAYLOAD || {}).board || { games: [] };
+  // 历史复盘包：静态导出带上最近若干比赛日的完整数据（预测/盘口/信号历史）
+  const history = (window.STATIC_PAYLOAD || {}).history || {};
+  const histGames = history[date] || [];
+  const histById = new Map(histGames.map((g) => [String(g.game_id), g]));
   const games = [];
   for (const event of payload.events || []) {
     const parsed = jsParseEvent(event);
     if (!parsed) continue;
     const boardGame = board.games.find((g) => g.id === parsed.game_id);
+    const histGame = histById.get(String(parsed.game_id));
     const pred = boardGame ? boardGame.prediction : null;
     const lines = boardGame?.prediction?.lines || {};
     const item = {
@@ -417,7 +422,19 @@ async function espnLive(date) {
         : null,
       lines: lines || {},
     };
-    if (parsed.state === "post" && boardGame?.prediction?.edges) {
+    // 历史复盘包优先（往期比赛日的赛前预测 + 信号历史）
+    if (histGame) {
+      item.matchup = histGame.matchup || item.matchup;
+      item.matchup_zh = histGame.matchup_zh || item.matchup_zh;
+      item.home_name = histGame.home_name || item.home_name;
+      item.away_name = histGame.away_name || item.away_name;
+      item.home_name_zh = histGame.home_name_zh || item.home_name_zh;
+      item.away_name_zh = histGame.away_name_zh || item.away_name_zh;
+      item.tipoff = histGame.tipoff || item.tipoff;
+      if (histGame.pregame) item.pregame = histGame.pregame;
+      if (histGame.lines && Object.keys(histGame.lines).length) item.lines = histGame.lines;
+      item.signals_history = histGame.signals_history || [];
+    } else if (parsed.state === "post" && boardGame?.prediction?.edges) {
       // 静态模式：用导出快照的 edges 近似"该场出现过的信号"（命中结果由 live.js 结算）
       item.signals_history = boardGame.prediction.edges
         .filter((e) => e.signal)

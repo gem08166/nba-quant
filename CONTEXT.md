@@ -462,3 +462,16 @@ README.md              # 用户文档（含第 0 节验证结论）
   - `scripts/startup.cmd` → Startup 目录 `nbaq-serve.vbs` / `nbaq-watch.vbs`：登录自启时拉起两个守护。
 - **验收**：杀掉 serve → 62 秒内自动恢复（首页 200）；杀掉 watch → 120 秒内自动恢复；日志有完整记录。
 - **另一条线索**：git 推送失败期间积累了一批僵尸 `git-remote-https` / `git-credential-manager` 进程（12:58 起），**锁死了凭据管理器**，导致后续所有 git 操作（包括 python 调 git）都被卡住中断。清理后 push 立即成功。→ 推送卡住时先 `Get-Process git*` 查僵尸。
+
+### 10.23 2026-11-05 静态模式赛后复盘修复
+
+- **症状**：手机（静态模式）在赛后复盘页点「跳到最近完赛日」报 **"静态模式不支持：/api/live?date=..."**。
+- **根因**：
+  1. `jumpToLastFinished()` 直接调 `api("/api/live?date=...")`，而 `static.js` 的 `staticApi()` **没有 /api/live 映射**（赛时/赛后数据在静态模式走 `espnLive()` 直连 ESPN）。
+  2. 更深一层：静态导出原本**只含当前比赛日**的 `board.games`，跳到往期日期时没有赛前预测/盘口/信号历史 → 即使不报错，赛后板块也是空的。
+- **修复**：
+  1. `live.js::jumpToLastFinished()` 加模式分支：`APP_MODE === "static" ? espnLive(day) : api(...)`。
+  2. 新增 `scripts/history_pack.py::build_history()`：导出最近 10 个比赛日的复盘包（每场含赛前预测/盘口线/信号历史+命中结果/最终比分），写进 `static.json` 的 `payload.history`（约 +43KB）。
+  3. `static.js::espnLive()` 优先用 `history[date]` 的数据（预测/盘口/信号），没有该日期时才回退到当前 board 的 edges 近似。
+- **验证**：静态模式注入 payload 后点跳转 → 到 2026-11-04，14 张赛后卡 / 26 个信号 chip / 汇总统计完整，无报错。`static.json` 从 132KB → 186KB（+43KB，手机可接受）。**70 passed**。
+- **导出结果**：`history: 10 day(s)`（11-04 13 场、11-02 15 场、11-01 4 场…）。

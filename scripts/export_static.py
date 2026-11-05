@@ -113,6 +113,12 @@ def main() -> None:
         rapm_data = rapm_top(limit=200, conn=conn)
         model = model_info(conn)
 
+        # 最近比赛日的赛后复盘包：静态模式（手机）跳到往期日期时，
+        # 需要赛前预测 + 盘口 + 信号历史才能渲染完整的赛后板块
+        from scripts.history_pack import build_history
+
+        history = build_history(conn, slate)
+
         # 回测报告：裁剪逐场行（太大），保留 monthly/overall
         backtest = {"report": None}
         bt_path = DATA_DIR / "backtest_report.json"
@@ -136,6 +142,7 @@ def main() -> None:
             "rapm": rapm_data,
             "model": model,
             "backtest": backtest,
+            "history": history,
         }
 
         # 模型 vs 收盘线历史检验报告（路线 A 基准对照数据源）
@@ -180,6 +187,7 @@ def main() -> None:
 
         print(f"exported: {out_dir / 'static.json'}")
         print(f"  board: {board['date']} {board['count']} games, signals={board['signals']}")
+        print(f"  history: {len(history)} day(s) -> " + ", ".join(f"{k}({len(v)})" for k, v in history.items()))
         print(f"  bets: {bets['summary']['settled']} settled, curve={len(bets['curve'])}")
         print(f"  site ready: {site_root} (index.html + sw.js + static/ + data/)")
     finally:
