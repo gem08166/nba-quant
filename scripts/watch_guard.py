@@ -95,5 +95,32 @@ def main() -> None:
         time.sleep(INTERVAL)
 
 
+def already_running() -> bool:
+    """单例检查：已有 watch_guard 实例在跑就不再启动第二个。"""
+    try:
+        out = subprocess.run(
+            [
+                "wmic",
+                "process",
+                "where",
+                "name='python.exe' or name='pythonw.exe'",
+                "get",
+                "CommandLine",
+                "/value",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            encoding="utf-8",
+            errors="replace",
+        ).stdout or ""
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.count("scripts.watch_guard") > 1
+
+
 if __name__ == "__main__":
+    if already_running():
+        log("watch guard already running - exiting")
+        raise SystemExit(0)
     main()
