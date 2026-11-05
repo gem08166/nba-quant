@@ -484,11 +484,12 @@ document.getElementById("tabs").addEventListener("click", (event) => {
   if (!button) return;
   const target = button.dataset.tab;
   document.querySelectorAll("#tabs .tab").forEach((tab) => tab.classList.toggle("active", tab === button));
-  ["slate", "live", "bets", "research"].forEach((name) => {
+  ["slate", "live", "post", "bets", "research"].forEach((name) => {
     const panel = document.getElementById(`tab-${name}`);
     if (panel) panel.hidden = name !== target;
   });
   if (target === "research") { window.loadResearch?.(); window.loadBaselineCard?.(); window.loadGateCard?.(); }
   if (target === "live") window.loadLive?.();
+  if (target === "post") window.loadPost?.();
   if (target === "bets") window.loadBets?.();
 });

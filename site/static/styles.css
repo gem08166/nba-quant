@@ -882,6 +882,16 @@ body.static-mode .bets-scope::after {
   border-color: rgba(96, 165, 250, 0.4);
 }
 
+/* 赛后复盘独立板块 */
+.post-card { border-color: rgba(148, 163, 184, 0.22); }
+.post-card .post-block { margin-top: 8px; }
+.post-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
 /* 赛时卡片：有未结算注单的标注 */
 .card.has-bet { border-color: rgba(251, 191, 36, 0.45); }
 .bet-tag {

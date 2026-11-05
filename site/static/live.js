@@ -151,19 +151,24 @@ function settleSignalsOf(game) {
   });
 }
 
-function postBlock(game) {
+function postCard(game) {
   const pred = game.pregame;
   const m = game.home_score - game.away_score;
   const t = game.home_score + game.away_score;
+  const sig = settleSignalsOf(game);
+  const bets = gameBetsOf(game);
+  const settled = bets.filter((b) => b.result && b.result !== "open");
+  const sigWon = sig.filter((s) => s.result === "won").length;
+  const sigLost = sig.filter((s) => s.result === "lost").length;
+
   let statsLine = "";
   if (pred) {
     const errM = Math.abs(pred.pred_margin - m);
     const errT = Math.abs(pred.pred_total - t);
     const mlOk = (pred.pred_margin > 0) === (m > 0);
-    statsLine = `<div class="meta">${esc("赛前预测")} ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)} · 实际 ${m > 0 ? "+" : ""}${m} / ${t} · 分差误差 ${errM.toFixed(1)} · 总分误差 ${errT.toFixed(1)} · 主胜方向 ${mlOk ? "✓" : "✗"}</div>`;
+    const cls = mlOk ? "pos" : "neg";
+    statsLine = `<div class="meta">赛前预测 ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)} · 实际 ${m > 0 ? "+" : ""}${m} / ${t} · 分差误差 ${errM.toFixed(1)} · 总分误差 ${errT.toFixed(1)} · 主胜方向 <b class="bet-result ${cls}">${mlOk ? "✓ 对" : "✗ 错"}</b></div>`;
   }
-  const bets = gameBetsOf(game);
-  const settled = bets.filter((b) => b.result && b.result !== "open");
   let betsLine = "";
   if (settled.length) {
     const profit = settled.reduce((s, b) => s + (Number(b.profit) || 0), 0);
@@ -171,44 +176,58 @@ function postBlock(game) {
     const roi = stake ? ` · ROI ${profit >= 0 ? "+" : ""}${((profit / stake) * 100).toFixed(1)}%` : "";
     const openN = bets.length - settled.length;
     const cls = profit >= 0 ? "pos" : "neg";
-    betsLine = `<div class="meta">${esc("纸面注单")} ${settled.length}${esc(" 条结算 · 盈亏 ")}<b class="bet-result ${cls}">${profit >= 0 ? "+" : ""}${profit.toFixed(2)}</b>${roi}${openN ? `（另 ${openN} 条未结算）` : ""}</div>`;
+    betsLine = `<div class="meta">纸面注单 ${settled.length} 条结算 · 盈亏 <b class="bet-result ${cls}">${profit >= 0 ? "+" : ""}${profit.toFixed(2)}</b>${roi}${openN ? `（另 ${openN} 条未结算）` : ""}</div>`;
   }
-  const sig = settleSignalsOf(game);
-  const sigHtml =
-    sig.length
-      ? `<div class="post-signals">${sig
-          .map((s) => {
-            const market = MARKET_ZH[s.market] || s.market;
-            const side =
-              s.side === "home" ? "主" : s.side === "away" ? "客" : s.side === "over" ? "大" : "小";
-            const line =
-              s.line != null
-                ? s.market === "spread"
-                  ? " " + fmtSpread(s.line)
-                  : " " + fmtTotal(s.line)
-                : "";
-            const price = s.price_best != null ? ` @${fmtPrice(s.price_best)}` : "";
-            const ev = `EV ${s.ev_max >= 0 ? "+" : ""}${Math.round(s.ev_max * 100)}%`;
-            const flag = s.bettable_ever ? "可下注" : s.gated_ever ? "观察" : "";
-            let res = "";
-            if (s.result) {
-              const zh = SIG_RESULT_ZH[s.result] || s.result;
-              const cls = s.result === "won" ? "pos" : s.result === "lost" ? "neg" : "";
-              res = ` <span class="bet-result ${cls}">${esc(zh)}</span>`;
-            }
-            const title = `出现 ${s.n_seen} 次 · ${s.book || ""} · 首见 ${hm(s.first_seen)} · 最近 ${hm(s.last_seen)}`;
-            return `<span class="bet-chip sig" title="${esc(title)}">${esc(market)} ${esc(side)}${esc(line)}${esc(price)} ${esc(ev)}${flag ? ` · ${esc(flag)}` : ""}${res}</span>`;
-          })
-          .join("")}</div>`
-      : "";
-  if (!statsLine && !betsLine && !sigHtml) return "";
+  const sigHtml = sig.length
+    ? `<div class="post-signals">${sig
+        .map((s) => {
+          const market = MARKET_ZH[s.market] || s.market;
+          const side =
+            s.side === "home" ? "主" : s.side === "away" ? "客" : s.side === "over" ? "大" : "小";
+          const line =
+            s.line != null
+              ? s.market === "spread"
+                ? " " + fmtSpread(s.line)
+                : " " + fmtTotal(s.line)
+              : "";
+          const price = s.price_best != null ? ` @${fmtPrice(s.price_best)}` : "";
+          const ev = `EV ${s.ev_max >= 0 ? "+" : ""}${Math.round(s.ev_max * 100)}%`;
+          const flag = s.bettable_ever ? "可下注" : s.gated_ever ? "观察" : "";
+          let res = "";
+          if (s.result) {
+            const zh = SIG_RESULT_ZH[s.result] || s.result;
+            const cls = s.result === "won" ? "pos" : s.result === "lost" ? "neg" : "";
+            res = ` <span class="bet-result ${cls}">${esc(zh)}</span>`;
+          }
+          const title = `出现 ${s.n_seen} 次 · ${s.book || ""} · 首见 ${hm(s.first_seen)} · 最近 ${hm(s.last_seen)}`;
+          return `<span class="bet-chip sig" title="${esc(title)}">${esc(market)} ${esc(side)}${esc(line)}${esc(price)} ${esc(ev)}${flag ? ` · ${esc(flag)}` : ""}${res}</span>`;
+        })
+        .join("")}</div>`
+    : "";
+
+  const [awayAb, homeAb] = (game.matchup || "").split(" @ ");
   return `
-    <div class="post-block">
-      <div class="post-title">赛后复盘</div>
-      ${statsLine}
-      ${betsLine}
-      ${sigHtml ? `<div class="post-sig-title">该场出现过的信号（历史去重）</div>${sigHtml}` : ""}
-    </div>`;
+    <article class="card post-card" data-game="${esc(game.game_id)}">
+      <div class="card-top">
+        <span>${esc(game.home_name_zh || teamNameZh(game.home_name, homeAb))}</span>
+        <span style="display:flex;gap:6px;align-items:center">
+          ${sig.length ? `<span class="bet-tag" title="该场历史信号 ${sigWon} 命中 / ${sigLost} 落空">信号 ${sigWon}/${sig.length}</span>` : ""}
+          <span class="status final">已结束</span>
+        </span>
+      </div>
+      <div class="matchup">
+        ${esc(game.matchup_zh || matchupZh(game.matchup)).replace(" @ ", `<span class="at">@</span>`)}
+        <span class="score live-score">${game.away_score} : ${game.home_score}</span>
+      </div>
+      ${quarterScores(game)}
+      ${bets.length ? `<div class="bet-row">${bets.map((b) => betChip(b, game)).join("")}</div>` : ""}
+      <div class="post-block">
+        <div class="post-title">赛后复盘</div>
+        ${statsLine}
+        ${betsLine}
+        ${sigHtml ? `<div class="post-sig-title">该场出现过的信号（历史去重 · ${sigWon} 命中 / ${sigLost} 落空）</div>${sigHtml}` : ""}
+      </div>
+    </article>`;
 }
 
 
@@ -269,7 +288,7 @@ function liveCard(game) {
   } else if (game.state === "pre" && pred) {
     liveBlock = `<div class="meta"><span>赛前模型 ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)} · 主胜 ${fmtPct(pred.home_win_prob)}</span></div>`;
   } else if (game.state === "post") {
-    liveBlock = "";  // 赛后信息统一放 postBlock（见下方模板）
+    liveBlock = "";  // 赛后信息在独立「赛后复盘」tab 里
   }
 
   const bets = gameBetsOf(game);
@@ -289,7 +308,6 @@ function liveCard(game) {
       ${game.state === "pre" ? "" : quarterScores(game)}
       ${bets.length ? `<div class="bet-row">${bets.map((b) => betChip(b, game)).join("")}</div>` : ""}
       ${liveBlock}
-      ${game.state === "post" ? postBlock(game) : ""}
     </article>`;
 }
 
@@ -319,6 +337,113 @@ async function loadLive(force = false) {
   }
 }
 
+// ---------- 赛后复盘（独立板块）----------
+
+async function loadPost(force = false) {
+  const dot = document.getElementById("post-dot");
+  const status = document.getElementById("post-status");
+  const box = document.getElementById("post-games");
+  const stats = document.getElementById("post-stats");
+  if (dot) dot.classList.add("on");
+  try {
+    await detectMode();
+    const data =
+      window.APP_MODE === "static"
+        ? await espnLive(state.date)
+        : await api(`/api/live?date=${encodeURIComponent(state.date)}`);
+    const done = (data.games || []).filter((g) => g.state === "post");
+    if (!done.length) {
+      box.innerHTML = `<div class="empty">${esc(data.date)} 没有已结束的比赛。赛后复盘会在比赛收官后出现——可点右上角「跳到最近完赛日」。</div>`;
+      if (stats) stats.innerHTML = "";
+      status.textContent = `${esc(data.date)} · 0 场已结束`;
+      return;
+    }
+    box.innerHTML = done.map(postCard).join("");
+
+    // 汇总统计
+    let errM = 0, errT = 0, nPred = 0, mlHit = 0;
+    let sigTotal = 0, sigWon = 0, sigLost = 0;
+    let stake = 0, profit = 0, nBets = 0;
+    for (const g of done) {
+      const pred = g.pregame;
+      if (pred) {
+        const m = g.home_score - g.away_score;
+        const t = g.home_score + g.away_score;
+        errM += Math.abs(pred.pred_margin - m);
+        errT += Math.abs(pred.pred_total - t);
+        nPred += 1;
+        if ((pred.pred_margin > 0) === (m > 0)) mlHit += 1;
+      }
+      for (const s of settleSignalsOf(g)) {
+        sigTotal += 1;
+        if (s.result === "won") sigWon += 1;
+        else if (s.result === "lost") sigLost += 1;
+      }
+      for (const b of gameBetsOf(g)) {
+        if (b.result && b.result !== "open") {
+          stake += Number(b.stake) || 0;
+          profit += Number(b.profit) || 0;
+          nBets += 1;
+        }
+      }
+    }
+    const cell = (k, v, cls) =>
+      `<div class="stat"><div class="k">${esc(k)}</div><div class="v ${cls || ""}">${v}</div></div>`;
+    if (stats) {
+      stats.innerHTML = [
+        cell("已结束比赛", `${done.length}`),
+        cell("分差 MAE", nPred ? (errM / nPred).toFixed(2) : "—"),
+        cell("总分 MAE", nPred ? (errT / nPred).toFixed(2) : "—"),
+        cell("主胜方向", nPred ? `${mlHit}/${nPred}` : "—"),
+        cell("历史信号", sigTotal ? `${sigTotal} 条` : "0 条"),
+        cell(
+          "信号命中",
+          sigTotal ? `${sigWon}/${sigTotal} · ${Math.round((sigWon / sigTotal) * 100)}%` : "—",
+          sigTotal ? (sigWon / sigTotal >= 0.5 ? "green" : "") : ""
+        ),
+        cell("结算注单", nBets ? `${nBets} 条` : "0 条"),
+        cell(
+          "注单盈亏",
+          nBets ? `${profit >= 0 ? "+" : ""}${profit.toFixed(2)}` : "—",
+          nBets && profit >= 0 ? "green" : ""
+        ),
+      ].join("");
+    }
+    status.textContent = `${esc(data.date)} · ${done.length} 场已结束 · 更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  } catch (error) {
+    status.textContent = `加载失败：${error.message}`;
+  } finally {
+    if (dot) dot.classList.remove("on");
+  }
+}
+
+// 跳到最近一个有已结束比赛的日期（看赛后复盘）
+async function jumpToLastFinished() {
+  const btn = document.getElementById("post-jump");
+  try {
+    const dates = await api("/api/dates");
+    const list = (dates.dates || []).map((d) => d.date);
+    for (const day of [...list].reverse()) {
+      if (day >= state.date && day !== state.date) continue;
+      const data = await api(`/api/live?date=${encodeURIComponent(day)}`);
+      const done = (data.games || []).filter((g) => g.state === "post").length;
+      if (done > 0) {
+        state.date = day;
+        const el = document.getElementById("date");
+        if (el) el.value = day;
+        await loadPost(true);
+        toast(`已跳到 ${day}（${done} 场已结束）`);
+        return;
+      }
+    }
+    toast("没有已结束的比赛日期");
+  } catch (error) {
+    toast(`跳转失败：${error.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function setLiveActive(active) {
   liveActive = active;
   if (active && !liveTimer) {
@@ -337,4 +462,7 @@ document.getElementById("tabs").addEventListener("click", (event) => {
   if (button) setLiveActive(button.dataset.tab === "live");
 });
 document.addEventListener("visibilitychange", () => setLiveActive(liveActive && !document.hidden));
+document.getElementById("post-jump")?.addEventListener("click", jumpToLastFinished);
 window.loadLive = loadLive;
+window.loadPost = loadPost;
+window.jumpToLastFinished = jumpToLastFinished;

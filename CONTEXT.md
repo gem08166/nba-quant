@@ -400,3 +400,17 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **测试**：`tests/test_post_signals.py` 5 例（去重合并、跨线分离、观察标记、完赛结算、无最终比分不结算）。**70 passed**。
 - **验证**：`/api/live?date=2026-11-04` 14 场全部有 `signals_history`（如 MIN@HOU：ML 客 @4.01 EV+47.5% 出现 168 次 → 命中；CHI@NY 大小 U233.5 EV+12.3% 出现 114 次 → 落空）；浏览器 DOM 14 blocks / 28 sig chips ✅。
 - **教训**：给 `live.js` 插函数时一次替换把 `function liveCard(game) {` 声明行吞掉，导致顶层裸语句 `Illegal return statement`——整个文件不执行且报错位置远离真因；`new Function(src)` 探测不出（Function 体允许 return），要用 `eval`/直接看 console。
+
+### 10.20 2026-11-05 赛后复盘独立成板块
+
+- **调整**：赛后内容从「赛时卡片内嵌」改为**独立 tab「赛后复盘」**（赛前看板 / 赛时 / 赛后复盘 / 收益 / 研究图表），避免用户切到赛时页却看不到（当天未完赛时容易误以为功能坏了）。
+- **前端**：
+  - `index.html`：新增 `#tab-post` 面板（状态栏 + `#post-stats` 汇总 + `#post-games` 卡片区 + 「跳到最近完赛日」按钮）；tabs 加 `data-tab="post"`。
+  - `live.js`：`postBlock()` → `postCard()`（完整赛后卡片：队名/比分/分节/注单 chips/赛后复盘块）；新增 `loadPost()`（只渲染 state=post 的场次 + 顶部 8 个汇总指标：已结束场次、分差 MAE、总分 MAE、主胜方向、历史信号数、信号命中率、结算注单数、注单盈亏）；`jumpToLastFinished()` 改为跳到最近有完赛的日期并切到赛后 tab。
+  - `research.js`：tab 切换器加入 `"post"` 面板与 `window.loadPost?.()` 钩子。
+  - `styles.css`：`.post-card`/`.post-signals` 样式；统计卡用现有 `.stat`/`.stat .v.green`（无 `.pos/.neg`）。
+- **后端不变**：`live.py` 的 `signal_history()` 仍随 `/api/live` 返回 `signals_history`（含完赛结算结果），赛后 tab 复用同一接口。
+- **验证**：11-04 → 14 张赛后卡片 / 28 个信号 chip / 汇总「分差 MAE 9.77 · 总分 MAE 9.16 · 主胜方向 9/14 · 信号 28 条命中 14/28 (50%) · 注单 6 条盈亏 +2.95」；11-05 → 空状态提示 + 「跳到最近完赛日」可跳到 11-04。**70 passed**。
+- **新增运维**：`scripts/serve-ctl.ps1`（serve 常驻控制 start/stop/status/restart）+ Startup 目录 `nbaq-serve.vbs` 开机自启。
+  - **坑**：`pythonw.exe` 直接 Start-Process 且不重定向输出时，uvicorn 启动写 stdout 会因无效句柄崩溃（静默退出）；必须 `-RedirectStandardOutput/-RedirectStandardError` 到文件。
+  - **坑**：用 `-RedirectStandardOutput` 管道启动的 serve 会随启动它的 shell 进程一起被杀（管道断裂 → 崩溃）。所以 serve 必须用 `serve-ctl.ps1` 的独立进程 + 文件重定向方式启动。

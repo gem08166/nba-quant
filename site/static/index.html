@@ -30,6 +30,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="slate">赛前看板</button>
       <button class="tab" data-tab="live">赛时</button>
+      <button class="tab" data-tab="post">赛后复盘</button>
       <button class="tab" data-tab="bets">收益</button>
       <button class="tab" data-tab="research">研究图表</button>
     </nav>
@@ -55,6 +56,23 @@
       <p class="notice">
         实时数据来自 ESPN 免费接口（约 30 秒延迟）。胜率曲线与逐 play 文本由 ESPN 提供；
         投影 = 当前比分 + 赛前模型 × 剩余时间比例，σ 按剩余时间收缩。仅供个人研究。
+      </p>
+    </div>
+
+    <div id="tab-post" hidden>
+      <div class="live-header">
+        <span class="live-dot" id="post-dot"></span>
+        <span id="post-status" style="color:var(--muted);font-size:12.5px">加载中…</span>
+        <span style="flex:1"></span>
+        <button id="post-jump" class="btn small" type="button"
+          title="跳到最近一个有已结束比赛的日期">跳到最近完赛日</button>
+        <span style="color:var(--muted);font-size:11.5px">已结束比赛的预测核对 · 注单结算 · 信号复盘</span>
+      </div>
+      <section class="stats" id="post-stats"></section>
+      <main class="grid" id="post-games"></main>
+      <p class="notice">
+        赛后复盘 = 赛前模型预测 vs 实际结果的核对、纸面注单结算汇总、以及该场比赛历史上出现过的全部信号
+        （按市场/方向/线去重，标注命中或落空）。仅供个人研究，不构成投注建议。
       </p>
     </div>
 
