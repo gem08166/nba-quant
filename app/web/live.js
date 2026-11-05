@@ -14,7 +14,11 @@ function wpBar(prob) {
 }
 
 function stateBadge(game) {
-  if (game.state === "in") return `<span class="status live">进行中 · Q${game.period ?? "?"} ${esc(game.display_clock || "")}</span>`;
+  if (game.state === "in") {
+    const period = game.period ?? "?";
+    const label = typeof period === "number" && period > 4 ? `加时${period - 4}` : `第${period}节`;
+    return `<span class="status live">进行中 · ${label} ${esc(game.display_clock || "")}</span>`;
+  }
   if (game.state === "post") return `<span class="status final">已结束</span>`;
   return `<span class="status">${fmtDayTime(game.tipoff)} 开赛</span>`;
 }
@@ -24,6 +28,81 @@ function momentumIcon(delta) {
   if (delta > 0.03) return `<span class="mom up" title="近10个回合主队胜率 +${(delta * 100).toFixed(0)}%">▲</span>`;
   if (delta < -0.03) return `<span class="mom down" title="近10个回合主队胜率 ${(delta * 100).toFixed(0)}%">▼</span>`;
   return `<span class="mom">·</span>`;
+}
+
+function quarterScores(game) {
+  // 每节得分（客 : 主）+ 合计；Q1-Q4 之后显示 OT
+  const away = game.away_linescores || [];
+  const home = game.home_linescores || [];
+  const n = Math.max(away.length, home.length);
+  if (!n) return "";
+  const cols = [];
+  for (let i = 0; i < n; i++) {
+    const label = i < 4 ? `第${i + 1}节` : `加时${i - 3}`;
+    const a = away[i] ?? "—";
+    const h = home[i] ?? "—";
+    cols.push(
+      `<div class="qs-col"><div class="k">${label}</div><div class="v"><span class="q-away">${a}</span><span class="q-sep">:</span><span class="q-home">${h}</span></div></div>`
+    );
+  }
+  cols.push(
+    `<div class="qs-col total"><div class="k">合计</div><div class="v"><span class="q-away">${game.away_score}</span><span class="q-sep">:</span><span class="q-home">${game.home_score}</span></div></div>`
+  );
+  return `<div class="qs-row" title="每节得分（客 : 主）">${cols.join("")}</div>`;
+}
+
+function gameBetsOf(game) {
+  // 后端聚合（含已结算）+ 静态模式本机 localStorage / 导出快照，按 id 去重
+  const map = new Map();
+  const add = (bet) => {
+    const key = String(bet.id ?? `${bet.market}:${bet.side}:${bet.line}:${bet.price}`);
+    if (!map.has(key)) map.set(key, bet);
+  };
+  if (Array.isArray(game.bets)) game.bets.forEach(add);
+  try {
+    if (window.LB?.read) {
+      window.LB.read()
+        .filter((b) => String(b.game_id) === String(game.game_id))
+        .forEach(add);
+    }
+  } catch (_) {
+    /* localStorage 不可用 */
+  }
+  ((window.STATIC_PAYLOAD?.bets || {}).bets || [])
+    .filter((b) => String(b.game_id) === String(game.game_id))
+    .forEach(add);
+  return Array.from(map.values());
+}
+
+const RESULT_ZH = { won: "胜", lost: "负", push: "走", open: "未结算" };
+
+function betChip(bet, game) {
+  const market = bet.market === "spread" ? "让分" : bet.market === "total" ? "大小" : "胜负";
+  const [awayAb, homeAb] = (game.matchup || "").split(" @ ");
+  const side =
+    bet.side === "home"
+      ? teamShortZh(homeAb, game.home_name)
+      : bet.side === "away"
+        ? teamShortZh(awayAb, game.away_name)
+        : bet.side === "over"
+          ? "大"
+          : "小";
+  const line =
+    bet.market === "spread"
+      ? " " + fmtSpread(bet.line)
+      : bet.market === "total"
+        ? " " + fmtTotal(bet.line)
+        : "";
+  const price = bet.price != null ? ` @${fmtPrice(bet.price)}` : "";
+  let result = "";
+  if (bet.result && bet.result !== "open") {
+    const zh = RESULT_ZH[bet.result] || bet.result;
+    const cls = bet.result === "won" ? "pos" : bet.result === "lost" ? "neg" : "";
+    const profit =
+      bet.profit != null ? ` ${(bet.profit >= 0 ? "+" : "")}${Number(bet.profit).toFixed(2)}` : "";
+    result = ` <span class="bet-result ${cls}">${zh}${profit}</span>`;
+  }
+  return `<span class="bet-chip" title="${esc(market + " " + side + line + price + result)}">${market} ${side}${line}${price}${result}</span>`;
 }
 
 function liveCard(game) {
@@ -73,7 +152,7 @@ function liveCard(game) {
               .reverse()
               .map(
                 (p) =>
-                  `<div class="play"><span class="pc">Q${p.period ?? "?"} ${esc(p.clock || "")}</span> ${esc(p.text || "")}</div>`
+                  `<div class="play"><span class="pc">${p.period ? `第${p.period}节` : ""} ${esc(p.clock || "")}</span> ${esc(p.text_zh || p.text || "")}</div>`
               )
               .join("")}</div>`
           : ""
@@ -92,15 +171,22 @@ function liveCard(game) {
     liveBlock = note;
   }
 
+  const bets = gameBetsOf(game);
+
   return `
-    <article class="card ${game.state === "in" ? "live-card" : ""}">
+    <article class="card ${game.state === "in" ? "live-card" : ""} ${bets.length ? "has-bet" : ""}" data-game="${esc(game.game_id)}">
       <div class="card-top">
-        <span>${esc(game.home_name)}</span>
-        ${stateBadge(game)}
+        <span>${esc(game.home_name_zh || teamNameZh(game.home_name, (game.matchup || '').split(' @ ')[1]))}</span>
+        <span style="display:flex;gap:6px;align-items:center">
+          ${(() => { const openN = bets.filter((b) => b.result === "open").length; return openN ? `<span class="bet-tag" title="本场有 ${openN} 条未结算纸面注单">注单 ${openN}</span>` : ""; })()}
+          ${stateBadge(game)}
+        </span>
       </div>
       <div class="matchup">
-        ${esc(game.matchup).replace(" @ ", `<span class="at">@</span>`)}${score}
+        ${esc(game.matchup_zh || matchupZh(game.matchup)).replace(" @ ", `<span class="at">@</span>`)}${score}
       </div>
+      ${game.state === "pre" ? "" : quarterScores(game)}
+      ${bets.length ? `<div class="bet-row">${bets.map((b) => betChip(b, game)).join("")}</div>` : ""}
       ${liveBlock}
     </article>`;
 }

@@ -18,6 +18,7 @@ from pathlib import Path
 from app import db, i18n
 from app.api import bets_analysis, games as api_games, model_info, rapm_top, trends as api_trends
 from app.config import DATA_DIR
+from app.dates import current_slate_date
 
 
 def main() -> None:
@@ -31,19 +32,23 @@ def main() -> None:
 
     conn = db.connect()
     try:
-        # 默认导出"下一个有比赛的日期"（休赛日导出空板没有意义）
+        # 默认导出"下一个有比赛的日期"（休赛日导出空板没有意义）。
+        # 注意用美国比赛日（current_slate_date，UTC-5）而不是 date('now')：
+        # 北京时间早上 8 点后 UTC 已跨日，用 UTC 会把深夜还在打的今天跳过去。
         slate = args.date
         if not slate:
+            anchor = current_slate_date()
             row = conn.execute(
                 """
                 SELECT slate_date, COUNT(*) AS n FROM games
                 WHERE status NOT IN ('STATUS_POSTPONED','STATUS_CANCELED','STATUS_CANCELLED')
-                  AND slate_date >= date('now')
+                  AND slate_date >= ?
                 GROUP BY slate_date HAVING n > 0
                 ORDER BY slate_date LIMIT 1
-                """
+                """,
+                (anchor,),
             ).fetchone()
-            slate = row["slate_date"] if row else None
+            slate = row["slate_date"] if row else anchor
         board = api_games(date=slate, conn=conn)
 
         # 比赛详情静态化：每场附带伤停、盘口快照、RAPM 建议（/api/games/{id} 的静态等价物）
@@ -152,6 +157,13 @@ def main() -> None:
         if holdout_path.exists():
             payload["holdout"] = json.loads(holdout_path.read_text(encoding="utf-8"))
         (out_dir / "static.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        # 球员中文名映射：静态模式（手机）在浏览器里翻译赛况时需要
+        player_zh_path = DATA_DIR / "player_zh.json"
+        if player_zh_path.exists():
+            import shutil as _shutil
+
+            _shutil.copy2(player_zh_path, out_dir / "player_zh.json")
 
         # 组装完整可部署站点：web 静态文件 + data
         import shutil

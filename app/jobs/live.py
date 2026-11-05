@@ -24,6 +24,7 @@ from ..config import ESPN_BASE, REQUEST_SLEEP, REQUEST_TIMEOUT, USER_AGENT
 from ..models import ratings
 from ..pricing.devig import cover_prob, moneyline_prob, over_prob
 from .predict import latest_prediction
+from .. import i18n
 
 PERIOD_SECONDS = 720
 OT_SECONDS = 300
@@ -84,6 +85,20 @@ def live_projection(
     }
 
 
+def _linescores(competitor: dict) -> list[int | None]:
+    """ESPN linescores：每节得分（Q1..Q4/OT）。缺失或异常记 None。"""
+    out: list[int | None] = []
+    for item in competitor.get("linescores") or []:
+        value = item.get("value")
+        if value is None:
+            value = item.get("displayValue")
+        try:
+            out.append(int(float(value)) if value not in (None, "") else None)
+        except (TypeError, ValueError):
+            out.append(None)
+    return out
+
+
 def _parse_event(event: dict) -> dict:
     competition = (event.get("competitions") or [{}])[0]
     competitors = competition.get("competitors") or []
@@ -107,6 +122,8 @@ def _parse_event(event: dict) -> dict:
         "clock_seconds": clock,
         "home_score": int(home.get("score") or 0),
         "away_score": int(away.get("score") or 0),
+        "home_linescores": _linescores(home),
+        "away_linescores": _linescores(away),
     }
 
 
@@ -132,11 +149,13 @@ def _summary_extras(event_id: str) -> dict:
 
     plays = []
     for play in (data.get("plays") or [])[-6:]:
+        text = play.get("text")
         plays.append(
             {
                 "clock": (play.get("clock") or {}).get("displayValue"),
                 "period": (play.get("period") or {}).get("number"),
-                "text": play.get("text"),
+                "text": text,
+                "text_zh": i18n.play_zh(text),
                 "home_score": play.get("homeScore"),
                 "away_score": play.get("awayScore"),
             }
@@ -150,6 +169,23 @@ def live_board(conn: sqlite3.Connection, slate_date: str) -> dict:
         resp = client.get(f"{ESPN_BASE}/scoreboard", params={"dates": slate_date.replace("-", "")})
         resp.raise_for_status()
         payload = resp.json()
+
+    # 纸面注单：按比赛聚合（含已结算，供看板/赛时卡片显示注单与结果）
+    bets_by_game: dict[str, list[dict]] = {}
+    for row in conn.execute(
+        "SELECT game_id, market, side, line, price, stake, result, profit FROM bets ORDER BY id"
+    ):
+        bets_by_game.setdefault(str(row["game_id"]), []).append(
+            {
+                "market": row["market"],
+                "side": row["side"],
+                "line": row["line"],
+                "price": row["price"],
+                "stake": row["stake"],
+                "result": row["result"],
+                "profit": row["profit"],
+            }
+        )
 
     events = [parsed for parsed in (_parse_event(e) for e in payload.get("events") or []) if parsed]
     games = []
@@ -174,12 +210,16 @@ def live_board(conn: sqlite3.Connection, slate_date: str) -> dict:
         item = {
             "game_id": game_id,
             "matchup": f"{game['away_abbrev']} @ {game['home_abbrev']}",
+            "matchup_zh": i18n.matchup_zh(f"{game['away_abbrev']} @ {game['home_abbrev']}"),
             "home_name": game["home_name"],
             "away_name": game["away_name"],
+            "home_name_zh": i18n.team_zh(game["home_abbrev"], game["home_name"]),
+            "away_name_zh": i18n.team_zh(game["away_abbrev"], game["away_name"]),
             "tipoff": game["tipoff"],
             **event,
             "pregame": pred,
             "lines": lines or {},
+            "bets": bets_by_game.get(game_id, []),
         }
 
         if event["state"] == "in" and pred:

@@ -15,6 +15,48 @@ function esc(value) {
     .replaceAll('"', "&quot;");
 }
 
+// ---- 球队中文名（缩写 / 英文全名 → 中文） ----
+const TEAM_ZH_SHORT = {
+  ATL: "老鹰", BOS: "凯尔特人", BKN: "篮网", CHA: "黄蜂", CHI: "公牛",
+  CLE: "骑士", DAL: "独行侠", DEN: "掘金", DET: "活塞",
+  GS: "勇士", GSW: "勇士", HOU: "火箭", IND: "步行者",
+  LAC: "快船", LAL: "湖人", MEM: "灰熊", MIA: "热火", MIL: "雄鹿",
+  MIN: "森林狼", NO: "鹈鹕", NOP: "鹈鹕", NY: "尼克斯", NYK: "尼克斯",
+  OKC: "雷霆", ORL: "魔术", PHI: "76人", PHX: "太阳", POR: "开拓者",
+  SAC: "国王", SA: "马刺", SAS: "马刺", TOR: "猛龙",
+  UTAH: "爵士", UTA: "爵士", WSH: "奇才", WAS: "奇才",
+};
+const TEAM_ZH_FULL = {
+  "Atlanta Hawks": "亚特兰大老鹰", "Boston Celtics": "波士顿凯尔特人",
+  "Brooklyn Nets": "布鲁克林篮网", "Charlotte Hornets": "夏洛特黄蜂",
+  "Chicago Bulls": "芝加哥公牛", "Cleveland Cavaliers": "克利夫兰骑士",
+  "Dallas Mavericks": "达拉斯独行侠", "Denver Nuggets": "丹佛掘金",
+  "Detroit Pistons": "底特律活塞", "Golden State Warriors": "金州勇士",
+  "Houston Rockets": "休斯顿火箭", "Indiana Pacers": "印第安纳步行者",
+  "LA Clippers": "洛杉矶快船", "Los Angeles Clippers": "洛杉矶快船",
+  "Los Angeles Lakers": "洛杉矶湖人", "Memphis Grizzlies": "孟菲斯灰熊",
+  "Miami Heat": "迈阿密热火", "Milwaukee Bucks": "密尔沃基雄鹿",
+  "Minnesota Timberwolves": "明尼苏达森林狼", "New Orleans Pelicans": "新奥尔良鹈鹕",
+  "New York Knicks": "纽约尼克斯", "Oklahoma City Thunder": "俄克拉荷马城雷霆",
+  "Orlando Magic": "奥兰多魔术", "Philadelphia 76ers": "费城76人",
+  "Phoenix Suns": "菲尼克斯太阳", "Portland Trail Blazers": "波特兰开拓者",
+  "Sacramento Kings": "萨克拉门托国王", "San Antonio Spurs": "圣安东尼奥马刺",
+  "Toronto Raptors": "多伦多猛龙", "Utah Jazz": "犹他爵士",
+  "Washington Wizards": "华盛顿奇才",
+};
+function teamShortZh(abbrev, name) {
+  const key = String(abbrev || "").toUpperCase();
+  return TEAM_ZH_SHORT[key] || TEAM_ZH_FULL[name] || abbrev || name || "";
+}
+function teamNameZh(name, abbrev) {
+  return TEAM_ZH_FULL[name] || TEAM_ZH_SHORT[String(abbrev || "").toUpperCase()] || name || abbrev || "";
+}
+function matchupZh(matchup) {
+  if (!matchup || !String(matchup).includes(" @ ")) return matchup || "";
+  const [away, home] = String(matchup).split(" @ ");
+  return `${teamShortZh(away)} @ ${teamShortZh(home)}`;
+}
+
 async function api(path, options = {}) {
   await detectMode();
   if (window.APP_MODE === "static") {
@@ -96,16 +138,49 @@ function edgeText(edge, game) {
   if (!edge) return "暂无正 EV 信号";
   const side =
     edge.side === "home"
-      ? game.home.abbrev
+      ? teamShortZh(game.home.abbrev, game.home.name)
       : edge.side === "away"
-        ? game.away.abbrev
+        ? teamShortZh(game.away.abbrev, game.away.name)
         : edge.side === "over"
           ? "大分"
           : "小分";
-  const line = edge.market === "spread" ? ` ${fmtSpread(edge.line)}` : "";
+  const line =
+    edge.market === "spread"
+      ? ` ${fmtSpread(edge.line)}`
+      : edge.market === "total"
+        ? ` ${fmtTotal(edge.line)}`
+        : "";
   const label = edge.market === "total" ? "大小分" : edge.market === "spread" ? "让分" : "胜负";
   const tag = edge.bettable ? "" : " · 仅观察";
   return `${label} · ${side}${line} @ ${fmtPrice(edge.price)}${tag}`;
+}
+
+function slateBetChip(bet, game) {
+  const market =
+    bet.market === "spread" ? "让分" : bet.market === "total" ? "大小" : "胜负";
+  const side =
+    bet.side === "home"
+      ? teamShortZh(game.home.abbrev, game.home.name)
+      : bet.side === "away"
+        ? teamShortZh(game.away.abbrev, game.away.name)
+        : bet.side === "over"
+          ? "大"
+          : "小";
+  const line =
+    bet.market === "spread"
+      ? ` ${fmtSpread(bet.line)}`
+      : bet.market === "total"
+        ? ` ${fmtTotal(bet.line)}`
+        : "";
+  let result = "";
+  if (bet.result && bet.result !== "open") {
+    const zh = { won: "胜", lost: "负", push: "走" }[bet.result] || bet.result;
+    const cls = bet.result === "won" ? "pos" : bet.result === "lost" ? "neg" : "";
+    const profit =
+      bet.profit != null ? ` ${(bet.profit >= 0 ? "+" : "")}${Number(bet.profit).toFixed(2)}` : "";
+    result = ` <span class="bet-result ${cls}">${zh}${profit}</span>`;
+  }
+  return `<span class="bet-chip" title="注 ${Number(bet.stake || 0).toFixed(1)} @ ${fmtPrice(bet.price)}">${market} ${esc(side)}${line} @${fmtPrice(bet.price)}${result}</span>`;
 }
 
 function noOdds(game) {
@@ -161,20 +236,27 @@ function renderBettablePanel(games) {
       ${rows
         .map(({ game, edge }) => {
           const side = edgeSideLabel(edge, game);
-          const line = edge.market === "spread" ? " " + fmtSpread(edge.side === "home" ? edge.line : -edge.line) : "";
-          return `<button class="bp-row" data-game="${esc(game.id)}">
-            <span class="bp-match">${esc(game.away.abbrev)} @ ${esc(game.home.abbrev)}</span>
+          const edgeIndex = (game.edges || []).indexOf(edge);
+          const line =
+            edge.market === "spread"
+              ? " " + fmtSpread(edge.line)
+              : edge.market === "total"
+                ? " " + fmtTotal(edge.line)
+                : "";
+          return `<div class="bp-row" data-game="${esc(game.id)}">
+            <span class="bp-match">${esc(teamShortZh(game.away.abbrev, game.away.name))} @ ${esc(teamShortZh(game.home.abbrev, game.home.name))}</span>
             <span class="bp-pick">${edgeMarketLabel(edge.market)} · ${esc(side)}${line}</span>
             <span class="bp-price">@${fmtPrice(edge.price)}</span>
             <span class="bp-book">${esc(edge.book || "")}</span>
             <span class="bp-ev">${fmtSignedPct(edge.ev)}</span>
-          </button>`;
+            <button class="btn small" data-quick-bet="${edgeIndex}" data-game-id="${esc(game.id)}">记一笔</button>
+          </div>`;
         })
         .join("")}
     </div>`;
 }
 
-function renderGames(games) {
+function renderGames(games, betsByGame = {}) {
   const box = $("#games");
   if (!games.length) {
     box.innerHTML = `<div class="empty">当天没有比赛。换一天，或先运行 <code>python -m app.cli ingest --date ${state.date}</code> 拉取数据。</div>`;
@@ -187,8 +269,9 @@ function renderGames(games) {
       const best = game.best_edge;
       const bettable = bettableEdgesOf(game)[0] || null;
       const shown = bettable || best;
+      const bets = betsByGame[game.id] || [];
       const modelText = pred
-        ? `模型 ${game.home.abbrev} ${fmtSpread(-pred.pred_margin)} · 总分 ${fmtTotal(pred.pred_total)}`
+        ? `模型 ${teamShortZh(game.home.abbrev, game.home.name)} ${fmtSpread(-pred.pred_margin)} · 总分 ${fmtTotal(pred.pred_total)}`
         : "尚未生成预测";
       const marketText = pred && pred.lines
         ? `盘口 ${fmtSpread(pred.lines.spread)} / ${fmtTotal(pred.lines.total)}`
@@ -199,29 +282,38 @@ function renderGames(games) {
           : game.live_home_score != null && game.live_away_score != null && info.cls === "live"
             ? `<span class="score live-score" title="实时比分">${game.live_away_score} : ${game.live_home_score}</span>`
             : "";
-      const badge = shown
+      const shownIndex = shown ? (game.edges || []).indexOf(shown) : -1;
+      const expired = shown && shown.expired;
+      const badge = expired
+        ? `<div class="edge-badge muted"><span>信号已过期 · ${esc(shown.expired_reason || "比赛已开始或超时")}</span><span>—</span></div>`
+        : shown
         ? `<div class="edge-badge ${bettable ? "bettable" : ""}">
              ${bettable ? `<span class="chip-bettable">可下注</span>` : ""}
              <span class="label">${edgeText(shown, game)}</span>
              <span class="ev">${fmtSignedPct(shown.ev)}${shown.created_at ? `<span class="edge-time" title="信号生成时间">${fmtSignalTime(shown.created_at)}</span>` : ""}</span>
+             ${shown.signal && shownIndex >= 0 ? `<button class="btn small quick-bet" data-quick-bet="${shownIndex}" data-game-id="${esc(game.id)}">记一笔</button>` : ""}
            </div>`
         : noOdds(game)
           ? `<div class="edge-badge muted"><span>暂无盘口报价</span><span>—</span></div>`
           : `<div class="edge-badge muted"><span>暂无正 EV 信号</span><span>—</span></div>`;
       return `
-        <article class="card ${best && best.signal ? "signal" : ""} ${bettable ? "bettable" : ""}" data-game="${esc(game.id)}">
+        <article class="card ${best && best.signal ? "signal" : ""} ${bettable ? "bettable" : ""} ${bets.length ? "has-bet" : ""}" data-game="${esc(game.id)}">
           ${bettable ? `<div class="bettable-strip">✓ 可下注</div>` : ""}
           <div class="card-top">
-            <span>${fmtDayTime(game.tipoff)} · ${esc(game.home.name)}</span>
-            <span class="status ${info.cls}">${info.text}</span>
+            <span>${fmtDayTime(game.tipoff)} · ${esc(teamNameZh(game.home.name, game.home.abbrev))}</span>
+            <span style="display:flex;gap:6px;align-items:center">
+              ${bets.length ? `<span class="bet-tag" title="本场有 ${bets.length} 条未结算纸面注单">注单 ${bets.length}</span>` : ""}
+              <span class="status ${info.cls}">${info.text}</span>
+            </span>
           </div>
           <div class="matchup">
-            ${esc(game.away.abbrev)}<span class="at">@</span>${esc(game.home.abbrev)}${score}
+            ${esc(teamShortZh(game.away.abbrev, game.away.name))}<span class="at">@</span>${esc(teamShortZh(game.home.abbrev, game.home.name))}${score}
           </div>
           <div class="meta">
             <span>${modelText}</span>
             <span>${marketText}</span>
           </div>
+          ${bets.length ? `<div class="bet-row">${bets.map((bet) => slateBetChip(bet, game)).join("")}</div>` : ""}
           ${badge}
         </article>
       `;
@@ -251,6 +343,13 @@ async function load({ repredict = false, silent = false } = {}) {
       }
     }
     const data = await api(`/api/games?date=${encodeURIComponent(state.date)}`);
+    // 静态模式下后端只导出某一个比赛日：以 payload 的日期为准，
+    // 否则赛时页会去拉一个不在导出范围内的日期（显示 0 场/英文兜底）。
+    if (data.date && data.date !== state.date) {
+      state.date = data.date;
+      const input = document.getElementById("date");
+      if (input) input.value = data.date;
+    }
     if (!data.count) {
       const jumped = await autoAdjustDate();
       if (jumped) {
@@ -260,9 +359,19 @@ async function load({ repredict = false, silent = false } = {}) {
       }
     }
     state.games = data.games;
+    // 纸面注单（含已结算）：按比赛聚合，看板卡片显示投注内容与结果
+    let betsByGame = {};
+    try {
+      const betData = await api("/api/bets");
+      for (const bet of betData.bets || []) {
+        (betsByGame[bet.game_id] ||= []).push(bet);
+      }
+    } catch (_) {
+      /* 注单接口失败不影响看板 */
+    }
     renderStats(data);
     renderBettablePanel(data.games);
-    renderGames(data.games);
+    renderGames(data.games, betsByGame);
     // APK：看板打开时顺手抓一份快照（ESPN 免费 + 可选 Odds API），失败静默
     if (window.DAV?.davEnabled() && window.SnapCollector) {
       window.SnapCollector.collectAndPush(state.date).catch(() => {});
@@ -308,6 +417,60 @@ async function autoAdjustDate() {
   }
 }
 
+// 从注单台账跳转到对应比赛：
+// - 进行中/中场 → 切到「赛时」并滚动到该场卡片（实时比分）
+// - 未开赛/已完赛 → 切到「赛前看板」、切到该比赛日并滚动到卡片
+function focusGameCard(container, gameId) {
+  if (!container) return false;
+  const card = container.querySelector(`[data-game="${gameId}"]`);
+  if (!card) return false;
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.classList.add("flash");
+  setTimeout(() => card.classList.remove("flash"), 1800);
+  return true;
+}
+
+window.jumpToGame = async function (gameId, slateDate, status) {
+  if (!gameId) return;
+
+  // 目标卡片出现前轮询等待（live/看板数据加载可能 3-15 秒），找到即滚动+高亮
+  function waitForCard(containerId, maxTries = 60, onMiss = null) {
+    let tries = 0;
+    const tick = () => {
+      if (focusGameCard(document.getElementById(containerId), gameId)) return;
+      if (++tries < maxTries) {
+        setTimeout(tick, 300);
+        return;
+      }
+      if (onMiss) onMiss();
+      else toast("未找到该场比赛：可能已结束或不在当前日期");
+    };
+    tick();
+  }
+
+  const live = status === "STATUS_IN_PROGRESS" || status === "STATUS_HALFTIME";
+  if (live) {
+    toast("正在加载实时比分…");
+    document.querySelector('#tabs [data-tab="live"]')?.click();
+    // 赛时页没找到（静态模式 ESPN 只返回部分场次）→ 回退到赛前看板该场
+    waitForCard("live-games", 45, () => {
+      document.querySelector('#tabs [data-tab="slate"]')?.click();
+      waitForCard("games", 15);
+    });
+    return;
+  }
+  if (slateDate && slateDate !== state.date) {
+    state.date = slateDate;
+    const input = document.getElementById("date");
+    if (input) input.value = slateDate;
+    document.querySelector('#tabs [data-tab="slate"]')?.click();
+    await load({ silent: true });
+  } else {
+    document.querySelector('#tabs [data-tab="slate"]')?.click();
+  }
+  waitForCard("games", 20);
+};
+
 async function loadBankroll() {
   try {
     const summary = await api("/api/bets/summary");
@@ -342,8 +505,8 @@ function edgeMarketLabel(market) {
 }
 
 function edgeSideLabel(edge, game) {
-  if (edge.side === "home") return game.home.abbrev;
-  if (edge.side === "away") return game.away.abbrev;
+  if (edge.side === "home") return teamShortZh(game.home.abbrev, game.home.name);
+  if (edge.side === "away") return teamShortZh(game.away.abbrev, game.away.name);
   return edge.side === "over" ? "大分" : "小分";
 }
 
@@ -397,14 +560,18 @@ function renderModal(data) {
       <tr class="${edge.signal && edge.bettable ? "row-bettable" : ""}">
         <td>${edgeMarketLabel(edge.market)}</td>
         <td>${esc(edgeSideLabel(edge, game))}
-          ${edge.market === "spread" ? " " + fmtSpread(edge.side === "home" ? edge.line : -edge.line) : ""}</td>
+          ${edge.market === "spread" ? " " + fmtSpread(edge.line) : edge.market === "total" ? " " + fmtTotal(edge.line) : ""}</td>
         <td>${fmtPrice(edge.price)}</td>
         <td>${fmtPct(edge.model_prob)}</td>
         <td>${fmtPct(edge.fair_prob)}</td>
         <td class="${edge.edge >= 0 ? "pos" : "neg"}">${fmtSignedPct(edge.edge)}</td>
         <td class="${edge.ev >= 0 ? "pos" : "neg"}">${fmtSignedPct(edge.ev)}</td>
         <td style="color:var(--muted)">${edge.created_at ? fmtSignalTime(edge.created_at) : "—"}</td>
-        <td>${edge.signal ? `<span class="pill signal">信号</span>` : `<span class="pill">观察</span>`}
+        <td>${edge.expired
+          ? `<span class="pill" title="${esc(edge.expired_reason || "信号已过期")}" style="color:var(--muted)">已过期</span>`
+          : edge.signal
+            ? `<span class="pill signal">信号</span>`
+            : `<span class="pill">观察</span>`}
           ${edge.signal && edge.bettable ? `<span class="pill signal pos" title="通过可下注闸门">可下注</span>` : ""}
           ${edge.signal && !edge.bettable && edge.bettable_note ? `<span class="pill" title="${esc(edge.bettable_note)}" style="color:var(--muted)">仅观察</span>` : ""}</td>
         <td>${edge.signal ? action : "—"}</td>
@@ -431,7 +598,10 @@ function renderModal(data) {
   const injuryRows = injuries.length
     ? injuries
         .map((injury) => {
-          const team = injury.team_id === game.home.id ? game.home.abbrev : game.away.abbrev;
+          const team =
+    injury.team_id === game.home.id
+      ? teamShortZh(game.home.abbrev, game.home.name)
+      : teamShortZh(game.away.abbrev, game.away.name);
           const suggestion = suggestionFor(injury);
           const applyButton = suggestion
             ? `<button class="btn small" data-apply-impact="${injury.id}" title="RAPM ${suggestion.rapm_rating >= 0 ? "+" : ""}${suggestion.rapm_rating} → 建议 ${suggestion.suggested_impact}">采用 ${suggestion.suggested_impact}</button>`
@@ -531,7 +701,7 @@ function renderModal(data) {
   }
 
   $("#modal-body").innerHTML = `
-    <h2>${esc(game.away.name)} <span style="color:var(--muted)">@</span> ${esc(game.home.name)}</h2>
+    <h2>${esc(teamNameZh(game.away.name, game.away.abbrev))} <span style="color:var(--muted)">@</span> ${esc(teamNameZh(game.home.name, game.home.abbrev))}</h2>
     <div class="sub">${fmtTime(game.tipoff)} · ${info.text} · ${esc(game.season || "")} ${game.venue ? "· " + esc(game.venue) : ""}</div>
 
     ${
@@ -708,7 +878,7 @@ async function confirmBet(index) {
       body: JSON.stringify({
         game_id: state.detail.game.id,
         slate_date: state.date,
-        matchup: `${state.detail.game.away.abbrev}@${state.detail.game.home.abbrev}`,
+        matchup: `${teamShortZh(state.detail.game.away.abbrev, state.detail.game.away.name)}@${teamShortZh(state.detail.game.home.abbrev, state.detail.game.home.name)}`,
         market: edge.market,
         side: edge.side,
         line,
@@ -803,9 +973,28 @@ $("#snapshot").addEventListener("click", async () => {
 $("#modal").addEventListener("click", (event) => {
   if (event.target.id === "modal") $("#modal").hidden = true;
 });
-$("#games").addEventListener("click", (event) => {
+$("#games").addEventListener("click", async (event) => {
+  const quick = event.target.closest("[data-quick-bet]");
   const card = event.target.closest("[data-game]");
-  if (card) openGame(card.dataset.game);
+  if (!card) return;
+  if (quick) {
+    event.stopPropagation();
+    await openGame(quick.dataset.gameId || card.dataset.game);
+    placeBet(Number(quick.dataset.quickBet));
+    return;
+  }
+  openGame(card.dataset.game);
+});
+$("#bettable-panel").addEventListener("click", async (event) => {
+  const quick = event.target.closest("[data-quick-bet]");
+  if (quick) {
+    event.stopPropagation();
+    await openGame(quick.dataset.gameId);
+    placeBet(Number(quick.dataset.quickBet));
+    return;
+  }
+  const row = event.target.closest(".bp-row[data-game]");
+  if (row) openGame(row.dataset.game);
 });
 $("#modal-body").addEventListener("click", (event) => {
   const betButton = event.target.closest("[data-bet]");

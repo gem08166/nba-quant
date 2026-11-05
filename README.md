@@ -474,3 +474,4 @@ python -m app.cli serve
 ## 13. License
 
 MIT License，见 [LICENSE](LICENSE)。Copyright (c) 2026 gem08166.
+| `NBAQ_SIGNAL_MAX_AGE_HOURS` | 信号超过该小时数未更新即标记过期 | 12 |

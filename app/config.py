@@ -24,6 +24,10 @@ MAX_STAKE_PCT = float(os.getenv("NBAQ_MAX_STAKE", "0.03"))
 # 只用 1-2 家新鲜书源会让共识退化成单书，比"略旧的 12 家共识"更差。
 MIN_FRESH_BOOKS = int(os.getenv("NBAQ_MIN_FRESH_BOOKS", "3"))
 
+# 信号有效期：超过该小时数未更新（或比赛已开赛/结束）即标记过期，
+# 不再计入「信号/可下注」统计，也不出现在可下注面板。
+SIGNAL_MAX_AGE_HOURS = float(os.getenv("NBAQ_SIGNAL_MAX_AGE_HOURS", "12"))
+
 # Sharp 锚定共识（散户真实 edge 来源的转变：模型 vs 全体共识 → 软书 vs sharp 书）。
 # 开启后：若共识里有 sharp 书源（如 Pinnacle），fair 概率取 sharp 书去水值，
 # 软书价格只用来回答"哪里能拿到价"；signals 额外输出 sharp_ev（按 sharp 公允

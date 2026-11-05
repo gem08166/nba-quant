@@ -391,6 +391,16 @@ async function loadGateCard() {
     try {
       const ho = await api("/api/holdout");
       if (ho && ho.test && ho.test.n) {
+        // API 模式没有 STATIC_PAYLOAD：直接取回测报告，避免对照行永远是 "—"
+        let bt = window.STATIC_PAYLOAD?.backtest?.report?.overall || null;
+        if (!bt) {
+          try {
+            const btr = await api("/api/backtest");
+            bt = btr?.report?.overall || null;
+          } catch (_) {
+            bt = null;
+          }
+        }
         const t = ho.test, b = ho.baseline || {};
         holdoutHtml = `
           <div class="table-wrap" style="margin-top:12px"><table>
@@ -398,7 +408,7 @@ async function loadGateCard() {
             <tbody>
               <tr><td>本模型（${ho.test_games} 场考试）</td><td>${t.margin_mae}</td><td>${t.total_mae}</td><td>${t.brier}</td><td>${t.ece}</td></tr>
               <tr><td>常数基线（训练期均值）</td><td>${b.constant_margin_mae ?? "—"}</td><td>${b.constant_total_mae ?? "—"}</td><td>${b.constant_brier ?? "—"}</td><td>—</td></tr>
-              <tr><td>walk-forward（对照）</td><td>${window.STATIC_PAYLOAD?.backtest?.report?.overall?.margin_mae?.toFixed?.(2) ?? "—"}</td><td>${window.STATIC_PAYLOAD?.backtest?.report?.overall?.total_mae?.toFixed?.(2) ?? "—"}</td><td>${window.STATIC_PAYLOAD?.backtest?.report?.overall?.brier?.toFixed?.(4) ?? "—"}</td><td>—</td></tr>
+              <tr><td>walk-forward（对照）</td><td>${bt?.margin_mae?.toFixed?.(2) ?? "—"}</td><td>${bt?.total_mae?.toFixed?.(2) ?? "—"}</td><td>${bt?.brier?.toFixed?.(4) ?? "—"}</td><td>—</td></tr>
             </tbody>
           </table></div>
           <p class="notice" style="border:none;margin:8px 0 0;padding-top:0">

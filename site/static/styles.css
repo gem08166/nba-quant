@@ -403,7 +403,7 @@ input:focus, select:focus {
 .bp-list { display: grid; gap: 7px; }
 .bp-row {
   display: grid;
-  grid-template-columns: 118px minmax(0, 1fr) 76px 100px 72px;
+  grid-template-columns: 118px minmax(0, 1fr) 76px 100px 72px auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -419,6 +419,7 @@ input:focus, select:focus {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .bp-row:hover { border-color: var(--green-strong); box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.25); }
+.bp-row .btn { justify-self: end; white-space: nowrap; }
 .bp-match { font-weight: 750; }
 .bp-pick { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bp-price { font-weight: 750; color: #d9ffe7; text-align: right; font-variant-numeric: tabular-nums; }
@@ -810,3 +811,70 @@ body.static-mode .bets-scope::after {
   .stat { flex: 1 1 40%; min-width: 0; }
   .live-labels { margin-left: 0; }
 }
+
+/* 注单台账：比赛名做成可点击链接（跳到赛时/看板并高亮该场） */
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px dashed var(--muted);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.linklike:hover { color: var(--green); border-color: var(--green); }
+
+/* 跳转后的目标卡片高亮（2 秒） */
+.card.flash {
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.55), 0 6px 24px rgba(34, 197, 94, 0.25);
+}
+
+/* 赛时看板：每节得分（客 : 主） */
+.qs-row {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 2px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.qs-col {
+  min-width: 52px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+.qs-col .k { font-size: 10px; color: var(--muted); letter-spacing: 0.04em; }
+.qs-col .v { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.qs-col.total { border-color: rgba(74, 222, 128, 0.35); }
+.q-sep { color: var(--muted); margin: 0 2px; }
+
+/* 赛时卡片：有未结算注单的标注 */
+.card.has-bet { border-color: rgba(251, 191, 36, 0.45); }
+.bet-tag {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  color: var(--amber);
+  white-space: nowrap;
+}
+.bet-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 7px 0 2px; }
+.bet-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+/* 注单单据的结果标注 */
+.bet-result { font-weight: 750; margin-left: 4px; }
+.bet-result.pos { color: var(--green); }
+.bet-result.neg { color: var(--red); }

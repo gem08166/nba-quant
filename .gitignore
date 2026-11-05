@@ -29,3 +29,11 @@ mobile/node_modules/
 mobile/www/
 mobile/android/
 mobile/*.apk
+
+# 会话导出 / 本地杂项（不要进仓库）
+ses_*.json
+/nba-quant-20261103/
+tmp_status.py
+
+# 坚果云同步临时文件
+*.nssyncsc

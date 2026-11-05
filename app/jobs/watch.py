@@ -18,14 +18,22 @@ EMPTY_SLATE_ALERT_LOOPS = 6
 
 
 class Tee:
-    """同时写 stdout 和日志文件（watch 的运行记录落盘）。"""
+    """同时写 stdout 和日志文件（watch 的运行记录落盘）。
+
+    pythonw（隐藏窗口常驻）下 sys.stdout / sys.stderr 是 None，
+    所以两处写入都要判空——否则一启动就 AttributeError。
+    """
 
     def __init__(self, path) -> None:
         self.file = open(path, "a", encoding="utf-8")
         self.stdout = sys.stdout
 
     def write(self, text: str) -> None:
-        self.stdout.write(text)
+        if self.stdout is not None:
+            try:
+                self.stdout.write(text)
+            except (OSError, ValueError):
+                pass
         try:
             self.file.write(text)
             self.file.flush()
@@ -33,7 +41,11 @@ class Tee:
             pass
 
     def flush(self) -> None:
-        self.stdout.flush()
+        if self.stdout is not None:
+            try:
+                self.stdout.flush()
+            except (OSError, ValueError):
+                pass
         try:
             self.file.flush()
         except OSError:
@@ -66,6 +78,8 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     log_path = ROOT / "data" / "watch.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     sys.stdout = Tee(log_path)
+    # pythonw/无控制台常驻时 traceback 也要落盘，否则崩溃无痕
+    sys.stderr = sys.stdout
 
     interval = interval or WATCH_INTERVAL
     providers = notify.providers_enabled()

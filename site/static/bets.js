@@ -67,15 +67,24 @@ function renderMarkets(byMarket) {
 }
 
 function liveBadgeFor(bet) {
-  // 静态模式（手机）：用看板导出的实时比分给未结算注单标注当前状态
-  if (bet.result !== "open" || window.APP_MODE !== "static") return "";
-  const game = ((window.STATIC_PAYLOAD?.board || {}).games || []).find(
-    (x) => String(x.id) === String(bet.game_id)
-  );
-  if (!game) return "";
-  const hs = game.live_home_score ?? game.home_score;
-  const as = game.live_away_score ?? game.away_score;
-  if (hs == null || as == null || game.status !== "STATUS_IN_PROGRESS") return "";
+  // 未结算注单的实时状态：API 模式用 /api/bets/analysis 带出的 game_status/实时比分；
+  // 静态模式（手机）回退到看板导出的 games（兼容旧快照缺字段的情况）。
+  if (bet.result !== "open") return "";
+  let status = bet.game_status;
+  let hs = bet.live_home_score;
+  let as = bet.live_away_score;
+  if ((status == null || hs == null || as == null) && window.APP_MODE === "static") {
+    const game = ((window.STATIC_PAYLOAD?.board || {}).games || []).find(
+      (x) => String(x.id) === String(bet.game_id)
+    );
+    if (game) {
+      status = status ?? game.status;
+      hs = hs ?? game.live_home_score ?? game.home_score;
+      as = as ?? game.live_away_score ?? game.away_score;
+    }
+  }
+  const inProgress = status === "STATUS_IN_PROGRESS" || status === "STATUS_HALFTIME";
+  if (!inProgress || hs == null || as == null) return "";
   const margin = hs - as;
   const total = hs + as;
   let text = "";
@@ -119,7 +128,10 @@ function renderLedger(bets) {
                 : `<span class="${bet.profit >= 0 ? "pos" : "neg"}">${bet.profit >= 0 ? "+" : ""}${bet.profit.toFixed(2)}</span>`;
             return `<tr>
               <td>${esc(bet.slate_date || "—")}</td>
-              <td>${esc(bet.matchup)}</td>
+              <td><button class="linklike" data-goto-game="${esc(bet.game_id)}"
+                data-goto-date="${esc(bet.slate_date || "")}"
+                data-goto-status="${esc(bet.game_status || "")}"
+                title="跳转到该场比赛">${esc(bet.matchup_zh || matchupZh(bet.matchup))}</button></td>
               <td>${marketLabel(bet.market)}</td>
               <td>${sideLabel(bet)}</td>
               <td>${line}</td>
@@ -261,6 +273,7 @@ async function loadBets() {
       ctx.fillText("暂无已结算注单：结算后这里会出现累计收益曲线", canvas.width / 2, 120);
     }
     betsLoaded = true;
+    ensureBetsAutoRefresh();
     document.getElementById("bets-mode-note").textContent =
       window.APP_MODE === "static"
         ? "（静态模式：注单存在本机浏览器 localStorage，换设备或清缓存会丢失；结算在看板更新后自动完成）"
@@ -271,7 +284,35 @@ async function loadBets() {
   }
 }
 
-// 复用统一 tab 分发：切入收益页时加载一次；注单变化后重进页面即刷新
+// 实时台账：收益页可见时每 30 秒静默刷新一次（未结算注单会跟着实时比分
+// 显示「目前赢盘/输盘/贴盘」，完赛结算后自动变成胜/负/走）。
+let betsAutoTimer = null;
+function ensureBetsAutoRefresh() {
+  if (betsAutoTimer) return;
+  betsAutoTimer = setInterval(() => {
+    const panel = document.getElementById("tab-bets");
+    if (panel && !panel.hidden && document.visibilityState === "visible") {
+      loadBets();
+    }
+  }, 30000);
+  document.addEventListener("visibilitychange", () => {
+    const panel = document.getElementById("tab-bets");
+    if (document.visibilityState === "visible" && panel && !panel.hidden) loadBets();
+  });
+}
+
+// 点击台账里的比赛名 → 跳到赛时页（进行中）或赛前看板对应日期并高亮该场
+document.getElementById("bets-ledger").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-goto-game]");
+  if (!button) return;
+  window.jumpToGame?.(
+    button.dataset.gotoGame,
+    button.dataset.gotoDate,
+    button.dataset.gotoStatus
+  );
+});
+
+// 复用统一 tab 分发：切入收益页时加载一次；之后由 30 秒定时器保持新鲜
 document.getElementById("tabs").addEventListener("click", (event) => {
   const button = event.target.closest("[data-tab]");
   if (button?.dataset.tab === "bets") loadBets();

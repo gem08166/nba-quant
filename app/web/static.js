@@ -220,6 +220,14 @@ function jsLiveProjection(pregame, period, clockSeconds, currentMargin, currentT
   };
 }
 
+function jsLinescores(competitor) {
+  return (competitor.linescores || []).map((item) => {
+    const v = item.value ?? item.displayValue;
+    const n = parseInt(v);
+    return Number.isFinite(n) ? n : null;
+  });
+}
+
 function jsParseEvent(event) {
   const comp = (event.competitions || [{}])[0];
   const competitors = comp.competitors || [];
@@ -237,7 +245,142 @@ function jsParseEvent(event) {
     clock_seconds: typeof status.clock === "number" ? status.clock : null,
     home_score: parseInt(home.score) || 0,
     away_score: parseInt(away.score) || 0,
+    home_linescores: jsLinescores(home),
+    away_linescores: jsLinescores(away),
   };
+}
+
+
+// ---- 赛况逐条翻译（静态模式用；API 模式由后端返回 text_zh） ----
+const PLAY_TEAM_ZH = {
+  hawks: "老鹰", celtics: "凯尔特人", nets: "篮网", hornets: "黄蜂", bulls: "公牛",
+  cavaliers: "骑士", mavericks: "独行侠", nuggets: "掘金", pistons: "活塞",
+  warriors: "勇士", rockets: "火箭", pacers: "步行者", clippers: "快船",
+  lakers: "湖人", grizzlies: "灰熊", heat: "热火", bucks: "雄鹿",
+  timberwolves: "森林狼", pelicans: "鹈鹕", knicks: "尼克斯", thunder: "雷霆",
+  magic: "魔术", "76ers": "76人", suns: "太阳", "trail blazers": "开拓者",
+  blazers: "开拓者", kings: "国王", spurs: "马刺", raptors: "猛龙", jazz: "爵士",
+  wizards: "奇才",
+};
+const PLAY_ZH_RULES = [
+  [/makes (\d+)-foot three point jumper/gi, "三分命中（$1英尺）"],
+  [/misses (\d+)-foot three point jumper/gi, "三分不中（$1英尺）"],
+  [/makes three point jumper/gi, "三分命中"],
+  [/misses three point jumper/gi, "三分不中"],
+  [/makes (\d+)-foot (?:two point )?jumper/gi, "跳投命中（$1英尺）"],
+  [/misses (\d+)-foot (?:two point )?jumper/gi, "跳投不中（$1英尺）"],
+  [/makes (?:two point )?jumper/gi, "跳投命中"],
+  [/misses (?:two point )?jumper/gi, "跳投不中"],
+  [/makes (\d+)-foot [\w\s]*jump shot/gi, "跳投命中（$1英尺）"],
+  [/misses (\d+)-foot [\w\s]*jump shot/gi, "跳投不中（$1英尺）"],
+  [/makes [\w\s]*jump shot/gi, "跳投命中"],
+  [/misses [\w\s]*jump shot/gi, "跳投不中"],
+  [/makes (\d+)-foot [\w\s]*layup/gi, "上篮得分"],
+  [/misses (\d+)-foot [\w\s]*layup/gi, "上篮不中"],
+  [/makes [\w\s]*layup/gi, "上篮得分"],
+  [/misses [\w\s]*layup/gi, "上篮不中"],
+  [/makes (\d+)-foot layup/gi, "上篮得分"],
+  [/misses (\d+)-foot layup/gi, "上篮不中"],
+  [/makes layup/gi, "上篮得分"],
+  [/misses layup/gi, "上篮不中"],
+  [/makes (\d+)-foot dunk/gi, "扣篮得分"],
+  [/misses (\d+)-foot dunk/gi, "扣篮不中"],
+  [/makes (?:slam )?dunk/gi, "扣篮得分"],
+  [/misses (?:slam )?dunk/gi, "扣篮不中"],
+  [/makes (\d+)-foot hook shot/gi, "勾手命中"],
+  [/misses (\d+)-foot hook shot/gi, "勾手不中"],
+  [/makes hook shot/gi, "勾手命中"],
+  [/misses hook shot/gi, "勾手不中"],
+  [/makes (\d+)-foot (?:two point )?shot/gi, "投篮命中（$1英尺）"],
+  [/misses (\d+)-foot (?:two point )?shot/gi, "投篮不中（$1英尺）"],
+  [/makes (?:two point )?shot/gi, "投篮命中"],
+  [/misses (?:two point )?shot/gi, "投篮不中"],
+  [/makes free throw (\d+) of (\d+)/gi, "罚球 $1/$2 命中"],
+  [/misses free throw (\d+) of (\d+)/gi, "罚球 $1/$2 不中"],
+  [/defensive team rebound/gi, "球队防守篮板"],
+  [/offensive team rebound/gi, "球队前场篮板"],
+  [/defensive rebound/gi, "防守篮板"],
+  [/offensive rebound/gi, "前场篮板"],
+  [/team rebound/gi, "球队篮板"],
+  [/personal foul/gi, "个人犯规"],
+  [/shooting foul/gi, "投篮犯规"],
+  [/loose ball foul/gi, "无球犯规"],
+  [/offensive foul/gi, "进攻犯规"],
+  [/technical foul/gi, "技术犯规"],
+  [/coach'?s challenge/gi, "教练挑战"],
+  [/call overturned/gi, "改判成功"],
+  [/retain their timeout/gi, "保留暂停"],
+  [/enters the game/gi, "上场"],
+  [/turnover/gi, "失误"],
+  [/steal/gi, "抢断"],
+  [/block/gi, "盖帽"],
+  [/timeout/gi, "暂停"],
+  [/jump ball/gi, "跳球"],
+];
+const PLAY_NICK_RE = new RegExp(
+  "\\b(" +
+    Object.keys(PLAY_TEAM_ZH)
+      .sort((a, b) => b.length - a.length)
+      .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|") +
+    ")\\b",
+  "gi"
+);
+
+let PLAYER_ZH_MAP = null;
+let PLAYER_ZH_LOADING = null;
+
+function ensurePlayerZh() {
+  if (PLAYER_ZH_MAP) return Promise.resolve(PLAYER_ZH_MAP);
+  if (!PLAYER_ZH_LOADING) {
+    PLAYER_ZH_LOADING = fetch("data/player_zh.json")
+      .then((r) => (r.ok ? r.json() : { players: {} }))
+      .then((j) => {
+        PLAYER_ZH_MAP = j.players || {};
+        return PLAYER_ZH_MAP;
+      })
+      .catch(() => {
+        PLAYER_ZH_MAP = {};
+        return PLAYER_ZH_MAP;
+      });
+  }
+  return PLAYER_ZH_LOADING;
+}
+
+function slugifyZh(name) {
+  let text = String(name || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.'’\-]/g, " ")
+    .toLowerCase();
+  const parts = text.split(/\s+/).filter(Boolean);
+  while (parts.length > 2 && ["jr", "sr", "ii", "iii", "iv", "v"].includes(parts[parts.length - 1])) {
+    parts.pop();
+  }
+  return parts.join("").replace(/[^a-z0-9]/g, "");
+}
+
+function translatePlayerPrefixZh(text, map) {
+  const m = text.match(/^([A-Z][\w.'\-]*(?:\s+[A-Z][\w.'\-]*){0,3})\s+(.*)$/);
+  if (!m) return text;
+  const words = m[1].split(/\s+/);
+  for (let take = words.length; take >= 1; take--) {
+    const candidate = words.slice(0, take).join(" ");
+    const zh = map[slugifyZh(candidate)];
+    if (zh) {
+      const tail = words.slice(take).join(" ");
+      return `${zh} ${tail} ${m[2]}`.replace(/\s+/g, " ").trim();
+    }
+  }
+  return text;
+}
+
+function playZh(text) {
+  if (!text) return "";
+  let out = translatePlayerPrefixZh(String(text).trim(), PLAYER_ZH_MAP || {});
+  out = out.replace(PLAY_NICK_RE, (m) => PLAY_TEAM_ZH[m.toLowerCase()] || m);
+  for (const [re, repl] of PLAY_ZH_RULES) out = out.replace(re, repl);
+  return out.replace(/\s+/g, " ").trim();
 }
 
 async function espnLive(date) {
@@ -256,8 +399,11 @@ async function espnLive(date) {
     const item = {
       game_id: parsed.game_id,
       matchup: boardGame ? boardGame.matchup : `${parsed.game_id}`,
+      matchup_zh: boardGame ? (boardGame.matchup_zh || matchupZh(boardGame.matchup)) : "",
       home_name: boardGame ? boardGame.home.name : "",
       away_name: boardGame ? boardGame.away.name : "",
+      home_name_zh: boardGame ? (boardGame.home.name_zh || teamNameZh(boardGame.home.name, boardGame.home.abbrev)) : "",
+      away_name_zh: boardGame ? (boardGame.away.name_zh || teamNameZh(boardGame.away.name, boardGame.away.abbrev)) : "",
       tipoff: boardGame ? boardGame.tipoff : event.date,
       ...parsed,
       pregame: pred
@@ -295,10 +441,12 @@ async function espnLive(date) {
             item.espn_home_win_prob = wp[wp.length - 1];
             item.espn_wp_delta = wp[wp.length - 1] - wp[Math.max(0, wp.length - 11)];
           }
+          await ensurePlayerZh();
           item.recent_plays = (summary.plays || []).slice(-6).map((p) => ({
             clock: (p.clock || {}).displayValue,
             period: (p.period || {}).number,
             text: p.text,
+            text_zh: playZh(p.text),
           }));
         }
       } catch (_) {

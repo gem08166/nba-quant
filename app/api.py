@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from . import db, i18n
-from .config import DATA_DIR
+from .config import DATA_DIR, SIGNAL_MAX_AGE_HOURS
 from .dates import current_slate_date
 from .ingest.service import insert_odds
 from .jobs import live
@@ -18,6 +18,52 @@ from .jobs.settle import summarize
 from .models import rapm
 
 router = APIRouter(prefix="/api")
+
+CLOSED_GAME_STATUSES = {
+    "STATUS_IN_PROGRESS",
+    "STATUS_HALFTIME",
+    "STATUS_FINAL",
+    "STATUS_POSTPONED",
+    "STATUS_CANCELED",
+    "STATUS_CANCELLED",
+}
+
+
+def _parse_ts(value: str | None):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _expire_edges(edges: list[dict], row: sqlite3.Row) -> list[dict]:
+    """把过时信号标记为过期（signal/bettable=False），不改写 DB 历史。
+
+    过时判定：
+    - 比赛已开赛/中场/完赛/延期/取消（pregame 窗口已关闭）
+    - 或信号生成后超过 SIGNAL_MAX_AGE_HOURS 未更新（盘口早已变化）
+    """
+    now = datetime.now(timezone.utc)
+    tipoff = _parse_ts(row["tipoff"])
+    closed = row["status"] in CLOSED_GAME_STATUSES or (tipoff is not None and tipoff <= now)
+    for edge in edges:
+        if not (edge.get("signal") or edge.get("bettable")):
+            continue
+        reason = None
+        if closed:
+            reason = "比赛已开始或结束"
+        else:
+            created = _parse_ts(edge.get("created_at"))
+            if created and (now - created).total_seconds() > SIGNAL_MAX_AGE_HOURS * 3600:
+                reason = f"信号超过 {SIGNAL_MAX_AGE_HOURS:g} 小时未更新"
+        if reason:
+            edge["signal"] = False
+            edge["bettable"] = False
+            edge["expired"] = True
+            edge["expired_reason"] = reason
+    return edges
 
 
 def get_conn():
@@ -33,14 +79,30 @@ def _now() -> str:
 
 
 def _game_payload(row: sqlite3.Row, prediction: dict | None) -> dict:
+    home_abbrev, away_abbrev = row["home_abbrev"], row["away_abbrev"]
+    home_name, away_name = row["home_name"], row["away_name"]
     payload = {
         "id": row["id"],
         "tipoff": row["tipoff"],
         "status": row["status"],
         "status_detail": row["status_detail"],
         "season": row["season"],
-        "home": {"id": row["home_id"], "abbrev": row["home_abbrev"], "name": row["home_name"]},
-        "away": {"id": row["away_id"], "abbrev": row["away_abbrev"], "name": row["away_name"]},
+        "matchup": f"{away_abbrev} @ {home_abbrev}",
+        "matchup_zh": i18n.matchup_zh(f"{away_abbrev} @ {home_abbrev}"),
+        "home": {
+            "id": row["home_id"],
+            "abbrev": home_abbrev,
+            "name": home_name,
+            "name_zh": i18n.team_zh(home_abbrev, home_name),
+            "short_zh": i18n.team_short_zh(home_abbrev, home_name),
+        },
+        "away": {
+            "id": row["away_id"],
+            "abbrev": away_abbrev,
+            "name": away_name,
+            "name_zh": i18n.team_zh(away_abbrev, away_name),
+            "short_zh": i18n.team_short_zh(away_abbrev, away_name),
+        },
         "home_score": row["home_score"],
         "away_score": row["away_score"],
         "live_home_score": row["live_home_score"],
@@ -65,7 +127,7 @@ def _game_payload(row: sqlite3.Row, prediction: dict | None) -> dict:
             "divergence_risk": details.get("divergence_risk"),
             "created_at": prediction["created_at"],
         }
-        payload["edges"] = details.get("edges", [])
+        payload["edges"] = _expire_edges(details.get("edges", []), row)
         payload["best_edge"] = payload["edges"][0] if payload["edges"] else None
     return payload
 
@@ -130,7 +192,8 @@ def edges(
         prediction = latest_prediction(conn, row["id"])
         if not prediction:
             continue
-        for item in prediction["details"].get("edges", []):
+        row_edges = _expire_edges(list(prediction["details"].get("edges", [])), row)
+        for item in row_edges:
             if not item.get("signal") or item.get("ev", 0) < min_ev:
                 continue
             out.append(
@@ -341,11 +404,19 @@ def delete_bet(bet_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dic
 
 @router.get("/bets/analysis")
 def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    """Bankroll summary + cumulative profit curve + bet ledger (joined with games)."""
+    """Bankroll summary + cumulative profit curve + bet ledger (joined with games).
+
+    额外带上比赛状态与实时比分（live_home_score/live_away_score），供收益页给
+    未结算注单标注「目前赢盘/输盘/贴盘」——API 模式与静态模式同口径。
+    """
     summary = summarize(conn)
     rows = conn.execute(
         """
-        SELECT b.*, g.slate_date, h.abbrev AS home_abbrev, a.abbrev AS away_abbrev
+        SELECT b.*, g.slate_date,
+               g.status AS game_status,
+               g.live_home_score, g.live_away_score,
+               g.home_score AS final_home_score, g.away_score AS final_away_score,
+               h.abbrev AS home_abbrev, a.abbrev AS away_abbrev
         FROM bets b
         LEFT JOIN games g ON g.id = b.game_id
         LEFT JOIN teams h ON h.id = g.home_id
@@ -360,6 +431,7 @@ def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         home = item.pop("home_abbrev", None)
         away = item.pop("away_abbrev", None)
         item["matchup"] = f"{away or '?'} @ {home or '?'}" if home or away else item["game_id"]
+        item["matchup_zh"] = i18n.matchup_zh(item["matchup"])
         bets.append(item)
 
     # cumulative profit over settled bets, ordered by game date

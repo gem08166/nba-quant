@@ -363,7 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--test-end", default=None)
     bt.set_defaults(func=cmd_backtest)
 
-    ho = sub.add_parser("holdout", help="frozen holdout eval: fit on first X%, one-shot test the rest")
+    ho = sub.add_parser("holdout", help="frozen holdout eval: fit on the first N percent, one-shot test the rest")
     ho.add_argument("--split", type=float, default=0.7, help="train fraction (default 0.7)")
     ho.set_defaults(func=cmd_holdout)
 
