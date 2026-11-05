@@ -366,3 +366,19 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **看板卡片**：已结束比赛也显示注单，带结果与盈亏——`让分 黄蜂 -3.5 @1.88 负 -5.00`（负红色 / 胜绿色 / 走灰色）；未结算注单仍显示普通单据。`load()` 改为拉取 `/api/bets`（全部）并按比赛聚合。
 - **赛时卡片**：`live_board` 的 `open_bets` 更名 `bets` 并包含已结算注单（market/side/line/price/stake/result/profit）；`live.js` 的 `gameBetsOf` 合并后端/本机/导出快照，「注单 N」标签只数未结算，单据 chip 显示结果与盈亏。
 - CSS：`.bet-result`（pos 绿 / neg 红）。静态导出无需改动（bets 已含 result/profit）。
+
+### 10.18 2026-11-05 僵尸未结算注单修复 + git 推送稳定性
+
+- **问题**：注单 #5（LAL@SAC total under 234.5）比赛已收尾（103-116）但永远 `open`。根因：`current_slate_date()` 翻到 2026-11-05 后，watch 每 15 分钟只 ingest 当日赛程，11-04 的完赛场次（尤其跨夜 02:00/03:00 开球的最后一场）再也不会被拉取，`settle` 看到的仍是 `STATUS_IN_PROGRESS`。
+- **即时修复**：手动 `service.ingest_date("2026-11-04")` + `app.cli settle` → 注单 #5 结算 over/under 正确，台账 6 结算 3胜3负 ROI +14.05%。
+- **根治**：`app/jobs/watch.py` 主循环新增「pending-day sweep」——每轮查询有 `open` 注单且 `slate_date < 今日` 的历史日期，逐日补 ingest；结算收敛（该日无 open+final 残留）后从 `settle_pending` 列表移除，不重复请求 ESPN 完赛场次（次日比分已稳定）。
+- 测试：`tests/test_watch_pending.py`（SQL 语义：历史进行中/完赛日被选中、当日被排除、已结算不触发）。**65 passed**。
+- **git 推送稳定性**：`git push`/`fetch` 到 github.com 间歇性失败（`Connection was reset` / `Failed to connect ... Timed out`），诊断确认是到 `20.205.243.166:443` 的 TCP **间歇性丢包**（裸 TCP 3 连 2 超时 1 次 0.1s 连通；httpx/curl 均可复现同样抖动）。非配置问题：无代理、无 TLS 指纹问题、凭证正常。**处理方式：循环重试**（实测 1-8 次内必通）。
+- **与云端 auto-refresh 分叉的标准操作**（每晚 2 次 SGV tick + 手动触发都会在远端追加提交）：
+  1. `git fetch origin`（失败重试）
+  2. `git stash push -- site/data/static.json`（若 working tree 有 watch 导出的 dirty）
+  3. `git rebase origin/main`；`static.json` 冲突一律 `checkout --theirs`（云端数据更新）
+  4. `git stash drop`（丢弃本地 stale 导出，watch 下轮会重新生成）
+  5. `git push origin main`（失败循环重试）
+  可用一行：`git pull --rebase origin main` + 数据文件冲突取 theirs。
+- 提交：`2b696f8`（实时台账/信号体验）、`9af00da→09771dc`（僵尸结算修复）均已推送 GitHub；Actions 自动触发 refresh-and-deploy。
