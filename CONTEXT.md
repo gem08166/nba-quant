@@ -382,3 +382,21 @@ README.md              # 用户文档（含第 0 节验证结论）
   5. `git push origin main`（失败循环重试）
   可用一行：`git pull --rebase origin main` + 数据文件冲突取 theirs。
 - 提交：`2b696f8`（实时台账/信号体验）、`9af00da→09771dc`（僵尸结算修复）均已推送 GitHub；Actions 自动触发 refresh-and-deploy。
+
+### 10.19 2026-11-05 赛后复盘板块（信号历史）
+
+- **需求**：赛时页给已结束比赛加「赛后板块」：显示赛后数据 + 该场曾经出现过的信号。
+- **数据源**：`predictions` 表保留每场全部历史版本（每场最多 171 行），每次 re-predict 的 `details.edges` 都在里面。「曾经出现的信号」= 全部历史版本中 `signal=True` 的边缘，按 (market, side, line) 去重合并。
+- **后端**（`app/jobs/live.py`）：
+  - `merge_signal_versions(rows)`：合并同一信号的多次出现——记录 `ev_max`/`edge_max`（历史最高）、`price_best`（曾出现的最优价）、`price_last`、`first_seen`/`last_seen`、`n_seen`、`bettable_ever`/`gated_ever`（曾可下注/曾被分歧闸门拦下）。
+  - `signal_history(conn, game_id, home, away)`：SQL 用 `details LIKE '%"signal"%'` 预过滤 + 解析；完赛时用 `signal_backtest.settle_edge` 给每条信号附 `result`（won/lost/push）。
+  - **缓存**：`_SIGNAL_CACHE` 按 game_id、TTL 600s、超 500 条清空——`/api/live` 每 30s 被本机+手机轮询，全量解析 JSON 太重。
+  - `live_board`：state ∈ (post, in) 的比赛附 `signals_history`（仅 post 附结算结果）。
+- **前端**（`live.js` + `styles.css`）：
+  - `postBlock(game)`：赛后复盘卡片——赛前预测 vs 实际（分差/总分误差、主胜方向 ✓/✗）、纸面注单结算汇总（条数/盈亏/ROI）、信号 chips（市场 方向 线 @最优价 EV · 可下注/观察 · 命中/落空，悬停显示出现次数/书源/首见/最近时间）。
+  - `settleSignal()`：JS 版结算（与 `settle_edge` 同逻辑），静态模式/本机快照在客户端结算。
+  - `static.js espnLive`：静态模式用导出快照的 `prediction.edges`（signal=True）近似信号历史（无去重历史，命中结果客户端结算）。
+  - CSS：`.post-block`/`.post-title`（🏁）/`.post-sig-title`/`.bet-chip.sig`（蓝边）。
+- **测试**：`tests/test_post_signals.py` 5 例（去重合并、跨线分离、观察标记、完赛结算、无最终比分不结算）。**70 passed**。
+- **验证**：`/api/live?date=2026-11-04` 14 场全部有 `signals_history`（如 MIN@HOU：ML 客 @4.01 EV+47.5% 出现 168 次 → 命中；CHI@NY 大小 U233.5 EV+12.3% 出现 114 次 → 落空）；浏览器 DOM 14 blocks / 28 sig chips ✅。
+- **教训**：给 `live.js` 插函数时一次替换把 `function liveCard(game) {` 声明行吞掉，导致顶层裸语句 `Illegal return statement`——整个文件不执行且报错位置远离真因；`new Function(src)` 探测不出（Function 体允许 return），要用 `eval`/直接看 console。

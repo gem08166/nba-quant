@@ -417,6 +417,20 @@ async function espnLive(date) {
         : null,
       lines: lines || {},
     };
+    if (parsed.state === "post" && boardGame?.prediction?.edges) {
+      // 静态模式：用导出快照的 edges 近似"该场出现过的信号"（命中结果由 live.js 结算）
+      item.signals_history = boardGame.prediction.edges
+        .filter((e) => e.signal)
+        .map((e) => ({
+          market: e.market,
+          side: e.side,
+          line: e.line ?? null,
+          price_best: e.price,
+          ev_max: e.ev ?? 0,
+          bettable_ever: !!e.bettable,
+          gated_ever: !!e.gated,
+        }));
+    }
     if (parsed.state === "in" && item.pregame) {
       const margin = parsed.home_score - parsed.away_score;
       const total = parsed.home_score + parsed.away_score;

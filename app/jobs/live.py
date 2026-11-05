@@ -14,6 +14,7 @@ OT periods are treated as extra time beyond regulation (f capped at 1 for
 scoring projection, but sigma keeps shrinking via played_seconds).
 """
 
+import json
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -24,12 +25,105 @@ from ..config import ESPN_BASE, REQUEST_SLEEP, REQUEST_TIMEOUT, USER_AGENT
 from ..models import ratings
 from ..pricing.devig import cover_prob, moneyline_prob, over_prob
 from .predict import latest_prediction
+from .signal_backtest import settle_edge
 from .. import i18n
 
 PERIOD_SECONDS = 720
 OT_SECONDS = 300
 REGULATION_SECONDS = 4 * PERIOD_SECONDS
 LIVE_STATES = {"in"}
+
+# --- 信号历史（赛后板块用）--------------------------
+# "曾经出现的信号" = 该场全部历史 prediction 版本里 signal=True 的边缘，
+# 按 (市场, 方向, 线) 去重合并。/api/live 每 30s 被轮询（本机+手机），
+# 全量扫 JSON 太重 → 按 game_id 缓存，TTL 10 分钟。
+_SIGNAL_CACHE: dict[str, dict] = {}
+_SIGNAL_CACHE_TTL = 600.0
+
+
+def merge_signal_versions(rows) -> list[dict]:
+    """合并同一信号在历史 prediction 里的多次出现。
+
+    rows: [(created_at, details_json), ...] 按 id 升序。
+    同 (market, side, line) 只保留一条，记录：最高 EV / 最高 edge、
+    最优价（亚盘口赔率越高对投注者越有利）、首次/最近出现时间、
+    出现次数、是否曾可下注/曾被分歧闸门拦下。
+    """
+    groups: dict[tuple, dict] = {}
+    for created_at, details_json in rows:
+        try:
+            details = json.loads(details_json)
+        except (TypeError, ValueError):
+            continue
+        for edge in details.get("edges") or []:
+            if not edge.get("signal"):
+                continue
+            key = (edge.get("market"), edge.get("side"), edge.get("line"))
+            ev = edge.get("ev") or 0.0
+            edge_val = edge.get("edge") or 0.0
+            price = edge.get("price")
+            group = groups.get(key)
+            if group is None:
+                groups[key] = {
+                    "market": edge.get("market"),
+                    "side": edge.get("side"),
+                    "line": edge.get("line"),
+                    "book": edge.get("book"),
+                    "model_prob": edge.get("model_prob"),
+                    "fair_prob": edge.get("fair_prob"),
+                    "ev_max": ev,
+                    "edge_max": edge_val,
+                    "price_best": price,
+                    "price_last": price,
+                    "first_seen": created_at,
+                    "last_seen": created_at,
+                    "n_seen": 1,
+                    "bettable_ever": bool(edge.get("bettable")),
+                    "gated_ever": bool(edge.get("gated")),
+                }
+            else:
+                group["ev_max"] = max(group["ev_max"], ev)
+                group["edge_max"] = max(group["edge_max"], edge_val)
+                if price and group["price_best"]:
+                    group["price_best"] = max(group["price_best"], price)
+                group["price_last"] = price or group["price_last"]
+                group["n_seen"] += 1
+                group["bettable_ever"] = group["bettable_ever"] or bool(edge.get("bettable"))
+                group["gated_ever"] = group["gated_ever"] or bool(edge.get("gated"))
+                if created_at:
+                    group["last_seen"] = created_at
+    signals = sorted(groups.values(), key=lambda g: g["ev_max"], reverse=True)
+    return signals[:10]  # 上限防极端（正常每场 <5 条）
+
+
+def signal_history(
+    conn: sqlite3.Connection, game_id: str, home_score: int | None, away_score: int | None
+) -> list[dict]:
+    """该场比赛出现过的信号（去重），完赛时附命中/落空结果。"""
+    cached = _SIGNAL_CACHE.get(game_id)
+    now = time.time()
+    if cached and now - cached["at"] < _SIGNAL_CACHE_TTL:
+        signals = cached["signals"]
+    else:
+        rows = conn.execute(
+            """
+            SELECT created_at, details FROM predictions
+            WHERE game_id=? AND details LIKE ? ORDER BY id
+            """,
+            (game_id, '%"signal"%'),
+        ).fetchall()
+        signals = merge_signal_versions(
+            [(row["created_at"], row["details"]) for row in rows]
+        )
+        if len(_SIGNAL_CACHE) > 500:  # 日期推进防无界增长
+            _SIGNAL_CACHE.clear()
+        _SIGNAL_CACHE[game_id] = {"at": now, "signals": signals}
+    if home_score is not None and away_score is not None:
+        return [
+            {**s, "result": settle_edge(s["market"], s["side"], s["line"], home_score, away_score)}
+            for s in signals
+        ]
+    return [dict(s) for s in signals]
 
 
 def _client() -> httpx.Client:
@@ -249,6 +343,14 @@ def live_board(conn: sqlite3.Connection, slate_date: str) -> dict:
             extras = _summary_extras(game_id)
             item.update(extras)
             time.sleep(REQUEST_SLEEP)
+
+        # 信号历史（赛后复盘用）：去重合并全部 prediction 版本；完赛附命中结果
+        if event["state"] in ("post", "in"):
+            item["signals_history"] = signal_history(
+                conn, game_id,
+                event["home_score"] if event["state"] == "post" else None,
+                event["away_score"] if event["state"] == "post" else None,
+            )
         games.append(item)
 
     games.sort(key=lambda g: (g["state"] != "in", g["state"] != "pre", g.get("tipoff") or ""))

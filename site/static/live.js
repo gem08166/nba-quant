@@ -74,7 +74,38 @@ function gameBetsOf(game) {
   return Array.from(map.values());
 }
 
-const RESULT_ZH = { won: "胜", lost: "负", push: "走", open: "未结算" };
+const RESULT_ZH = { won: "胜/命中", lost: "负/落空", push: "走", open: "未结算" };
+
+const MARKET_ZH = { spread: "让分", total: "大小", moneyline: "胜负" };
+
+function hm(iso) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (_) {
+    return "";
+  }
+}
+
+// 与后端 signal_backtest.settle_edge 相同的结算逻辑（静态模式/本机结算用）
+function settleSignal(market, side, line, homeScore, awayScore) {
+  const margin = homeScore - awayScore;
+  const total = homeScore + awayScore;
+  if (market === "moneyline") {
+    if (margin === 0) return "push";
+    return (margin > 0) === (side === "home") ? "won" : "lost";
+  }
+  if (market === "spread") {
+    const covered = side === "home" ? margin + line : -margin + line;
+    if (covered === 0) return "push";
+    return covered > 0 ? "won" : "lost";
+  }
+  if (market === "total") {
+    if (total === line) return "push";
+    return (total > line) === (side === "over") ? "won" : "lost";
+  }
+  return "push";
+}
 
 function betChip(bet, game) {
   const market = bet.market === "spread" ? "让分" : bet.market === "total" ? "大小" : "胜负";
@@ -104,6 +135,82 @@ function betChip(bet, game) {
   }
   return `<span class="bet-chip" title="${esc(market + " " + side + line + price + result)}">${market} ${side}${line}${price}${result}</span>`;
 }
+
+// 赛后板块：该场出现过的信号（历史 prediction 去重），附命中/落空
+const SIG_RESULT_ZH = { won: "命中", lost: "落空", push: "走" };
+
+function settleSignalsOf(game) {
+  // 后端已附 result（API 模式）；静态模式/本机快照在这里结算
+  const hist = game.signals_history || [];
+  return hist.map((sig) => {
+    if (sig.result) return sig;
+    const homeScore = Number(game.home_score);
+    const awayScore = Number(game.away_score);
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore) || homeScore + awayScore === 0) return sig;
+    return { ...sig, result: settleSignal(sig.market, sig.side, sig.line, homeScore, awayScore) };
+  });
+}
+
+function postBlock(game) {
+  const pred = game.pregame;
+  const m = game.home_score - game.away_score;
+  const t = game.home_score + game.away_score;
+  let statsLine = "";
+  if (pred) {
+    const errM = Math.abs(pred.pred_margin - m);
+    const errT = Math.abs(pred.pred_total - t);
+    const mlOk = (pred.pred_margin > 0) === (m > 0);
+    statsLine = `<div class="meta">${esc("赛前预测")} ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)} · 实际 ${m > 0 ? "+" : ""}${m} / ${t} · 分差误差 ${errM.toFixed(1)} · 总分误差 ${errT.toFixed(1)} · 主胜方向 ${mlOk ? "✓" : "✗"}</div>`;
+  }
+  const bets = gameBetsOf(game);
+  const settled = bets.filter((b) => b.result && b.result !== "open");
+  let betsLine = "";
+  if (settled.length) {
+    const profit = settled.reduce((s, b) => s + (Number(b.profit) || 0), 0);
+    const stake = settled.reduce((s, b) => s + (Number(b.stake) || 0), 0);
+    const roi = stake ? ` · ROI ${profit >= 0 ? "+" : ""}${((profit / stake) * 100).toFixed(1)}%` : "";
+    const openN = bets.length - settled.length;
+    const cls = profit >= 0 ? "pos" : "neg";
+    betsLine = `<div class="meta">${esc("纸面注单")} ${settled.length}${esc(" 条结算 · 盈亏 ")}<b class="bet-result ${cls}">${profit >= 0 ? "+" : ""}${profit.toFixed(2)}</b>${roi}${openN ? `（另 ${openN} 条未结算）` : ""}</div>`;
+  }
+  const sig = settleSignalsOf(game);
+  const sigHtml =
+    sig.length
+      ? `<div class="post-signals">${sig
+          .map((s) => {
+            const market = MARKET_ZH[s.market] || s.market;
+            const side =
+              s.side === "home" ? "主" : s.side === "away" ? "客" : s.side === "over" ? "大" : "小";
+            const line =
+              s.line != null
+                ? s.market === "spread"
+                  ? " " + fmtSpread(s.line)
+                  : " " + fmtTotal(s.line)
+                : "";
+            const price = s.price_best != null ? ` @${fmtPrice(s.price_best)}` : "";
+            const ev = `EV ${s.ev_max >= 0 ? "+" : ""}${Math.round(s.ev_max * 100)}%`;
+            const flag = s.bettable_ever ? "可下注" : s.gated_ever ? "观察" : "";
+            let res = "";
+            if (s.result) {
+              const zh = SIG_RESULT_ZH[s.result] || s.result;
+              const cls = s.result === "won" ? "pos" : s.result === "lost" ? "neg" : "";
+              res = ` <span class="bet-result ${cls}">${esc(zh)}</span>`;
+            }
+            const title = `出现 ${s.n_seen} 次 · ${s.book || ""} · 首见 ${hm(s.first_seen)} · 最近 ${hm(s.last_seen)}`;
+            return `<span class="bet-chip sig" title="${esc(title)}">${esc(market)} ${esc(side)}${esc(line)}${esc(price)} ${esc(ev)}${flag ? ` · ${esc(flag)}` : ""}${res}</span>`;
+          })
+          .join("")}</div>`
+      : "";
+  if (!statsLine && !betsLine && !sigHtml) return "";
+  return `
+    <div class="post-block">
+      <div class="post-title">赛后复盘</div>
+      ${statsLine}
+      ${betsLine}
+      ${sigHtml ? `<div class="post-sig-title">该场出现过的信号（历史去重）</div>${sigHtml}` : ""}
+    </div>`;
+}
+
 
 function liveCard(game) {
   const pred = game.pregame;
@@ -162,13 +269,7 @@ function liveCard(game) {
   } else if (game.state === "pre" && pred) {
     liveBlock = `<div class="meta"><span>赛前模型 ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)} · 主胜 ${fmtPct(pred.home_win_prob)}</span></div>`;
   } else if (game.state === "post") {
-    const predM = pred ? pred.pred_margin : null;
-    const actualM = game.home_score - game.away_score;
-    const note =
-      predM != null
-        ? `<div class="meta"><span>赛前预测 ${fmtSpread(predM)} / 总分 ${fmtTotal(pred.pred_total)} · 实际 ${actualM > 0 ? "+" : ""}${actualM} / ${game.home_score + game.away_score}</span></div>`
-        : "";
-    liveBlock = note;
+    liveBlock = "";  // 赛后信息统一放 postBlock（见下方模板）
   }
 
   const bets = gameBetsOf(game);
@@ -188,6 +289,7 @@ function liveCard(game) {
       ${game.state === "pre" ? "" : quarterScores(game)}
       ${bets.length ? `<div class="bet-row">${bets.map((b) => betChip(b, game)).join("")}</div>` : ""}
       ${liveBlock}
+      ${game.state === "post" ? postBlock(game) : ""}
     </article>`;
 }
 
