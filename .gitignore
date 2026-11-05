@@ -37,3 +37,5 @@ tmp_status.py
 
 # 坚果云同步临时文件
 *.nssyncsc
+mobile/screen*.png
+mobile/build.log
