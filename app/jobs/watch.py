@@ -88,6 +88,7 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     last_slate: str | None = None
     loop_failures = 0
     empty_slate_loops = 0
+    settle_pending: list[str] = []  # 还有未结算注单的历史比赛日
     while True:
         slate = current_slate_date()
         if slate != last_slate:
@@ -111,6 +112,49 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 except Exception as exc:  # noqa: BLE001
                     loop_failed = True
                     print(f"[watch] ingest failed: {exc}")
+
+            # 历史比赛日的"僵尸未结算"兜底：slate 翻天后，旧日的比赛已完赛但
+            # 再也不会被 ingest（只拉当日），未结算注单会永远 open。
+            # 每轮把有 open 注单的历史日期补 ingest 一次（有结果时才有写入，
+            # 完赛次日之后 ESPN 比分稳定，一次即可收敛）。
+            try:
+                pending = [
+                    r["slate_date"]
+                    for r in conn.execute(
+                        """
+                        SELECT DISTINCT g.slate_date FROM bets b
+                        JOIN games g ON g.id = b.game_id
+                        WHERE b.result = 'open'
+                          AND g.slate_date < ?
+                          AND g.status != 'STATUS_FINAL'
+                        """,
+                        (slate,),
+                    )
+                ]
+                for day in pending:
+                    if day not in settle_pending:
+                        settle_pending.append(day)
+                for day in list(settle_pending):
+                    try:
+                        day_stats = service.ingest_date(day)
+                        settled_left = conn.execute(
+                            """
+                            SELECT COUNT(*) n FROM bets b
+                            JOIN games g ON g.id = b.game_id
+                            WHERE b.result='open' AND g.slate_date=? AND g.status='STATUS_FINAL'
+                            """,
+                            (day,),
+                        ).fetchone()["n"]
+                        print(f"[watch] ingest pending day {day}: {day_stats} open-but-final left={settled_left}")
+                        if settled_left == 0:
+                            settle_pending.remove(day)
+                        if len(settle_pending) > 5:  # 防止极端情况无限积累
+                            settle_pending.clear()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[watch] ingest pending day {day} failed: {exc}")
+                        break  # 单日失败本轮跳过，下轮重试
+            except Exception as exc:  # noqa: BLE001
+                print(f"[watch] pending-day sweep failed: {exc}")
 
             if with_ingest and slate != last_slate:
                 ratings.train_and_save(conn)
