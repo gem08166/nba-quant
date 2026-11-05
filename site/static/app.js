@@ -196,7 +196,9 @@ function renderGames(games) {
       const score =
         game.home_score !== null && game.away_score !== null
           ? `<span class="score">${game.away_score} : ${game.home_score}</span>`
-          : "";
+          : game.live_home_score != null && game.live_away_score != null && info.cls === "live"
+            ? `<span class="score live-score" title="实时比分">${game.live_away_score} : ${game.live_home_score}</span>`
+            : "";
       const badge = shown
         ? `<div class="edge-badge ${bettable ? "bettable" : ""}">
              ${bettable ? `<span class="chip-bettable">可下注</span>` : ""}
@@ -345,6 +347,31 @@ function edgeSideLabel(edge, game) {
   return edge.side === "over" ? "大分" : "小分";
 }
 
+function betLiveState(bet, game) {
+  // 进行中比赛的注单实时状态（赢盘/输盘/走盘线）；完赛/未开赛返回 null
+  const hs = game.live_home_score ?? game.home_score;
+  const as = game.live_away_score ?? game.away_score;
+  if (hs == null || as == null) return null;
+  if (game.status !== "STATUS_IN_PROGRESS") return null;
+  const margin = hs - as;
+  const total = hs + as;
+  if (bet.market === "moneyline") {
+    return (bet.side === "home") === margin > 0 ? "目前领先" : "目前落后";
+  }
+  if (bet.market === "spread") {
+    const homeLine = bet.side === "home" ? Number(bet.line ?? 0) : -Number(bet.line ?? 0);
+    const diff = margin + homeLine;
+    if (Math.abs(diff) < 1e-9) return "贴盘";
+    return (bet.side === "home") === diff > 0 ? "目前赢盘" : "目前输盘";
+  }
+  if (bet.market === "total") {
+    const line = Number(bet.line ?? 0);
+    if (Math.abs(total - line) < 1e-9) return "贴线";
+    return (bet.side === "over") === total > line ? "目前赢盘" : "目前输盘";
+  }
+  return null;
+}
+
 function renderModal(data) {
   const game = data.game;
   const pred = game.prediction;
@@ -395,7 +422,7 @@ function renderModal(data) {
           const market = edgeMarketLabel(bet.market);
           return `
         <div class="inj">
-          <span>${market} · ${side}${lineText} @ ${fmtPrice(bet.price)} · 注 ${Number(bet.stake).toFixed(1)}</span>
+          <span>${market} · ${side}${lineText} @ ${fmtPrice(bet.price)} · 注 ${Number(bet.stake).toFixed(1)}${betLiveState(bet, game) ? ` · <span class="pill signal">${betLiveState(bet, game)}</span>` : ""}</span>
           <button class="btn small" data-del-bet="${bet.id}" title="撤销未结算注单">撤销</button>
         </div>`;
         })

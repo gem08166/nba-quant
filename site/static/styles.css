@@ -308,6 +308,9 @@ input:focus, select:focus {
 }
 .matchup .at { color: var(--muted); font-weight: 400; margin: 0 6px; }
 .score { color: var(--green); font-weight: 750; margin-left: 8px; }
+.score.live-score { color: var(--red); }
+.score.live-score::before { content: "● "; animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
 .score.live-score { font-size: 20px; }
 
 .meta {

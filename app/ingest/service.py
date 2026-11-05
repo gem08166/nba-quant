@@ -32,8 +32,9 @@ def upsert_game(conn: sqlite3.Connection, game: dict) -> None:
         """
         INSERT INTO games(
             id, season, season_type, slate_date, tipoff, home_id, away_id,
-            home_score, away_score, status, status_detail, venue, updated_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            home_score, away_score, live_home_score, live_away_score,
+            status, status_detail, venue, updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             season=excluded.season,
             season_type=excluded.season_type,
@@ -43,6 +44,8 @@ def upsert_game(conn: sqlite3.Connection, game: dict) -> None:
             away_id=excluded.away_id,
             home_score=COALESCE(excluded.home_score, games.home_score),
             away_score=COALESCE(excluded.away_score, games.away_score),
+            live_home_score=excluded.live_home_score,
+            live_away_score=excluded.live_away_score,
             status=excluded.status,
             status_detail=excluded.status_detail,
             venue=excluded.venue,
@@ -58,6 +61,8 @@ def upsert_game(conn: sqlite3.Connection, game: dict) -> None:
             game["away"]["id"],
             game["home_score"],
             game["away_score"],
+            game.get("live_home_score"),
+            game.get("live_away_score"),
             game["status"],
             game["status_detail"],
             game["venue"],

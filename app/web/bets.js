@@ -66,6 +66,34 @@ function renderMarkets(byMarket) {
     </table></div>`;
 }
 
+function liveBadgeFor(bet) {
+  // 静态模式（手机）：用看板导出的实时比分给未结算注单标注当前状态
+  if (bet.result !== "open" || window.APP_MODE !== "static") return "";
+  const game = ((window.STATIC_PAYLOAD?.board || {}).games || []).find(
+    (x) => String(x.id) === String(bet.game_id)
+  );
+  if (!game) return "";
+  const hs = game.live_home_score ?? game.home_score;
+  const as = game.live_away_score ?? game.away_score;
+  if (hs == null || as == null || game.status !== "STATUS_IN_PROGRESS") return "";
+  const margin = hs - as;
+  const total = hs + as;
+  let text = "";
+  if (bet.market === "moneyline") {
+    text = (bet.side === "home") === margin > 0 ? "目前领先" : "目前落后";
+  } else if (bet.market === "spread") {
+    const homeLine = bet.side === "home" ? Number(bet.line ?? 0) : -Number(bet.line ?? 0);
+    const diff = margin + homeLine;
+    if (Math.abs(diff) < 1e-9) text = "贴盘";
+    else text = (bet.side === "home") === diff > 0 ? "目前赢盘" : "目前输盘";
+  } else if (bet.market === "total") {
+    const line = Number(bet.line ?? 0);
+    if (Math.abs(total - line) < 1e-9) text = "贴线";
+    else text = (bet.side === "over") === total > line ? "目前赢盘" : "目前输盘";
+  }
+  return text ? `<span class="pill signal" title="实时比分 ${as} : ${hs}">${text}</span>` : "";
+}
+
 function renderLedger(bets) {
   const box = document.getElementById("bets-ledger");
   if (!bets.length) {
@@ -98,7 +126,7 @@ function renderLedger(bets) {
               <td>${fmtPrice(bet.price)}</td>
               <td>${Number(bet.stake).toFixed(2)}</td>
               <td>${ev}</td>
-              <td>${resultBadge(bet.result)}</td>
+              <td>${resultBadge(bet.result)}${liveBadgeFor(bet)}</td>
               <td>${profit}</td>
               <td class="${bet.clv != null && bet.clv >= 0 ? "pos" : "neg"}">${clv}</td>
               <td class="${bet.clv_line != null && bet.clv_line >= 0 ? "pos" : "neg"}">${clvLine}</td>

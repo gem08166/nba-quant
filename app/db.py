@@ -184,6 +184,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE odds_snapshots SET last_seen_at = captured_at WHERE last_seen_at IS NULL"
         )
+    # 实时比分独立列：不写 home_score/away_score（训练/回测用 score IS NOT NULL
+    # 判断「有结果」，写进去会把进行中的比赛当成完赛污染数据）
+    games_columns = {row["name"] for row in conn.execute("PRAGMA table_info(games)")}
+    if games_columns and "live_home_score" not in games_columns:
+        conn.execute("ALTER TABLE games ADD COLUMN live_home_score INTEGER")
+    if games_columns and "live_away_score" not in games_columns:
+        conn.execute("ALTER TABLE games ADD COLUMN live_away_score INTEGER")
     conn.commit()
     # Tables added in 0.3 (players / PBP / RAPM). CREATE IF NOT EXISTS is
     # idempotent, but skip the DDL entirely when the tables already exist:

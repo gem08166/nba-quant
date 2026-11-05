@@ -156,13 +156,14 @@ def parse_event(event: dict, slate_date: str) -> dict:
     completed = bool(status.get("completed"))
 
     def score(node: dict) -> int | None:
-        if not completed:
-            return None
         value = node.get("score")
         try:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    home_score_val = score(home)
+    away_score_val = score(away)
 
     season = event.get("season") or {}
     season_type = season.get("type")
@@ -182,8 +183,12 @@ def parse_event(event: dict, slate_date: str) -> dict:
         "tipoff": event.get("date"),
         "home": _team(home["team"]),
         "away": _team(away["team"]),
-        "home_score": score(home),
-        "away_score": score(away),
+        # home_score/away_score 语义 = 完赛比分（训练/回测用 score IS NOT NULL
+        # 判断「有结果」，绝不写进行中的比分）；进行中的比分放 live_* 独立列
+        "home_score": home_score_val if completed else None,
+        "away_score": away_score_val if completed else None,
+        "live_home_score": None if completed else home_score_val,
+        "live_away_score": None if completed else away_score_val,
         "status": status.get("name") or "STATUS_UNKNOWN",
         "status_detail": status.get("detail"),
         "venue": (competition.get("venue") or {}).get("fullName"),

@@ -43,6 +43,8 @@ def _game_payload(row: sqlite3.Row, prediction: dict | None) -> dict:
         "away": {"id": row["away_id"], "abbrev": row["away_abbrev"], "name": row["away_name"]},
         "home_score": row["home_score"],
         "away_score": row["away_score"],
+        "live_home_score": row["live_home_score"],
+        "live_away_score": row["live_away_score"],
         "prediction": None,
         "edges": [],
         "best_edge": None,
