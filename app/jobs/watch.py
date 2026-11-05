@@ -81,11 +81,11 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
         loop_failed = False
         conn = db.connect()
         try:
-            if with_ingest and slate != last_slate:
+            # 每轮都拉：比分/状态/盘口/伤停——这是面板与手机快照的新鲜度来源。
+            # （旧版只在每个比赛日首轮 ingest，导致比赛开始后面板一直是「未开赛」）
+            if with_ingest:
                 try:
                     stats = service.ingest_date(slate)
-                    ratings.train_and_save(conn)
-                    last_slate = slate
                     print(f"[watch] ingest {slate}: {stats}")
                     # 数据健康：正常日子 ESPN 总有比赛；空赛程连续多轮说明接口/解析出问题
                     if not stats.get("games"):
@@ -97,6 +97,10 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 except Exception as exc:  # noqa: BLE001
                     loop_failed = True
                     print(f"[watch] ingest failed: {exc}")
+
+            if with_ingest and slate != last_slate:
+                ratings.train_and_save(conn)
+                last_slate = slate
                 # 每日备份（放在 ingest 成功之后，快照含当天数据）
                 backup_path = backup.backup_database()
                 if backup_path:

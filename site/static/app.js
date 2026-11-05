@@ -227,10 +227,11 @@ function renderGames(games) {
     .join("");
 }
 
-async function load({ repredict = false } = {}) {
+async function load({ repredict = false, silent = false } = {}) {
   const button = $("#refresh");
+  const prevText = button.textContent;
   button.disabled = true;
-  button.textContent = repredict ? "重算中…" : "加载中…";
+  if (!silent) button.textContent = repredict ? "重算中…" : "加载中…";
   try {
     if (repredict && window.APP_MODE === "api") {
       await api("/api/predict", { method: "POST", body: JSON.stringify({ date: state.date }) });
@@ -240,8 +241,10 @@ async function load({ repredict = false } = {}) {
       const source = await window.refreshStaticPayload();
       if (source.endsWith("same")) {
         button.disabled = false;
-        button.textContent = "刷新";
-        toast("数据已是最新（" + (window.STATIC_PAYLOAD?.generated_at || "").replace("T", " ").slice(0, 16) + "）");
+        if (!silent) {
+          button.textContent = "刷新";
+          toast("数据已是最新（" + (window.STATIC_PAYLOAD?.generated_at || "").replace("T", " ").slice(0, 16) + "）");
+        }
         return;
       }
     }
@@ -270,9 +273,19 @@ async function load({ repredict = false } = {}) {
     $("#games").innerHTML = `<div class="empty">加载失败：${esc(error.message)}</div>`;
   } finally {
     button.disabled = false;
-    button.textContent = "刷新";
+    button.textContent = prevText;
   }
 }
+
+// 静态模式（手机）看板自动刷新：比赛进行中状态/信号每分钟自动跟进，
+// 只在页面可见时跑；无新数据时静默（不弹提示）。
+setInterval(() => {
+  if (document.hidden) return;
+  if (window.APP_MODE !== "static") return;
+  const slateTab = document.getElementById("tab-slate");
+  if (!slateTab || slateTab.hidden) return;
+  load({ silent: true });
+}, 60000);
 
 // 当日无比赛时，自动跳到最近有比赛的日期（优先之后的赛程，没有则往回找）。
 // 返回是否发生了跳转。
