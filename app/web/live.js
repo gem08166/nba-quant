@@ -422,16 +422,34 @@ async function jumpToLastFinished() {
   const btn = document.getElementById("post-jump");
   try {
     await detectMode();
+
+    // 静态模式：静态导出里已带 history（最近 N 个完赛日），
+    // 直接用它的日期定位——不必逐个日期去请求 ESPN（手机上一来一回很慢）
+    if (window.APP_MODE === "static") {
+      const hist = window.STATIC_PAYLOAD?.history || {};
+      const days = Object.keys(hist).sort(); // 升序，末尾最近
+      // 优先取 <= 当前日期的最近一个；没有就取最近的
+      let target = [...days].reverse().find((d) => d <= state.date);
+      if (!target) target = days[days.length - 1];
+      if (!target) {
+        toast("静态数据里还没有已结束的比赛");
+        return;
+      }
+      const n = (hist[target] || []).length;
+      state.date = target;
+      const el = document.getElementById("date");
+      if (el) el.value = target;
+      await loadPost(true);
+      toast(`已跳到 ${target}（${n} 场已结束）`);
+      return;
+    }
+
+    // API 模式：按日期列表逐个探（兜底最可靠）
     const dates = await api("/api/dates");
     const list = (dates.dates || []).map((d) => d.date);
-    // 从最近的日期往回找，第一个有完赛的日期就是目标
     for (const day of [...list].reverse()) {
-      if (day >= state.date && day !== state.date) continue;
-      // 静态模式没有 /api/live，要用 ESPN 直连 + 快照数据（espnLive）
-      const data =
-        window.APP_MODE === "static"
-          ? await espnLive(day)
-          : await api(`/api/live?date=${encodeURIComponent(day)}`);
+      if (day > state.date) continue;
+      const data = await api(`/api/live?date=${encodeURIComponent(day)}`);
       const done = (data.games || []).filter((g) => g.state === "post").length;
       if (done > 0) {
         state.date = day;
