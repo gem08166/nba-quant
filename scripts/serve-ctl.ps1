@@ -32,13 +32,13 @@ switch ($Action) {
         $procs = Get-ServeProcesses
         if ($procs) { Write-Output ("already running: " + (Show-Ids $procs)); return }
         if (-not (Test-Path $py)) { throw "pythonw not found: $py" }
-        # pythonw 无控制台：不给 uvicorn 输出句柄会在启动写 stdout 时直接崩，
-        # 必须重定向到文件（文件句柄不随父进程退出而失效）
-        $outLog = Join-Path $root "data\serve.out"
-        $errLog = Join-Path $root "data\serve.err"
-        Start-Process -FilePath $py -ArgumentList "-m", "app.cli", "serve", "--host", "0.0.0.0", "--port", "$port" `
-            -WorkingDirectory $root -WindowStyle Hidden `
-            -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+        # 用 breakaway 方式启动：普通 Start-Process 出来的进程会被宿主
+        # （IDE/终端）的 Job Object 连带杀掉，必须传 CREATE_BREAKAWAY_FROM_JOB。
+        $launcher = Join-Path $root "scripts\launch_detached.py"
+        $realPy = Join-Path $root ".venv\Scripts\python.exe"
+        if (-not (Test-Path $launcher)) { throw "launcher not found: $launcher" }
+        $pidOut = & $realPy $launcher $realPy -m app.cli serve --host 0.0.0.0 --port $port
+        Write-Output ("launched pid=" + $pidOut)
         # pythonw 无控制台，等端口起来才算成功
         $ok = $false
         foreach ($i in 1..10) {

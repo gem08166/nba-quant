@@ -445,3 +445,20 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **代码修复**：`cmd_serve` 改用显式 `uvicorn.Config` + `uvicorn.Server` + `server.install_signal_handlers = lambda: None`——`uvicorn.run()` 在 pythonw（无控制台）下会等 stdin，读到 EOF 后进程自行退出，表现为「服务启动几秒后消失、无崩溃日志」。已复现并验证修复（pythonw 下 30s+ 稳定）。
 - **验证**：DOM 检查通过（4px 直角、Plex Mono 数字、纸白记分卡 `rgb(232,228,217)` 底 + `rgb(23,26,32)` 字、卡片左缘纸白色条、14 张赛后卡 / 28 信号 chip 正常）；**70 passed**。
 - **提交**：`ee89823`（rebase 后）。
+
+### 10.22 2026-11-05 常驻服务的自愈机制（进程被宿主连带杀）
+
+- **症状**：serve / watch 反复"莫名消失"。watch.log 里最后一行是正常的 `betssync`，没有崩溃栈。
+- **根因（三层，逐层排查）**：
+  1. **`uvicorn.run()` 在 pythonw（无控制台）下会等 stdin**，读到 EOF 后进程自行退出 → 改用显式 `uvicorn.Config` + `uvicorn.Server` + `server.install_signal_handlers = lambda: None`。
+  2. **管道重定向**：用 `Start-Process -RedirectStandardOutput` 起的进程，日志管道跟着启动它的 shell 一起断 → 崩溃。必须用独立进程 + 文件重定向。
+  3. **宿主 Job Object（真正的主因）**：IDE / 终端这类宿主会给子进程分配 Job Object 并设 `KILL_ON_JOB_CLOSE`——**宿主 shell 一结束，所有后代进程被连带杀掉**。表现为"我重启了一下服务，过一会儿它自己没了"。普通 `Start-Process` / `schtasks`（需管理员）/ WMI `Win32_Process.Create` 都无法避开。
+- **解法**：`scripts/launch_detached.py` —— 用 ctypes 调 `CreateProcessW`，带 `CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW` 标志，真正脱离宿主 Job。
+  - 注意：不能用 `STARTF_USESTDHANDLES` 传日志句柄——`bInheritHandles=True` 时 Windows 要求所有句柄可继承，Python 默认不可继承，会得到 `ERROR_INVALID_HANDLE(6)`。日志让子进程自己开文件。
+  - 必须用 `python.exe`（不是 pythonw）——pythonw 无控制台时输出句柄无效会直接崩。
+- **守护**：
+  - `scripts/serve_watchdog.py`（60 秒一轮）：探测 serve 进程 + 8000 端口，异常就用 breakaway 重新拉起；日志 `data/serve-watchdog.log`。
+  - `scripts/watch_guard.py`（120 秒一轮）：同样守护 `app.cli watch`；日志 `data/watch-guard.log`。
+  - `scripts/startup.cmd` → Startup 目录 `nbaq-serve.vbs` / `nbaq-watch.vbs`：登录自启时拉起两个守护。
+- **验收**：杀掉 serve → 62 秒内自动恢复（首页 200）；杀掉 watch → 120 秒内自动恢复；日志有完整记录。
+- **另一条线索**：git 推送失败期间积累了一批僵尸 `git-remote-https` / `git-credential-manager` 进程（12:58 起），**锁死了凭据管理器**，导致后续所有 git 操作（包括 python 调 git）都被卡住中断。清理后 push 立即成功。→ 推送卡住时先 `Get-Process git*` 查僵尸。
