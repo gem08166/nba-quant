@@ -1,4 +1,4 @@
-const CACHE = "nbaq-v20";
+const CACHE = "nbaq-v21";
 const ASSETS = [
   "./",
   "static/styles.css",
@@ -11,6 +11,11 @@ const ASSETS = [
   "static/bets.js",
   "static/static.js",
   "static/icon.svg",
+  "static/fonts/plex-mono-400.woff2",
+  "static/fonts/plex-mono-500.woff2",
+  "static/fonts/plex-mono-600.woff2",
+  "static/fonts/plex-cond-600.woff2",
+  "static/fonts/plex-cond-700.woff2",
   "manifest.webmanifest",
 ];
 

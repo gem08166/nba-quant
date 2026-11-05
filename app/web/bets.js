@@ -267,8 +267,8 @@ async function loadBets() {
     } else {
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "#8fa1b9";
-      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#79828f";
+      ctx.font = '12px "Plex Mono", ui-monospace, monospace';
       ctx.textAlign = "center";
       ctx.fillText("暂无已结算注单：结算后这里会出现累计收益曲线", canvas.width / 2, 120);
     }

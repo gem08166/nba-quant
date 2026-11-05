@@ -217,7 +217,7 @@ function postCard(game) {
       </div>
       <div class="matchup">
         ${esc(game.matchup_zh || matchupZh(game.matchup)).replace(" @ ", `<span class="at">@</span>`)}
-        <span class="score live-score">${game.away_score} : ${game.home_score}</span>
+        <span class="score final-score">${game.away_score} : ${game.home_score}</span>
       </div>
       ${quarterScores(game)}
       ${bets.length ? `<div class="bet-row">${bets.map((b) => betChip(b, game)).join("")}</div>` : ""}

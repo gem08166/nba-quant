@@ -1,15 +1,15 @@
 // 研究图表页：原生 canvas，零依赖。
 // 数据源：/api/backtest（月度指标+逐场行）、/api/rapm、/api/trends。
-// 风格与看板一致（深色，绿色主色）。仅在用户切到"研究图表"时加载。
+// 风格与看板一致（记分台冷调石墨）。仅在用户切到"研究图表"时加载。
 
 const COLORS = {
-  text: "#e8eef7",
-  muted: "#8fa1b9",
-  grid: "#243247",
-  green: "#4ade80",
-  red: "#f87171",
-  blue: "#60a5fa",
-  amber: "#fbbf24",
+  text: "#dfe3ea",
+  muted: "#79828f",
+  grid: "#222730",
+  green: "#46b95c",
+  red: "#e0574f",
+  blue: "#4b8fd6",
+  amber: "#e8a33d",
 };
 
 let researchLoaded = false;
@@ -25,7 +25,7 @@ function setupCanvas(canvas) {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  ctx.font = "11px sans-serif";
+  ctx.font = '11px "Plex Mono", ui-monospace, monospace';
   return { ctx, width, height };
 }
 
@@ -59,7 +59,7 @@ function drawBars(canvas, labels, values, { line = null, lineColor = COLORS.blue
     const v = yMin + ((yMax - yMin) * i) / 4;
     ctx.fillText(v.toFixed(Math.abs(v) < 10 ? 1 : 0) + unit, pad.l - 6, y(v) + 4);
     if (i > 0) {
-      ctx.strokeStyle = "#1b2636";
+      ctx.strokeStyle = "#222730";
       ctx.beginPath();
       ctx.moveTo(pad.l, y(v));
       ctx.lineTo(width - pad.r, y(v));
@@ -125,7 +125,7 @@ function drawLineChart(canvas, labels, series, { min, max, unit = "" } = {}) {
     const v = yMin + ((yMax - yMin) * i) / 4;
     ctx.fillText(v.toFixed(0) + unit, pad.l - 6, y(v) + 4);
     if (i > 0) {
-      ctx.strokeStyle = "#1b2636";
+      ctx.strokeStyle = "#222730";
       ctx.beginPath();
       ctx.moveTo(pad.l, y(v));
       ctx.lineTo(width - pad.r, y(v));
@@ -183,7 +183,7 @@ function drawRapmChart(canvas, players) {
     ctx.fillRect(Math.min(x0, x1), cy - rowH * 0.32, Math.abs(x1 - x0) || 2, rowH * 0.64);
     ctx.fillStyle = COLORS.text;
     ctx.textAlign = "right";
-    ctx.font = "11px sans-serif";
+    ctx.font = '11px "Plex Mono", ui-monospace, monospace';
     const label = p.name_zh || p.name;
     ctx.fillText(label.length > 12 ? label.slice(0, 11) + "…" : label, pad.l - 8, cy + 4);
     ctx.textAlign = p.rating >= 0 ? "left" : "right";
@@ -271,10 +271,10 @@ function drawCalibration(canvas, buckets) {
     ctx.arc(x(b.mid), y(b.winRate), 4, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = COLORS.muted;
-    ctx.font = "10px sans-serif";
+    ctx.font = '10px "Plex Mono", ui-monospace, monospace';
     ctx.textAlign = "center";
     ctx.fillText(`n=${b.n}`, x(b.mid), y(b.winRate) - 10);
-    ctx.font = "11px sans-serif";
+    ctx.font = '11px "Plex Mono", ui-monospace, monospace';
   });
 }
 

@@ -278,7 +278,7 @@ function renderGames(games, betsByGame = {}) {
         : "盘口待录入";
       const score =
         game.home_score !== null && game.away_score !== null
-          ? `<span class="score">${game.away_score} : ${game.home_score}</span>`
+          ? `<span class="score final-score">${game.away_score} : ${game.home_score}</span>`
           : game.live_home_score != null && game.live_away_score != null && info.cls === "live"
             ? `<span class="score live-score" title="实时比分">${game.live_away_score} : ${game.live_home_score}</span>`
             : "";

@@ -285,9 +285,28 @@ def cmd_holdout(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
+    """启动 HTTP 服务。
+
+    无控制台环境（pythonw.exe 常驻）下不能用 uvicorn.run()：它会注册
+    控制台信号处理并等待 stdin，pythonw 没有 stdin → 读到 EOF 后进程
+    自行退出（表现为服务"启动几秒后消失"，且没有崩溃日志）。
+    改为显式构造 Server 并把 lifespan 关掉，不依赖任何控制台句柄。
+    """
     import uvicorn
 
-    uvicorn.run("app.main:app", host=args.host, port=args.port, reload=args.reload)
+    config = uvicorn.Config(
+        "app.main:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        log_level="info",
+        # 不装 stdin/stdout 监听：常驻进程不需要，且 pythonw 下会读到 EOF
+        lifespan="on",
+    )
+    server = uvicorn.Server(config)
+    # 常驻模式：忽略 Ctrl+C 之外的中断（无控制台时收到信号也不退出）
+    server.install_signal_handlers = lambda: None
+    server.run()
 
 
 def cmd_status(_: argparse.Namespace) -> None:
