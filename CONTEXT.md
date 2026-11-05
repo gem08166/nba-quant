@@ -414,3 +414,34 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **新增运维**：`scripts/serve-ctl.ps1`（serve 常驻控制 start/stop/status/restart）+ Startup 目录 `nbaq-serve.vbs` 开机自启。
   - **坑**：`pythonw.exe` 直接 Start-Process 且不重定向输出时，uvicorn 启动写 stdout 会因无效句柄崩溃（静默退出）；必须 `-RedirectStandardOutput/-RedirectStandardError` 到文件。
   - **坑**：用 `-RedirectStandardOutput` 管道启动的 serve 会随启动它的 shell 进程一起被杀（管道断裂 → 崩溃）。所以 serve 必须用 `serve-ctl.ps1` 的独立进程 + 文件重定向方式启动。
+
+### 10.21 2026-11-05 视觉重构：记分台设计系统
+
+- **设计定位**：不做"网页仪表盘"，做**NBA 记分台（scorer's table）**——冷调石墨控制台 + 纸白记分卡。主角是数字（分差/赔率/EV/MAE），视觉重量压在数字上。
+- **色彩**（放弃近黑+酸绿）：
+  | 角色 | 色值 |
+  |---|---|
+  | 记分台底 | `#101319`（冷调石墨，非纯黑） |
+  | 面板 | `#191d26` |
+  | 发丝界线 | `#2b313d` |
+  | **记分纸** | `#e8e4d9`（暖白）+ 墨 `#171a20` |
+  | 琥珀 | `#e8a33d`（进行中/观察） |
+  | 记号笔绿 | `#46b95c`（赢/正值/可下注） |
+  | 记录红 | `#e0574f`（输/负值/实时比分） |
+  | 冷蓝 | `#4b8fd6`（引用数据：ESPN/盘口/历史信号） |
+- **字体**（关键决策）：数字是这个软件的主要视觉纹理，必须有性格。
+  - **数字/比分/赔率/图表刻度**：`IBM Plex Mono`（自托管 woff2，400/500/600）
+  - **队名/标题**：`IBM Plex Sans Condensed`（600/700）——NBA 记分牌上球队名的排版逻辑
+  - **正文中文**：系统栈（PingFang SC / 微软雅黑 / Noto Sans SC）
+  - 字体文件放在 `app/web/fonts/`，`@font-face` + `font-display: swap`；已加入 `sw.js` 缓存清单（`nbaq-v21`）保证离线可用
+- **布局**：
+  - 卡片从「圆角胶囊 + 同款软阴影」改为**记分卡纸片**：4px 直角、发丝边、左缘 2px 状态色条（绿=信号 / 琥珀=进行中 / 纸白=已结束）
+  - 统计条从「一堆独立圆角卡片」改为**控制台读数条**：单边框 + 内部发丝分隔 + 无 gap
+  - 导航从「胶囊分段控件」改为**下划线分区**（active 绿下划线）
+  - 表格/统计读数用 Plex Mono 等宽，成排数字自动对齐
+- **记忆点（唯一）**：**纸白记分卡**——已结束比赛的最终比分渲染成暖白纸片（`#e8e4d9` 底 + 深墨字 + 细竖纹），像从记分台裁下来的一张纸。全站其他元素保持克制。
+- **去掉的默认套路**：所有 `text-transform: uppercase` 眉标、全局 radial 渐变、卡片渐变底、同款圆角、软阴影、emoji 图标（🏁 改用细线分隔）。
+- **图表配色**同步到新调色板（`research.js` COLORS + canvas 字体改 Plex Mono）。
+- **代码修复**：`cmd_serve` 改用显式 `uvicorn.Config` + `uvicorn.Server` + `server.install_signal_handlers = lambda: None`——`uvicorn.run()` 在 pythonw（无控制台）下会等 stdin，读到 EOF 后进程自行退出，表现为「服务启动几秒后消失、无崩溃日志」。已复现并验证修复（pythonw 下 30s+ 稳定）。
+- **验证**：DOM 检查通过（4px 直角、Plex Mono 数字、纸白记分卡 `rgb(232,228,217)` 底 + `rgb(23,26,32)` 字、卡片左缘纸白色条、14 张赛后卡 / 28 信号 chip 正常）；**70 passed**。
+- **提交**：`ee89823`（rebase 后）。
