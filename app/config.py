@@ -76,6 +76,8 @@ TELEGRAM_CHAT_ID = os.getenv("NBAQ_TG_CHAT_ID", "")
 
 # Background watch loop
 WATCH_INTERVAL = float(os.getenv("NBAQ_WATCH_INTERVAL", "300"))
+# 有比赛进行中时的采样间隔：赛中价格/胜率变化快，15 分钟一个点不够做校准
+LIVE_INTERVAL = float(os.getenv("NBAQ_WATCH_LIVE_INTERVAL", "120"))
 
 # The Odds API（多书源共识，按量计费省着用）
 THE_ODDS_API_KEY = os.getenv("NBAQ_ODDS_API_KEY", "")

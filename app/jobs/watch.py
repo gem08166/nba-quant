@@ -5,7 +5,7 @@ import time
 from datetime import date as date_cls, timedelta
 
 from .. import db
-from ..config import WATCH_INTERVAL
+from ..config import LIVE_INTERVAL, WATCH_INTERVAL
 from ..dates import current_slate_date
 from ..ingest import service
 from ..models import rapm, ratings
@@ -89,11 +89,13 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     loop_failures = 0
     empty_slate_loops = 0
     settle_pending: list[str] = []  # 还有未结算注单的历史比赛日
+    was_live = False
     while True:
         slate = current_slate_date()
         if slate != last_slate:
             print(f"[watch] slate date: {slate}")
         loop_failed = False
+        live_now = False
         conn = db.connect()
         try:
             # 每轮都拉：比分/状态/盘口/伤停——这是面板与手机快照的新鲜度来源。
@@ -167,6 +169,18 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                         print(f"[watch] live_wp: {wp_stats}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[watch] live_wp skipped: {exc}")
+
+            # 有比赛进行中时切到更短的间隔：15 分钟一个点太少，一场比赛只有
+            # 6~8 个样本，做不了校准。赛中改为 LIVE_INTERVAL（默认 120s）。
+            try:
+                live_now = bool(
+                    conn.execute(
+                        "SELECT 1 FROM games WHERE status IN "
+                        "('STATUS_IN_PROGRESS','STATUS_HALFTIME') LIMIT 1"
+                    ).fetchone()
+                )
+            except Exception:  # noqa: BLE001
+                live_now = False
 
             # 滚球盘口快照（研究模块）：原样保存 market JSON，先不解释口径。
             if with_ingest:
@@ -292,4 +306,11 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
 
         if once:
             break
-        time.sleep(interval)
+        # 赛中加速采样；比赛结束后回到常规间隔
+        sleep_for = LIVE_INTERVAL if (with_ingest and live_now) else interval
+        if live_now != was_live:
+            print(
+                f"[watch] {'live detected → ' if live_now else 'no live games → '}interval {sleep_for:.0f}s"
+            )
+            was_live = live_now
+        time.sleep(sleep_for)
