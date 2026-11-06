@@ -29,19 +29,18 @@ fi
 "$PY" -m app.cli init
 "$PY" -m app.cli status
 
-echo "[4/5] 安装定时任务（每 2 分钟看门狗 / 每 30 分钟轻量刷新 / 每天两次全量）"
-chmod +x "$ROOT"/deploy/nbaq "$ROOT"/deploy/watchdog.sh "$ROOT"/deploy/refresh.sh
+echo "[4/5] 安装定时任务（cron 只保留兜底：开机启动 + 看门狗；发布/训练交给 guard）"
+chmod +x "$ROOT"/deploy/nbaq "$ROOT"/deploy/watchdog.sh "$ROOT"/deploy/refresh.sh \
+         "$ROOT"/deploy/publish.sh "$ROOT"/deploy/gitsync.sh "$ROOT"/deploy/guard.sh
 NEW_CRON=$(crontab -l 2>/dev/null | grep -v '# nba-quant' || true)
 NEW_CRON="${NEW_CRON}
 @reboot $ROOT/deploy/nbaq start >/dev/null 2>&1 # nba-quant
-*/2 * * * * $ROOT/deploy/watchdog.sh >/dev/null 2>&1 # nba-quant
-*/30 * * * * $ROOT/deploy/refresh.sh live >/dev/null 2>&1 # nba-quant
-30 10,18 * * * $ROOT/deploy/refresh.sh full >/dev/null 2>&1 # nba-quant"
+*/2 * * * * $ROOT/deploy/watchdog.sh >/dev/null 2>&1 # nba-quant"
 printf '%s\n' "$NEW_CRON" | crontab -
 echo "  当前定时任务："
 crontab -l | grep '# nba-quant' | sed 's/^/    /'
 
-echo "[5/5] 启动服务"
+echo "[5/5] 启动服务（guard + watch + serve 三个守护进程）"
 "$ROOT/deploy/nbaq" restart
 
 echo ""

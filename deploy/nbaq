@@ -1,93 +1,176 @@
 #!/usr/bin/env bash
 # nbaq —— nba-quant 常驻服务控制脚本（Linux / 云主机）
-# 用法：deploy/nbaq {start|stop|restart|status|logs}
+#   两个守护进程：
+#     serve  FastAPI/面板（0.0.0.0:8000）
+#     watch  常驻刷新循环（默认 300s 一轮，赛中有比赛时自动切 120s）
+# 用法：deploy/nbaq {start|stop|restart|status} [serve|watch]
+#       deploy/nbaq logs [serve|watch] [n]
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PY="$ROOT/.venv/bin/python"
 RUN_DIR="$ROOT/data/run"
 LOG_DIR="$ROOT/data/log"
-PIDFILE="$RUN_DIR/serve.pid"
-LOG="$LOG_DIR/serve.log"
+SERVE_PID="$RUN_DIR/serve.pid"
+WATCH_PID="$RUN_DIR/watch.pid"
+GUARD_PID="$RUN_DIR/guard.pid"
+SERVE_LOG="$LOG_DIR/serve.log"
+WATCH_LOG="$LOG_DIR/watch.log"
+GUARD_LOG="$LOG_DIR/guard.log"
 HOST="${NBAQ_HOST:-0.0.0.0}"
 PORT="${NBAQ_PORT:-8000}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
-running() {
-  [[ -f "$PIDFILE" ]] || return 1
+alive() {
+  [[ -f "$1" ]] || return 1
   local pid
-  pid=$(cat "$PIDFILE" 2>/dev/null || true)
+  pid=$(cat "$1" 2>/dev/null || true)
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
 
 wait_ready() {
   for _ in $(seq 1 30); do
-    if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/api/health" 2>/dev/null; then
-      return 0
-    fi
+    curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/api/health" 2>/dev/null && return 0
     sleep 1
   done
   return 1
 }
 
-start() {
-  if running; then
-    echo "already running (pid $(cat "$PIDFILE"))"
+start_serve() {
+  if alive "$SERVE_PID"; then
+    echo "serve already running (pid $(cat "$SERVE_PID"))"
     return 0
   fi
   cd "$ROOT"
   setsid nohup "$PY" -m app.cli serve --host "$HOST" --port "$PORT" \
-    >> "$LOG" 2>&1 < /dev/null &
-  echo $! > "$PIDFILE"
+    >> "$SERVE_LOG" 2>&1 < /dev/null &
+  echo $! > "$SERVE_PID"
   if wait_ready; then
-    echo "started pid $(cat "$PIDFILE") on ${HOST}:${PORT}"
+    echo "serve started pid $(cat "$SERVE_PID") on ${HOST}:${PORT}"
   else
-    echo "start failed, see $LOG" >&2
-    tail -n 20 "$LOG" >&2 || true
+    echo "serve start failed, see $SERVE_LOG" >&2
+    tail -n 20 "$SERVE_LOG" >&2 || true
     return 1
   fi
 }
 
-stop() {
-  if ! running; then
-    echo "not running"
-    rm -f "$PIDFILE"
+start_watch() {
+  if alive "$WATCH_PID"; then
+    echo "watch already running (pid $(cat "$WATCH_PID"))"
+    return 0
+  fi
+  cd "$ROOT"
+  # watch 自己用 Tee 写 data/watch.log；这里的 boot 日志只兜住 import 阶段的报错
+  setsid nohup "$PY" -m app.cli watch \
+    >> "$WATCH_LOG.boot" 2>&1 < /dev/null &
+  echo $! > "$WATCH_PID"
+  sleep 3
+  if alive "$WATCH_PID"; then
+    echo "watch started pid $(cat "$WATCH_PID") (interval ${NBAQ_WATCH_INTERVAL:-300}s)"
+  else
+    echo "watch start failed, see $WATCH_LOG.boot" >&2
+    tail -n 20 "$WATCH_LOG.boot" >&2 || true
+    return 1
+  fi
+}
+
+start_guard() {
+  if alive "$GUARD_PID"; then
+    echo "guard already running (pid $(cat "$GUARD_PID"))"
+    return 0
+  fi
+  cd "$ROOT"
+  setsid nohup bash "$ROOT/deploy/guard.sh" >> "$GUARD_LOG" 2>&1 < /dev/null &
+  echo $! > "$GUARD_PID"
+  sleep 2
+  if alive "$GUARD_PID"; then
+    echo "guard started pid $(cat "$GUARD_PID")"
+  else
+    echo "guard start failed, see $GUARD_LOG" >&2
+    tail -n 20 "$GUARD_LOG" >&2 || true
+    return 1
+  fi
+}
+
+stop_one() {
+  local name="$1" pidfile="$2"
+  if ! alive "$pidfile"; then
+    echo "$name not running"
+    rm -f "$pidfile"
     return 0
   fi
   local pid
-  pid=$(cat "$PIDFILE")
+  pid=$(cat "$pidfile")
   kill -TERM "$pid" 2>/dev/null || true
   for _ in $(seq 1 10); do
     kill -0 "$pid" 2>/dev/null || break
     sleep 1
   done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -KILL "$pid" 2>/dev/null || true
+  kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+  rm -f "$pidfile"
+  echo "$name stopped"
+}
+
+status_one() {
+  local name="$1" pidfile="$2"
+  if alive "$pidfile"; then
+    echo "$name running pid=$(cat "$pidfile")"
+    return 0
   fi
-  rm -f "$PIDFILE"
-  echo "stopped"
+  echo "$name stopped"
+  return 1
 }
 
 status() {
-  if running; then
-    local pid
-    pid=$(cat "$PIDFILE")
-    echo "running pid=$pid port=$PORT"
-    curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" || echo "(health check failed)"
+  local rc=0
+  status_one serve "$SERVE_PID" || rc=1
+  if alive "$SERVE_PID"; then
+    curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" || { echo "(health check failed)"; rc=1; }
     echo
-  else
-    echo "stopped"
-    return 1
   fi
+  status_one watch "$WATCH_PID" || rc=1
+  if alive "$WATCH_PID"; then
+    local tick
+    tick=$(tail -n 40 "$ROOT/data/watch.log" 2>/dev/null | grep -E '^\[watch\]' | tail -n 1 | cut -c1-90 || true)
+    [[ -n "$tick" ]] && echo "  last tick: $tick"
+  fi
+  status_one guard "$GUARD_PID" || rc=1
+  return $rc
 }
 
+target="${2:-all}"
+
 case "${1:-status}" in
-  start) start ;;
-  stop) stop ;;
-  restart) stop; start ;;
+  start)
+    if [[ "$target" == "all" || "$target" == "guard" ]]; then start_guard || true; fi
+    if [[ "$target" == "all" || "$target" == "watch" ]]; then start_watch || true; fi
+    if [[ "$target" == "all" || "$target" == "serve" ]]; then start_serve || true; fi
+    ;;
+  stop)
+    # guard 先停，否则它会把刚停掉的进程又拉起来
+    if [[ "$target" == "all" || "$target" == "guard" ]]; then stop_one guard "$GUARD_PID"; fi
+    if [[ "$target" == "all" || "$target" == "watch" ]]; then stop_one watch "$WATCH_PID"; fi
+    if [[ "$target" == "all" || "$target" == "serve" ]]; then stop_one serve "$SERVE_PID"; fi
+    ;;
+  restart)
+    if [[ "$target" == "all" || "$target" == "guard" ]]; then
+      stop_one guard "$GUARD_PID"; stop_one watch "$WATCH_PID"; stop_one serve "$SERVE_PID"
+      start_guard; start_watch; start_serve
+    elif [[ "$target" == "watch" ]]; then
+      stop_one watch "$WATCH_PID"; start_watch
+    elif [[ "$target" == "serve" ]]; then
+      stop_one serve "$SERVE_PID"; start_serve
+    fi
+    ;;
   status) status ;;
-  logs) tail -n "${2:-80}" "$LOG" ;;
-  *) echo "usage: $0 {start|stop|restart|status|logs}" >&2; exit 2 ;;
+  logs)
+    case "${2:-serve}" in
+      watch) tail -n "${3:-80}" "$ROOT/data/watch.log" ;;
+      guard) tail -n "${3:-80}" "$GUARD_LOG" ;;
+      *) tail -n "${2:-80}" "$SERVE_LOG" ;;
+    esac
+    ;;
+  *) echo "usage: $0 {start|stop|restart|status} [serve|watch|guard] | logs [serve|watch|guard] [n]" >&2; exit 2 ;;
 esac

@@ -6,31 +6,44 @@
 
 ## 架构
 
+三个常驻进程，由 `deploy/nbaq` 统一管：
+
 ```
-cron（每 2 分钟） ──> deploy/watchdog.sh ──> 服务挂了就 deploy/nbaq start
-cron（每 30 分钟）──> deploy/refresh.sh live ── watch --once：抓价 + 收盘快照 + 结算 + 预测
-                                                  └─> deploy/publish.sh（gh-pages 单 commit force push）
-cron（每天 10:30/18:30）──> deploy/refresh.sh full ── 全量 ingest + 第二书源 + 训练 + 预测 + 结算
-                                                  └─> deploy/publish.sh --with-db（同时把 nba.db 快照推 data 分支）
-uvicorn 常驻 0.0.0.0:8000（SQLite: data/nba.db）
+guard（每 60s 巡检，自带调度）
+  ├─ serve 挂了？watch 挂了？──> deploy/nbaq start 拉起
+  ├─ 每 30 分钟 ──> deploy/publish.sh（gh-pages 单 commit force push）
+  └─ 每 12 小时 ──> deploy/refresh.sh full（全量 ingest + 第二书源 + 训练 + 预测 + 结算）
+                                                └─> publish.sh --with-db（nba.db 快照推 data 分支）
+
+watch（常驻刷新循环）
+  └─ 默认 300s 一轮；检测到有比赛进行中自动切 120s
+     每轮：ingest（比分/状态/盘口/伤停）+ 收盘快照 + 结算 + 重算预测 + 推送 bettable 信号
+
+serve（uvicorn 0.0.0.0:8000，SQLite data/nba.db）
+
 GitHub Pages（legacy build）← gh-pages 分支 ← 云主机推送
 ```
 
-- 进程守护：`serve.pid` + 端口健康检查（`/api/health`），连续失败自动重拉。
-- 刷新互斥：`flock` 保证定时任务不会叠加跑，避免 SQLite 写冲突。
-- 日志：`data/log/serve.log`、`refresh.log`、`publish.log`、`watchdog.log`。
+cron 只留两条兜底（`@reboot` 启动、每 2 分钟看门狗），真正的调度在 `guard` 里——因为这台容器上 cron 守护进程本身会被回收。
+
+- 进程守护：`nbaq status` 同时校验 serve（pid + `/api/health`）和 watch/guard（pid）。
+- 刷新互斥：`flock` 保证发布、刷新不会叠加跑，避免 SQLite 写冲突。
+- 日志：`data/log/serve.log`、`guard.log`、`refresh.log`、`publish.log`、`watchdog.log`，以及 `data/watch.log`（watch 每轮明细，超 10MB 自动滚动）。
 
 ## 常用命令
 
 ```bash
-deploy/nbaq start        # 启动
-deploy/nbaq stop         # 停止
-deploy/nbaq restart      # 重启
-deploy/nbaq status       # 看进程 + 健康检查
-deploy/nbaq logs 100     # 看最近 100 行日志
+deploy/nbaq start            # 启动 guard + watch + serve
+deploy/nbaq stop             # 停三个（先停 guard，避免它把别人拉起来）
+deploy/nbaq restart          # 全重启
+deploy/nbaq status           # 三个进程 + 健康检查 + 最近一轮 watch 日志
+deploy/nbaq restart watch    # 只重启 watch（改了预测逻辑后用这个）
+deploy/nbaq logs watch 200   # 看 watch 最近 200 行
+deploy/nbaq logs guard       # 看调度器日志
 
-deploy/refresh.sh full   # 手动全量刷新
-deploy/refresh.sh live   # 手动轻量刷新
+deploy/refresh.sh full       # 手动全量刷新（含训练）
+deploy/refresh.sh live       # 手动跑一轮 watch --once
+deploy/publish.sh            # 手动发布静态站
 ```
 
 ## 安装 / 重装
@@ -87,7 +100,7 @@ sudo -n service cron start && bash deploy/install.sh
 |---|---|
 | Pages 发布源 | `gh-pages` 分支（legacy build，根目录） |
 | `gh-pages` 内容 | `site/` 导出产物，每次 force-push 单 commit，历史不增长 |
-| 发布频率 | 每轮刷新后自动发布（每 30 分钟一次；全量轮附带 DB 快照） |
+| 发布频率 | guard 每 30 分钟一次（全量刷新后额外带 DB 快照）；Pages 构建上限 10 次/小时，2 次/小时安全 |
 | `data` 分支 | 云主机推送的 `nba.db` 快照，供灾备/回滚 |
 | 已停用的 Actions | `refresh-and-deploy`、`odds-refresh-light`（state=disabled_manually） |
 
@@ -117,7 +130,9 @@ curl -X PUT -H "Authorization: token $TOKEN" \
 | 现象 | 处理 |
 |---|---|
 | 页面打不开 | `deploy/nbaq status`；再看 `data/log/serve.log` 尾部 |
-| 数据不更新 | `tail data/log/refresh.log`；多半是数据源 403/429（好体育、Hoops 限流），ESPN 仍可用 |
+| 数据不更新 | `deploy/nbaq logs watch 60`；再看 `tail data/log/refresh.log`，多半是数据源 403/429（好体育、Hoops 限流），ESPN 仍可用 |
+| 三个进程都掉了 | `tail data/log/guard.log`；guard 自己挂了就 `deploy/nbaq restart guard` |
+| 发布停了 | `tail data/log/guard.log`、`data/log/publish.log`；403 = token 权限/过期 |
 | 进程反复重启 | 看 `data/log/watchdog.log` 与 `serve.log`，通常是端口占用或数据库被锁 |
 | 端口冲突 | 改 `.env` 的 `NBAQ_PORT`，再 `deploy/nbaq restart` |
 | Pages 没更新 | `tail data/log/publish.log`；403 = token 权限不足，`gh-pages` 有没有新 commit 也可用 API 查 |

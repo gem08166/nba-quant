@@ -46,7 +46,9 @@ cd "$ROOT"
   echo "----- $(date '+%F %T') publish -----"
   if [[ "$MODE" == "full" ]]; then
     "$ROOT/deploy/publish.sh" --with-db || echo "publish failed"
+    touch "$ROOT/data/run/last_publish"
   else
     "$ROOT/deploy/publish.sh" || echo "publish failed"
+    touch "$ROOT/data/run/last_publish"
   fi
 } >> "$LOG" 2>&1
