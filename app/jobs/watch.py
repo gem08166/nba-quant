@@ -52,6 +52,39 @@ class Tee:
             pass
 
 
+def has_live_games(conn, slate: str) -> bool:
+    """当前 slate 是否有进行中的比赛。
+
+    只看当天：历史日期卡在 IN_PROGRESS 的僵尸场次不该把采样间隔永久压在
+    LIVE_INTERVAL（实测 11-04 有一场 116-114 卡了一整天）。
+    """
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM games WHERE slate_date = ? AND status IN "
+            "('STATUS_IN_PROGRESS','STATUS_HALFTIME') LIMIT 1",
+            (slate,),
+        ).fetchone()
+    )
+
+
+def stale_slate(conn, slate: str, days: int = 7) -> str | None:
+    """最近 N 天内最早一个仍有未完赛比赛的 slate（用于修僵尸状态）。
+
+    返回 None 表示没有需要补拉的日期。
+    """
+    row = conn.execute(
+        """
+        SELECT MIN(slate_date) d FROM games
+        WHERE slate_date < ?
+          AND slate_date >= date(?, ?)
+          AND COALESCE(status, '') NOT IN
+              ('STATUS_FINAL', 'STATUS_POSTPONED', 'STATUS_CANCELED')
+        """,
+        (slate, slate, f"-{days} day"),
+    ).fetchone()
+    return row["d"] if row and row["d"] else None
+
+
 def _alert(text: str) -> None:
     """推一条告警（Telegram/ntfy），同时打印。"""
     print(f"[watch] ALERT: {text}")
@@ -90,6 +123,7 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     empty_slate_loops = 0
     settle_pending: list[str] = []  # 还有未结算注单的历史比赛日
     was_live = False
+    last_repair_at = 0.0
     while True:
         slate = current_slate_date()
         if slate != last_slate:
@@ -158,6 +192,18 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
             except Exception as exc:  # noqa: BLE001
                 print(f"[watch] pending-day sweep failed: {exc}")
 
+            # 历史「僵尸状态」修复：比赛跨过 slate 后没人再拉，状态会永远停在
+            # IN_PROGRESS（实测 11-04 有一场 116-114 卡了一整天，把采样拖在 120s）。
+            # 每小时最多补拉一天，逐步收敛；没有僵尸日就完全跳过。
+            try:
+                stale_day = stale_slate(conn, slate)
+                if stale_day and (time.time() - last_repair_at) > 3600:
+                    repair = service.ingest_date(stale_day)
+                    last_repair_at = time.time()
+                    print(f"[watch] repair stale slate {stale_day}: {repair}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[watch] stale slate repair failed: {exc}")
+
             # 赛中胜率轨迹（研究模块）：每轮给进行中的比赛记一行。
             # 只记录、不产生信号；未来用于与滚球盘口做校准对照。
             if with_ingest:
@@ -173,12 +219,7 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
             # 有比赛进行中时切到更短的间隔：15 分钟一个点太少，一场比赛只有
             # 6~8 个样本，做不了校准。赛中改为 LIVE_INTERVAL（默认 120s）。
             try:
-                live_now = bool(
-                    conn.execute(
-                        "SELECT 1 FROM games WHERE status IN "
-                        "('STATUS_IN_PROGRESS','STATUS_HALFTIME') LIMIT 1"
-                    ).fetchone()
-                )
+                live_now = has_live_games(conn, slate)
             except Exception:  # noqa: BLE001
                 live_now = False
 
@@ -287,10 +328,18 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
 
             try:
                 predict_date(slate)
-                items = notify.collect_signal_items(conn, slate)
+                # 只推通过可下注阀门（bettable）的信号：signal 只代表模型算出
+                # 正 EV，bettable 才代表价格真实可拿、共识够深。
+                all_items = notify.collect_signal_items(conn, slate, bettable_only=False)
+                items = [(game, edge) for game, edge in all_items if edge.get("bettable")]
+                if len(items) != len(all_items):
+                    print(
+                        f"[watch] notify: {len(all_items)} 个信号，"
+                        f"{len(items)} 个通过可下注阀门（其余仅观察，不推送）"
+                    )
                 sent = notify.send_new_signals(conn, items)
                 if sent:
-                    print(f"[watch] pushed {sent} new signal(s)")
+                    print(f"[watch] pushed {sent} bettable signal(s)")
             except Exception as exc:  # noqa: BLE001
                 print(f"[watch] predict/notify failed: {exc}")
                 loop_failed = True

@@ -726,3 +726,23 @@ README.md              # 用户文档（含第 0 节验证结论）
   - `drawMultiLineChart()` 支持 `unit` 参数（归一化时 y 轴标 `u`），并按数值跨度自动用 1/2 位小数；x 轴改用完整日期排序、显示时再截断，修掉跨年排序隐患。
   - 静态模式：`static.js::lbAllAnalysis()` 也返回 `curves` / `curves_unit`，`window.LB` 新增 `kind` / `source`；`localbets.js::lbCurve(bets, normalize)` 同步支持归一化。
 - **实测**：金额口径 真实 −4.05 / 模拟 −1.31；归一化后 真实 **−3.38u** / 模拟 **−1.31u**（模拟全是 1 单位注，所以两种口径几乎相同，验证了换算正确）。动态与静态模式切换均正常、无控制台错误。**108 passed**。
+
+### 10.41 2026-11-06 ntfy 只推送通过可下注阀门的信号
+
+- **旧行为**：`collect_signal_items()` 只检查 `edge["signal"]`，于是软书价、共识不足、分歧闸门拦下、同场相关降级的**观察项**也会被推成"正 EV 信号"。
+- **新行为**：默认 `bettable_only=True`，必须同时满足 `signal`（模型算出正 EV）与 `bettable`（价格真实可拿 + 共识够深）。
+  - 推送标题改为「N 个可下注信号」；文案首行加 `✅ 可下注`，并附最优价书源 `（DraftKings）`。
+  - `watch` 每轮打印 `notify: X 个信号，Y 个通过可下注阀门（其余仅观察，不推送）`，被压下的数量可见。
+  - 需要统计观察项时传 `bettable_only=False`（CLI 默认仍只推可下注）。
+- **实测（11-06）**：7 个 signal、**0 个 bettable** → ntfy 静默。原因全是「共识书源数 < 3」（今天只有 DraftKings + hao-tiyu 两个源）。11-04 有 271 个 bettable（多书源日），说明阀门本身可放行，不是写死不放。
+- **取舍**：宁可少推不可假推。想让推送更活跃可调 `NBAQ_BETTABLE_MIN_BOOKS=2`（默认 3），但会重新引入浅共识假 edge。
+- **测试**：新增 `tests/test_notify_bettable.py`（只收 bettable / 原始模式含观察项 / 文案含可下注与书源 / 去重幂等）。**112 passed**。
+
+### 10.42 2026-11-06 僵尸状态修复 + 采样间隔只看当日
+
+- **发现**：11-04 有一场比赛（`401909935`，116-114）跨 slate 后没人再拉，状态永远停在 `STATUS_IN_PROGRESS`。watch 的「有比赛进行中」查询没有限定日期，于是采样间隔被永久压在 120s，全天高频刷接口。
+- **修复**：
+  - 新增 `watch.has_live_games(conn, slate)`，只查**当天**是否进行中。
+  - 新增 `watch.stale_slate(conn, slate, days=7)`：取 7 天内最早一个仍有未完赛比赛的日期；watch 每小时最多补拉一天（`service.ingest_date`），逐步把僵尸状态收敛掉。没有僵尸日则完全不发请求。
+- **实测**：重启后立刻 `repair stale slate 2026-11-04`，该场已变为完赛；全库不再有 `IN_PROGRESS` 行，采样回到 900s（今晚开赛再自动切 120s）。
+- **测试**：`test_watch_pending.py` 新增 `has_live_games` 跨日期忽略、`stale_slate` 窗口与排序两个用例。**114 passed**。

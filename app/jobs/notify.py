@@ -83,20 +83,29 @@ def format_signal(game: dict, edge: dict) -> str:
         value = float(edge["line"])
         line = f" {value:+.1f}"
     return (
-        f"{game['away_abbrev']} @ {game['home_abbrev']} · {market} {side}{line} @ {edge['price']:.2f}\n"
-        f"模型 {edge['model_prob']:.1%} vs 公允 {edge['fair_prob']:.1%}"
+        f"✅ 可下注 · {game['away_abbrev']} @ {game['home_abbrev']}\n"
+        f"{market} {side}{line} @ {edge['price']:.2f}"
+        + (f"（{edge['book']}）" if edge.get("book") else "")
+        + f"\n模型 {edge['model_prob']:.1%} vs 公允 {edge['fair_prob']:.1%}"
         f" · Edge {edge['edge']:+.1%} · EV {edge['ev']:+.1%}\n"
         f"1/4凯利 {edge['stake_pct']:.1%} · 开赛 {game.get('tipoff', '')}"
     )
 
 
-def collect_signal_items(conn: sqlite3.Connection, slate_date: str) -> list[tuple[dict, dict]]:
+def collect_signal_items(
+    conn: sqlite3.Connection, slate_date: str, bettable_only: bool = True
+) -> list[tuple[dict, dict]]:
     """收集待推送的信号。
 
     **只取未开赛的比赛**：模型是赛前模型（Elo + 攻防/节奏），不读当前比分，
     比赛一旦开始，赛前概率就没有意义了。旧版只过滤 STATUS_FINAL，
     导致进行中的比赛仍可能被推送"赛前信号"（DB 里的 signal 标记不会自动过期，
     过期只发生在 API 读取层）——这是会在滚球阶段发出误导性推送的隐患。
+
+    **只推通过可下注闸门的信号**（bettable_only=True，默认）：
+    signal 只代表"模型算出正 EV"，bettable 才代表"这个价真实可拿、共识够深"。
+    软书/延迟线、共识书源不足、分歧闸门拦下、同场相关降级的，一律不推，
+    免得把观察项当成下注建议。需要统计观察项时传 bettable_only=False。
     """
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = conn.execute(
@@ -123,8 +132,11 @@ def collect_signal_items(conn: sqlite3.Connection, slate_date: str) -> list[tupl
             "away_abbrev": row["away_abbrev"],
         }
         for edge in prediction["details"].get("edges", []):
-            if edge.get("signal"):
-                items.append((game, edge))
+            if not edge.get("signal"):
+                continue
+            if bettable_only and not edge.get("bettable"):
+                continue
+            items.append((game, edge))
     return items
 
 
@@ -149,7 +161,7 @@ def send_new_signals(conn: sqlite3.Connection, items: list[tuple[dict, dict]]) -
         return 0
 
     text = "\n\n".join(format_signal(game, edge) for game, edge in pending)
-    title = f"NBA Quant · {len(pending)} 个正 EV 信号"
+    title = f"NBA Quant · {len(pending)} 个可下注信号"
     if not send(title, text):
         return 0
 
