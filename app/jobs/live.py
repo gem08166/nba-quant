@@ -259,6 +259,41 @@ def _summary_extras(event_id: str) -> dict:
     return {"espn_home_win_prob": wp_now, "espn_wp_delta": wp_delta, "recent_plays": plays}
 
 
+def live_market_snapshot(conn: sqlite3.Connection, game_id: str) -> dict | None:
+    """该场最近一次滚球盘口快照（解析后的主盘）。没有记录返回 None。"""
+    try:
+        row = conn.execute(
+            """
+            SELECT period, clock, score, market_raw, captured_at
+            FROM live_odds WHERE game_id=? ORDER BY id DESC LIMIT 1
+            """,
+            (game_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:  # 旧库还没有 live_odds 表
+        return None
+    if row is None:
+        return None
+    try:
+        market = json.loads(row["market_raw"])
+    except (TypeError, ValueError):
+        return None
+    from ..ingest.hao import parse_live_market
+
+    parsed = parse_live_market(market)
+    if not parsed:
+        return None
+    parsed.update(
+        {
+            "period": row["period"],
+            "clock": row["clock"],
+            "score": row["score"],
+            "captured_at": row["captured_at"],
+            "book": "hao-tiyu",
+        }
+    )
+    return parsed
+
+
 def live_board(conn: sqlite3.Connection, slate_date: str) -> dict:
     """Merge live scoreboard state with pregame predictions."""
     with _client() as client:
@@ -354,7 +389,13 @@ def live_board(conn: sqlite3.Connection, slate_date: str) -> dict:
             }
             extras = _summary_extras(game_id)
             item.update(extras)
+            # 滚球盘口（好体育）：只展示，不进入信号通道
+            item["live_market"] = live_market_snapshot(conn, game_id)
             time.sleep(REQUEST_SLEEP)
+
+        # 滚球盘口（好体育）：进行中的比赛都挂上，仅展示、不进信号通道
+        if event["state"] == "in":
+            item.setdefault("live_market", live_market_snapshot(conn, game_id))
 
         # 信号历史（赛后复盘用）：去重合并全部 prediction 版本；完赛附命中结果
         if event["state"] in ("post", "in"):

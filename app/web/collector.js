@@ -103,7 +103,6 @@ async function collectSnapshots(date, options = {}) {
   const lastOdds = Number(localStorage.getItem("nbaq:oddsapi-last") || 0);
   const oddsCooldownOver = Date.now() - lastOdds >= 30 * 60 * 1000;
   if (useOddsApi && oddsKey && oddsCooldownOver) {
-  if (oddsKey) {
     try {
       const resp = await fetch(
         `https://api.the-odds-api.com/v4/sports/basketball_nba/odds/?apiKey=${encodeURIComponent(

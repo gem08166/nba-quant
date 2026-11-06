@@ -231,6 +231,47 @@ function postCard(game) {
 }
 
 
+function liveMarketBlock(game) {
+  const mk = game.live_market;
+  if (!mk) return "";
+  const items = [];
+  if (mk.handicap) {
+    const hc = mk.handicap;
+    items.push(
+      `<span class="lm-item"><span class="lm-k">让分</span>` +
+        `<b class="lm-line">${fmtSpread(hc.line)}</b>` +
+        `<span class="lm-px">主 ${fmtPrice(hc.home)} / 客 ${fmtPrice(hc.away)}</span></span>`
+    );
+  }
+  if (mk.total) {
+    const t = mk.total;
+    items.push(
+      `<span class="lm-item"><span class="lm-k">大小</span>` +
+        `<b class="lm-line">${fmtTotal(t.line)}</b>` +
+        `<span class="lm-px">大 ${fmtPrice(t.over)} / 小 ${fmtPrice(t.under)}</span></span>`
+    );
+  }
+  if (mk.moneyline) {
+    const ml = mk.moneyline;
+    items.push(
+      `<span class="lm-item"><span class="lm-k">胜负</span>` +
+        `<span class="lm-px">主 ${fmtPrice(ml.home)} / 客 ${fmtPrice(ml.away)}</span></span>`
+    );
+  }
+  if (!items.length) return "";
+  const stamp = [mk.period ? String(mk.period).toUpperCase() : "", mk.clock || ""]
+    .filter(Boolean)
+    .join(" ");
+  return `
+    <div class="live-market">
+      <div class="lm-head">
+        <span class="lm-title">滚球盘口</span>
+        <span class="lm-src">${esc(mk.book === "hao-tiyu" ? "好体育" : mk.book || "")}${stamp ? " · " + esc(stamp) : ""}</span>
+      </div>
+      <div class="lm-row">${items.join("")}</div>
+    </div>`;
+}
+
 function liveCard(game) {
   const pred = game.pregame;
   const live = game.live;
@@ -252,6 +293,7 @@ function liveCard(game) {
     const cell = (label, value) =>
       `<div class="model-cell"><div class="k">${label}</div><div class="v" style="font-size:15px">${value}</div></div>`;
     liveBlock = `
+      ${liveMarketBlock(game)}
       <div class="wp-wrap">
         ${espnProb != null ? wpBar(espnProb) + momentumIcon(game.espn_wp_delta) + `<span class="wp-src">ESPN 实时胜率</span>` : `<span class="wp-src">胜率曲线不可用</span>`}
       </div>

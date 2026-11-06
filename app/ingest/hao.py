@@ -346,6 +346,68 @@ def parse_live_detail(detail: dict | None) -> dict:
     }
 
 
+def _to_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_main_line(rows, price_a: str, price_b: str):
+    """多档盘口里选「主盘」：两侧赔付最接近（最接近平水）的那一档。"""
+    best = None
+    for row in rows or []:
+        a = hk_to_decimal(row.get(price_a))
+        b = hk_to_decimal(row.get(price_b))
+        if a is None or b is None:
+            continue
+        gap = abs(a - b)
+        if best is None or gap < best[0]:
+            best = (gap, row, a, b)
+    return best
+
+
+def parse_live_market(market: dict | None) -> dict:
+    """把滚球 market 解析成可展示的主盘口（全部换算成欧赔小数）。
+
+    口径（2026-11-06 用进行中的 NBA 比赛实测验证）：
+    - `ou.k`：**全场总分**盘口（含已得分；第 1 节 19-17 时盘口是 226.5）
+    - `ah.k`：**全场让分**；`absK` = 从现在起的让分，
+      且实测恒有 `absK = k - (主队得分 - 客队得分)`
+    - `1x2`：胜负（篮球的"平"无意义，仅占位）
+    多档盘口取赔付最均衡的一档作为主盘。
+    """
+    mk = market or {}
+    out: dict = {}
+
+    ah = _pick_main_line(mk.get("ah"), "h", "a")
+    if ah:
+        _, row, home_px, away_px = ah
+        out["handicap"] = {
+            "line": _to_float(row.get("k")),
+            "home": home_px,
+            "away": away_px,
+            "line_from_now": _to_float(row.get("absK")),
+        }
+
+    ou = _pick_main_line(mk.get("ou"), "ov", "ud")
+    if ou:
+        _, row, over_px, under_px = ou
+        out["total"] = {
+            "line": _to_float(row.get("k")),
+            "over": over_px,
+            "under": under_px,
+        }
+
+    ml = mk.get("1x2") or {}
+    home_ml = hk_to_decimal(ml.get("h"))
+    away_ml = hk_to_decimal(ml.get("a"))
+    if home_ml and away_ml:
+        out["moneyline"] = {"home": home_ml, "away": away_ml}
+
+    return out
+
+
 def store_live_odds(conn, slate_date: str) -> dict:
     """把进行中的 NBA 比赛滚球盘口原样写入 live_odds。
 
