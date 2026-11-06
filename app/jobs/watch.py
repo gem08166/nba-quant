@@ -168,6 +168,17 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 except Exception as exc:  # noqa: BLE001
                     print(f"[watch] live_wp skipped: {exc}")
 
+            # 滚球盘口快照（研究模块）：原样保存 market JSON，先不解释口径。
+            if with_ingest:
+                try:
+                    from ..ingest import hao as hao_live
+
+                    lo_stats = hao_live.store_live_odds(conn, slate)
+                    if lo_stats.get("live_nba"):
+                        print(f"[watch] live_odds: {lo_stats}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] live_odds skipped: {exc}")
+
             if with_ingest and slate != last_slate:
                 ratings.train_and_save(conn)
                 last_slate = slate

@@ -115,7 +115,9 @@ def record_snapshot(conn: sqlite3.Connection, slate: str, client=None) -> dict:
     from ..config import ESPN_BASE, REQUEST_TIMEOUT, USER_AGENT
     from ..jobs.predict import latest_prediction
     from ..jobs.live import _parse_event
+    from .. import db as _db
 
+    _db.init_db(conn)  # 确保 live_wp 存在（旧库不会自动建新表）
     params = load_params()
     written = 0
     seen = 0

@@ -509,3 +509,22 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **诚实结论（重要）**：**逐回合数据高度相关，有效样本接近场次数（当前仅 120 场）**，分箱校准在样本外最大偏差 15.4pp，只能作方向性参考。已在报告和页面明写"需要累积 30 天以上比赛再评估"，不得用于任何决策。
 - **测试**：`tests/test_live_wp.py` 7 例（开赛 50%、分差/时间单调、赛前预期衰减、加时口径、参数读写）。**79 passed**。
 - **CI**：`refresh.yml` 在 backfill_pbp 之后新增 `python -m scripts.live_wp_fit || true`，保证 Pages 上的验收报告每日更新。
+
+### 10.26 2026-11-06 滚球盘口快照（原始记录，不解释口径）
+
+- **背景**：用户问能否解析雷速体育。评估结论：技术上可行（签名接口 + 设备指纹），但**维护成本高、违反其服务条款**，且**没有我们缺的数据** → 不做。
+- **关键发现**：已集成的**好体育接口本身就带滚球盘口**，只是代码里 `inplay` 一直传 `false`。实测 `inplay=true` 返回 49 场进行中的比赛；单场 `match/simple?inplay=true` 返回完整滚球盘：
+  ```
+  1x2 / ah(亚盘) / ou(大小) / ah_2h / ou_2h / 1x2_2h /
+  h-ou(主队得分) / a-ou(客队得分) / rptsio(得分区间) / oe(单双) / wtbo(加时)
+  ```
+- **实现**（`app/ingest/hao.py`）：
+  - `fetch_inplay_matches()`：`inplay=true` + 过滤 NBA（cid=12, tid=7067）
+  - `fetch_live_market(iid)`：`match/simple?inplay=true`
+  - `store_live_odds(conn, slate)`：队名匹配（±1 天窗口，滚球可能跨东部零点）→ 原样写 `live_odds`
+  - 表 `live_odds`：`game_id / book / iid / period / clock / score / market_raw(JSON) / detail_raw / captured_at`，唯一键 `(game_id, book, period, clock, score)` 去重
+  - **不做语义解释**：滚球线的口径（全场 vs 从现在起、`absK` 含义）需要真实 NBA 样本验证后再解析，先存原始 JSON 保证数据不失效
+- **接入**：`watch` 每轮（15 分钟）调用一次；新增 CLI `python -m app.cli live-odds` 手动抓取；`/api/live-odds/{game_id}` 返回原始快照。
+- **与 `live_wp` 的配合**：两张表都带 `period/clock/比分/时间戳`，将来可精确对齐「同一时刻、同一比分下，模型说 X% vs 市场说 Y%」——这是判断滚球 edge 的唯一可靠方式。
+- **测试**：`tests/test_live_odds.py` 5 例（原始字段完整保留、同钟同分去重、新时钟新增、无滚球、队名不匹配跳过）。**84 passed**。
+- **现场状态**：当前没有 NBA 比赛进行中（只有 NCAA），所以 `live_nba=0`；NBA 开打时 `watch` 会自动开始记录。

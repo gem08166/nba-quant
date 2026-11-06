@@ -293,3 +293,139 @@ def store_nba_odds(conn, slate_date: str) -> int:
                 rows.append({"book": "hao-tiyu", "market": "moneyline", "side": "away", "line": None, "price": ml["away"], "source": "hao"})
             inserted += espn_service.insert_odds(conn, game["id"], rows)
     return inserted
+
+
+# ---------------------------------------------------------------------------
+# 滚球盘口快照（研究用：只原样记录，不做语义解释）
+# ---------------------------------------------------------------------------
+
+
+def fetch_inplay_matches() -> list[dict]:
+    """当前正在进行的 NBA 比赛（inplay=true）。"""
+    data = _get(
+        "/product/business/sport/tournament/info",
+        params={
+            "sid": SID_BASKETBALL,
+            "sort": "tournament",
+            "inplay": "true",
+            "language": "zh-cn",
+        },
+    )
+    out: list[dict] = []
+    for tournament in data.get("tournaments") or []:
+        if tournament.get("cid") == NBA_CID and tournament.get("tid") == NBA_TID:
+            out.extend(m for m in (tournament.get("matches") or []) if m.get("inplay"))
+    return out
+
+
+def fetch_live_market(iid: int | str) -> dict | None:
+    """单场滚球盘口（inplay=true）。失败返回 None。"""
+    try:
+        data = _get(
+            "/product/business/sport/match/simple",
+            params={
+                "sid": SID_BASKETBALL,
+                "iidList": str(iid),
+                "inplay": "true",
+                "language": "zh-cn",
+            },
+        )
+        matches = data.get("matches") or []
+        return matches[0] if matches else None
+    except Exception:  # noqa: BLE001 - 第二源必须可失败
+        return None
+
+
+def parse_live_detail(detail: dict | None) -> dict:
+    """从 detail 里搬运节次/时钟/比分（只搬运，不解释口径）。"""
+    d = detail or {}
+    return {
+        "period": d.get("period"),
+        "clock": d.get("time"),
+        "score": d.get("score"),
+    }
+
+
+def store_live_odds(conn, slate_date: str) -> dict:
+    """把进行中的 NBA 比赛滚球盘口原样写入 live_odds。
+
+    只保存原始 JSON：滚球线的口径（全场 vs 从现在起、absK 含义）需要真实
+    样本验证后再解析，先把数据留住。
+
+    匹配方式：队名包含关系 + 比赛日在 slate_date ±1 天内的未完赛比赛
+    （滚球可能跨东部时间零点）。
+    """
+    import json
+    import sqlite3
+
+    from .. import db
+
+    db.init_db(conn)  # 确保 live_odds 存在（旧库不会自动建新表）
+    matches = fetch_inplay_matches()
+    if not matches:
+        return {"live_nba": 0, "matched": 0, "written": 0}
+
+    window = conn.execute(
+        """
+        SELECT g.id, g.slate_date, g.status,
+               h.name AS home_name, a.name AS away_name
+        FROM games g
+        JOIN teams h ON h.id = g.home_id
+        JOIN teams a ON a.id = g.away_id
+        WHERE g.status NOT IN ('STATUS_FINAL','STATUS_POSTPONED','STATUS_CANCELED','STATUS_CANCELLED')
+          AND g.slate_date BETWEEN date(?, '-1 day') AND date(?, '+1 day')
+        """,
+        (slate_date, slate_date),
+    ).fetchall()
+
+    captured_at = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc
+    ).isoformat(timespec="seconds")
+
+    matched = 0
+    written = 0
+    for match in matches:
+        summary = match_summary(match)
+        iid = summary["iid"]
+        if not iid:
+            continue
+        game = next(
+            (
+                g
+                for g in window
+                if g["home_name"].lower() in summary["home"].lower()
+                and g["away_name"].lower() in summary["away"].lower()
+            ),
+            None,
+        )
+        if game is None:
+            continue
+        matched += 1
+        detail = fetch_live_market(iid)
+        if not detail:
+            continue
+        market = detail.get("market") or {}
+        if not market:
+            continue
+        d = parse_live_detail(detail.get("detail"))
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO live_odds
+                (game_id, book, iid, period, clock, score,
+                 market_raw, detail_raw, captured_at)
+            VALUES (?, 'hao-tiyu', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                game["id"],
+                str(iid),
+                d["period"],
+                d["clock"],
+                d["score"],
+                json.dumps(market, ensure_ascii=False),
+                json.dumps(detail.get("detail") or {}, ensure_ascii=False),
+                captured_at,
+            ),
+        )
+        written += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+    conn.commit()
+    return {"live_nba": len(matches), "matched": matched, "written": written}

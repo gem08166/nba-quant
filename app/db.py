@@ -163,6 +163,24 @@ CREATE TABLE IF NOT EXISTS live_wp (
 );
 CREATE INDEX IF NOT EXISTS idx_live_wp_game ON live_wp(game_id, id);
 
+-- 滚球盘口原始快照（研究用）：只原样保存，不做语义解释。
+-- 滚球线的含义（全场 vs 从现在起、absK 指什么）需要真实 NBA 样本验证后再解析，
+-- 先存原始 JSON，保证数据永不失效。
+CREATE TABLE IF NOT EXISTS live_odds (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id     TEXT NOT NULL,
+    book        TEXT NOT NULL DEFAULT 'hao-tiyu',
+    iid         TEXT,
+    period      TEXT,
+    clock       TEXT,
+    score       TEXT,
+    market_raw  TEXT NOT NULL,
+    detail_raw  TEXT,
+    captured_at TEXT NOT NULL,
+    UNIQUE(game_id, book, period, clock, score)
+);
+CREATE INDEX IF NOT EXISTS idx_live_odds_game ON live_odds(game_id, id);
+
 CREATE TABLE IF NOT EXISTS rapm_models (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,

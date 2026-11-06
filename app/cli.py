@@ -97,6 +97,22 @@ def cmd_hao_odds(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_live_odds(args: argparse.Namespace) -> None:
+    """抓取进行中的 NBA 滚球盘口，原样写入 live_odds（研究用）。"""
+    from .ingest import hao
+
+    conn = db.connect()
+    try:
+        slate = args.date or current_slate_date()
+        stats = hao.store_live_odds(conn, slate)
+        conn.commit()
+        print(f"live odds for {slate}: {stats}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"live odds failed: {exc}")
+    finally:
+        conn.close()
+
+
 def cmd_signal_backtest(args: argparse.Namespace) -> None:
     from .jobs import signal_backtest
 
@@ -350,6 +366,12 @@ def build_parser() -> argparse.ArgumentParser:
     hao = sub.add_parser("hao-odds", help="store hao-tiyu second-book odds into odds_snapshots")
     hao.add_argument("--date", default=None)
     hao.set_defaults(func=cmd_hao_odds)
+
+    live_odds = sub.add_parser(
+        "live-odds", help="snapshot in-play NBA markets into live_odds (research only)"
+    )
+    live_odds.add_argument("--date", default=None)
+    live_odds.set_defaults(func=cmd_live_odds)
 
     sb = sub.add_parser("signal-backtest", help="settle historical signal edges against captured odds")
     sb.add_argument("--start", default=None)

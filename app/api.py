@@ -564,6 +564,33 @@ def live_wp_trajectory(game_id: str, limit: int = 400) -> dict:
     }
 
 
+@router.get("/live-odds/{game_id}")
+def live_odds_snapshots(game_id: str, limit: int = 500) -> dict:
+    """该场已记录的滚球盘口原始快照（研究模块：仅原样返回，未做语义解释）。"""
+    conn = db.connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT period, clock, score, market_raw, detail_raw, captured_at
+            FROM live_odds WHERE game_id=? ORDER BY id LIMIT ?
+            """,
+            (game_id, max(1, min(limit, 3000))),
+        ).fetchall()
+    finally:
+        conn.close()
+    points = []
+    for r in rows:
+        item = dict(r)
+        try:
+            item["market"] = json.loads(item.pop("market_raw"))
+        except (TypeError, ValueError):
+            item["market"] = None
+            item.pop("market_raw", None)
+        item.pop("detail_raw", None)
+        points.append(item)
+    return {"game_id": game_id, "count": len(points), "points": points}
+
+
 @router.get("/model-clv")
 def model_clv(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     """模型 vs 收盘线历史检验报告（基准对照）。"""
