@@ -28,6 +28,12 @@ function renderProfitChart() {
   const mine = curves.mine || [];
   const sim = curves.sim || [];
   const unit = normalized ? "u" : "";
+  const note = document.getElementById("profit-mode-note");
+  if (note) {
+    note.textContent = normalized
+      ? "归一化：每笔盈亏 ÷ 注额，按每注 1 单位累计，排除注额大小的影响。"
+      : "金额：按实际注额累计的盈亏。";
+  }
 
   if (mine.length || sim.length) {
     window.drawMultiLineChart?.(canvas, [
