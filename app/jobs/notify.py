@@ -91,15 +91,25 @@ def format_signal(game: dict, edge: dict) -> str:
 
 
 def collect_signal_items(conn: sqlite3.Connection, slate_date: str) -> list[tuple[dict, dict]]:
+    """收集待推送的信号。
+
+    **只取未开赛的比赛**：模型是赛前模型（Elo + 攻防/节奏），不读当前比分，
+    比赛一旦开始，赛前概率就没有意义了。旧版只过滤 STATUS_FINAL，
+    导致进行中的比赛仍可能被推送"赛前信号"（DB 里的 signal 标记不会自动过期，
+    过期只发生在 API 读取层）——这是会在滚球阶段发出误导性推送的隐患。
+    """
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = conn.execute(
         """
         SELECT g.id, g.tipoff, h.abbrev AS home_abbrev, a.abbrev AS away_abbrev
         FROM games g
         JOIN teams h ON h.id = g.home_id
         JOIN teams a ON a.id = g.away_id
-        WHERE g.slate_date = ? AND g.status != 'STATUS_FINAL'
+        WHERE g.slate_date = ?
+          AND g.status IN ('STATUS_SCHEDULED', 'STATUS_PRE')
+          AND (g.tipoff IS NULL OR g.tipoff > ?)
         """,
-        (slate_date,),
+        (slate_date, now),
     ).fetchall()
     items: list[tuple[dict, dict]] = []
     for row in rows:
