@@ -1,15 +1,24 @@
 """注单分场景：备注含「滚球」的算滚球注单，单独统计。"""
 import sqlite3
 
-from app.jobs.settle import bet_kind, summarize
+from app.jobs.settle import bet_kind, bet_source, summarize
 
 
 def test_bet_kind():
     assert bet_kind({"note": "滚球 大小 大 220.5 @1.90 · 好体育 q2 11:13"}) == "live"
     assert bet_kind({"note": "回填 赛前信号 · hao-tiyu · EV +8.0% · 2026-11-04"}) == "backfill"
+    assert bet_kind({"note": "手动 大小 大 218.5 @1.95 · 2026-11-04"}) == "pregame"
     assert bet_kind({"note": "draftkings / model 61.9% / fair 56.2%"}) == "pregame"
     assert bet_kind({"note": None}) == "pregame"
     assert bet_kind({}) == "pregame"
+
+
+def test_bet_source():
+    """真实 vs 模拟：只有回填算模拟。"""
+    assert bet_source({"note": "回填 赛前信号 · x · 2026-11-04"}) == "sim"
+    assert bet_source({"note": "滚球 大小 大 220.5 @1.90"}) == "mine"
+    assert bet_source({"note": "手动 让分 主 -3.5 @1.91"}) == "mine"
+    assert bet_source({"note": "draftkings / model 61.9%"}) == "mine"
 
 
 def _conn():
@@ -68,3 +77,20 @@ def test_overall_still_matches_total():
     summary = summarize(_conn())
     assert round(summary["profit"], 2) == 3.7  # 2.8 + 0.9
     assert summary["by_kind"]["pregame"]["settled"] + summary["by_kind"]["live"]["settled"] == summary["settled"]
+
+
+def test_by_source_splits_real_vs_simulated():
+    """真实 = 赛前 + 滚球；模拟 = 回填。"""
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO bets(game_id, market, side, line, price, stake, model_prob, ev,"
+        " result, profit, placed_at, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("g2", "total", "over", 220.5, 1.9, 1.0, 0.55, 0.05, "lost", -1.0, "2026-11-06",
+         "回填 赛前信号 · sbr · EV +5.0% · 2026-11-06"),
+    )
+    conn.commit()
+    summary = summarize(conn)
+    assert summary["by_source"]["mine"]["settled"] == 5
+    assert summary["by_source"]["sim"]["settled"] == 1
+    assert round(summary["by_source"]["sim"]["profit"], 2) == -1.0
+    assert round(summary["by_source"]["mine"]["profit"], 2) == 3.7

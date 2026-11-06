@@ -31,8 +31,54 @@ from app import db
 from app.jobs.signal_backtest import _closing_price, _entry_snapshot, settle_edge
 
 
+def _select_signals(rows, strict: bool):
+    """从历史预测里挑出「当时会真的下注」的信号。
+
+    strict（默认）：
+    - 同一市场只取**首次出现**的那一条（盘口漂移 232.5/232.0 视为同一决策）
+    - 同场让分与胜负二选一（保留 EV 更高的那条），与 predict.MUTUAL_EXCLUSIVE 一致
+    → 每场最多 2 条（让分/胜负 + 大小）
+
+    raw：
+    - 按 (market, side, line) 各取首次出现（旧行为，会有同场相关仓位）
+    """
+    chosen: dict[tuple, dict] = {}
+    for row in rows:
+        try:
+            details = json.loads(row["details"])
+        except (TypeError, ValueError):
+            continue
+        for edge in details.get("edges") or []:
+            if not edge.get("signal"):
+                continue
+            key = (row["game_id"], edge["market"]) if strict else (
+                row["game_id"], edge["market"], edge["side"], edge.get("line")
+            )
+            if key in chosen:
+                continue  # 首次出现优先
+            chosen[key] = {"row": row, "edge": edge}
+
+    items = list(chosen.values())
+    if strict:
+        # 同场 spread / moneyline 高度相关：只留 EV 更高的
+        by_game: dict[str, list[dict]] = {}
+        for item in items:
+            by_game.setdefault(item["row"]["game_id"], []).append(item)
+        kept: list[dict] = []
+        for game_items in by_game.values():
+            corr = [i for i in game_items if i["edge"]["market"] in ("spread", "moneyline")]
+            if len(corr) > 1:
+                corr.sort(key=lambda i: i["edge"].get("ev") or 0, reverse=True)
+                drop = {id(i) for i in corr[1:]}
+                kept.extend(i for i in game_items if id(i) not in drop)
+            else:
+                kept.extend(game_items)
+        items = kept
+    return items
+
+
 def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None = None,
-             dry_run: bool = False) -> dict:
+             dry_run: bool = False, strict: bool = True, replace: bool = False) -> dict:
     rows = conn.execute(
         """
         SELECT p.game_id, p.created_at, p.details, g.slate_date, g.tipoff,
@@ -47,13 +93,25 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         """
     ).fetchall()
 
+    # 只保留日期区间内的比赛
+    rows = [
+        r for r in rows
+        if (not start or r["slate_date"] >= start) and (not end or r["slate_date"] <= end)
+    ]
+
+    replaced = 0
+    if replace and not dry_run:
+        replaced = conn.execute("DELETE FROM bets WHERE note LIKE '回填%'").rowcount or 0
+        conn.commit()
+
     # 已存在的注单（避免重复回填）
     existing = {
         (str(r["game_id"]), r["market"], r["side"], r["line"])
         for r in conn.execute("SELECT game_id, market, side, line FROM bets")
     }
 
-    seen: set[tuple] = set()
+    items = _select_signals(rows, strict)
+
     inserted = 0
     skipped_dupe = 0
     skipped_no_price = 0
@@ -61,93 +119,79 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
     stake_sum = 0.0
     profit_sum = 0.0
 
-    for row in rows:
+    for item in items:
+        row, edge = item["row"], item["edge"]
         slate = row["slate_date"]
-        if start and slate < start:
+        key = (row["game_id"], edge["market"], edge["side"], edge.get("line"))
+        if key in existing:
+            skipped_dupe += 1
             continue
-        if end and slate > end:
+
+        entry = _entry_snapshot(
+            conn, row["game_id"], edge["market"], edge["side"],
+            edge.get("line"), row["created_at"],
+        )
+        price = float(entry["price"]) if entry and entry.get("price") else None
+        if not price:
+            price = float(edge.get("price") or 0) or None
+        if not price or price <= 1.0:
+            skipped_no_price += 1
             continue
+        line = entry["line"] if entry else edge.get("line")
+
+        result = settle_edge(edge["market"], edge["side"], line, row["home_score"], row["away_score"])
+        if result == "won":
+            profit = stake * (price - 1.0)
+        elif result == "lost":
+            profit = -stake
+        else:
+            profit = 0.0
+
+        closing = None
         try:
-            details = json.loads(row["details"])
-        except (TypeError, ValueError):
-            continue
-        for edge in details.get("edges") or []:
-            if not edge.get("signal"):
-                continue
-            key = (row["game_id"], edge["market"], edge["side"], edge.get("line"))
-            if key in seen:
-                continue  # 同一信号只回填首次出现
-            seen.add(key)
-            if key in existing:
-                skipped_dupe += 1
-                continue
-
-            entry = _entry_snapshot(
-                conn, row["game_id"], edge["market"], edge["side"],
-                edge.get("line"), row["created_at"],
+            closing = _closing_price(
+                conn, row["game_id"], edge["market"], edge["side"], line, row["tipoff"]
             )
-            price = float(entry["price"]) if entry and entry.get("price") else None
-            if not price:
-                price = float(edge.get("price") or 0) or None
-            if not price or price <= 1.0:
-                skipped_no_price += 1
-                continue
-            line = entry["line"] if entry else edge.get("line")
-
-            result = settle_edge(edge["market"], edge["side"], line, row["home_score"], row["away_score"])
-            if result == "won":
-                profit = stake * (price - 1.0)
-            elif result == "lost":
-                profit = -stake
-            else:
-                profit = 0.0
-
+        except Exception:  # noqa: BLE001
             closing = None
-            try:
-                closing = _closing_price(
-                    conn, row["game_id"], edge["market"], edge["side"], line, row["tipoff"]
-                )
-            except Exception:  # noqa: BLE001
-                closing = None
-            clv = (price / closing - 1.0) if closing else None
+        clv = (price / closing - 1.0) if closing else None
 
-            ev = edge.get("ev")
-            note = (
-                f"回填 赛前信号 · {edge.get('book') or '—'} · "
-                f"EV {ev:+.1%} · {slate}" if isinstance(ev, (int, float)) else
-                f"回填 赛前信号 · {edge.get('book') or '—'} · {slate}"
-            )
+        ev = edge.get("ev")
+        note = (
+            f"回填 赛前信号 · {edge.get('book') or '—'} · "
+            f"EV {ev:+.1%} · {slate}" if isinstance(ev, (int, float)) else
+            f"回填 赛前信号 · {edge.get('book') or '—'} · {slate}"
+        )
 
-            stats[result] = stats.get(result, 0) + 1
-            stake_sum += stake
-            profit_sum += profit
-            inserted += 1
+        stats[result] = stats.get(result, 0) + 1
+        stake_sum += stake
+        profit_sum += profit
+        inserted += 1
 
-            if not dry_run:
-                conn.execute(
-                    """
-                    INSERT INTO bets(game_id, market, side, line, price, stake,
-                                    model_prob, ev, clv, placed_at, note, result, profit)
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["game_id"],
-                        edge["market"],
-                        edge["side"],
-                        line,
-                        price,
-                        stake,
-                        edge.get("model_prob") if edge.get("model_prob") is not None else 0.5,
-                        ev if isinstance(ev, (int, float)) else 0.0,
-                        clv,
-                        row["created_at"] or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                        note,
-                        result,
-                        round(profit, 4),
-                    ),
-                )
         if not dry_run:
-            conn.commit()
+            conn.execute(
+                """
+                INSERT INTO bets(game_id, market, side, line, price, stake,
+                                model_prob, ev, clv, placed_at, note, result, profit)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["game_id"],
+                    edge["market"],
+                    edge["side"],
+                    line,
+                    price,
+                    stake,
+                    edge.get("model_prob") if edge.get("model_prob") is not None else 0.5,
+                    ev if isinstance(ev, (int, float)) else 0.0,
+                    clv,
+                    row["created_at"] or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    note,
+                    result,
+                    round(profit, 4),
+                ),
+            )
+            existing.add(key)
     if not dry_run:
         conn.commit()
 
@@ -155,6 +199,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         "inserted": inserted,
         "skipped_dupe": skipped_dupe,
         "skipped_no_price": skipped_no_price,
+        "replaced": replaced,
         "wins": stats.get("won", 0),
         "losses": stats.get("lost", 0),
         "pushes": stats.get("push", 0),
@@ -162,6 +207,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         "profit": round(profit_sum, 2),
         "roi": round(profit_sum / stake_sum, 4) if stake_sum else None,
         "dry_run": dry_run,
+        "strict": strict,
     }
 
 
@@ -171,19 +217,40 @@ def main() -> None:
     parser.add_argument("--start", default=None, help="起始比赛日 YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="结束比赛日 YYYY-MM-DD")
     parser.add_argument("--dry-run", action="store_true", help="只统计不写库")
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="旧口径：按每个 (market, side, line) 回填（会产生同场相关仓位）",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="先删除已有的回填注单再重填（只删备注以「回填」开头的）",
+    )
     args = parser.parse_args()
 
     conn = db.connect()
     try:
-        stats = backfill(conn, stake=args.stake, start=args.start, end=args.end, dry_run=args.dry_run)
+        stats = backfill(
+            conn,
+            stake=args.stake,
+            start=args.start,
+            end=args.end,
+            dry_run=args.dry_run,
+            strict=not args.raw,
+            replace=args.replace,
+        )
     finally:
         conn.close()
 
     print(
         ("[dry-run] " if stats["dry_run"] else "") +
-        f"回填 {stats['inserted']} 条 · 胜{stats['wins']}/负{stats['losses']}/走{stats['pushes']} · "
+        f"回填 {stats['inserted']} 条"
+        + (f"（已替换旧回填 {stats['replaced']} 条）" if stats["replaced"] else "")
+        + f" · 胜{stats['wins']}/负{stats['losses']}/走{stats['pushes']} · "
         f"投入 {stats['stake']:.2f} · 盈亏 {stats['profit']:+.2f} · "
         f"ROI {(stats['roi'] * 100 if stats['roi'] is not None else 0):+.1f}%"
+        + ("" if stats["strict"] else "  [raw 口径]")
     )
     if stats["skipped_dupe"] or stats["skipped_no_price"]:
         print(f"  跳过：已存在 {stats['skipped_dupe']} · 无有效入场价 {stats['skipped_no_price']}")

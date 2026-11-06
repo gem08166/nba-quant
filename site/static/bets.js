@@ -35,51 +35,50 @@ function renderBetStats(s) {
     .join("");
 }
 
-// 赛前 / 滚球 分开统计：滚球注单的 CLV 口径是「相对下注时的滚球线」，
-// 与赛前 CLV（相对收盘线）不可混算。
-function renderKindStats(byKind) {
+// 真实 vs 模拟：模拟 = 历史回填，真实 = 我自己记录的（跟信号/手动/滚球）
+function renderSourceStats(bySource, byKind) {
   const box = document.getElementById("bets-kinds");
   if (!box) return;
-  const rows = byKind || {};
-  const line = (label, s) => {
+  const src = bySource || {};
+  const kinds = byKind || {};
+  const mine = src.mine || null;
+  const sim = src.sim || null;
+
+  const row = (label, s, cls) => {
     if (!s) return "";
     const roi = s.roi != null ? fmtSignedPct(s.roi) : "—";
     const clv = s.avg_clv != null ? fmtSignedPct(s.avg_clv) : "—";
     const hit = s.hit_rate != null ? fmtPct(s.hit_rate) : "—";
     const profitCls = s.profit > 0 ? "pos" : s.profit < 0 ? "neg" : "";
-    return `<tr>
+    const any = (s.settled || 0) + (s.open || 0) > 0;
+    return `<tr class="${cls || ""}">
       <td>${label}</td>
       <td>${s.settled}</td>
       <td>${s.open}</td>
-      <td class="${profitCls}">${s.settled || s.open ? (s.profit >= 0 ? "+" : "") + s.profit.toFixed(2) : "—"}</td>
+      <td class="${profitCls}">${any ? (s.profit >= 0 ? "+" : "") + s.profit.toFixed(2) : "—"}</td>
       <td class="${s.roi > 0 ? "pos" : ""}">${roi}</td>
       <td>${hit}</td>
       <td>${clv}</td>
     </tr>`;
   };
-  const live = rows.live || {};
-  const back = rows.backfill || {};
-  const hasLive = (live.settled || 0) + (live.open || 0) > 0;
-  const hasBack = (back.settled || 0) + (back.open || 0) > 0;
+
+  const sub = (label, s) => row(`　· ${label}`, s, "sub");
+
   box.innerHTML = `
     <div class="table-wrap" style="margin-bottom:16px"><table>
       <thead><tr><th>来源</th><th>已结算</th><th>未结算</th><th>盈亏</th><th>ROI</th><th>命中率</th><th>平均 CLV</th></tr></thead>
       <tbody>
-        ${line("赛前（跟信号）", rows.pregame)}
-        ${line("滚球", live)}
-        ${line("历史回填", back)}
-        ${
-          !hasLive
-            ? `<tr><td colspan="7" style="color:var(--muted);font-size:11.5px">还没有滚球注单（赛时面板的盘口点「主/客/大/小」即可记一笔）。滚球 CLV 口径与赛前不同，单独统计。</td></tr>`
-            : ""
-        }
-        ${
-          hasBack
-            ? `<tr><td colspan="7" style="color:var(--muted);font-size:11.5px">「历史回填」是脚本用历史信号补的回顾性注单，不是当时的真实决策；仅供扩大样本，不要当成绩看。</td></tr>`
-            : ""
-        }
+        ${row("我的注单（真实）", mine, "main-row")}
+        ${sub("赛前 · 跟信号 / 手动", kinds.pregame)}
+        ${sub("滚球", kinds.live)}
+        ${row("信号模拟（历史回填）", sim, "main-row")}
       </tbody>
-    </table></div>`;
+    </table></div>
+    <p class="notice" style="border:none;margin:-6px 0 16px;padding:0;font-size:11.5px;line-height:1.6">
+      <b>我的注单</b>是你真实记录过的（包括跟信号记一笔、手动录入、滚球）；
+      <b>信号模拟</b>是脚本用历史信号补的回顾性注单，用来扩大样本，<b>不是成绩</b>。
+      两者口径不同，请分开看。
+    </p>`;
 }
 
 function renderMarkets(byMarket) {
@@ -160,9 +159,9 @@ function ledgerKind(bet) {
 }
 
 const KIND_BADGE = {
-  live: '<span class="pill pill-live" title="赛时面板下的滚球注单">滚球</span>',
-  backfill: '<span class="pill pill-backfill" title="脚本用历史信号补的回顾性注单">回填</span>',
-  pregame: '<span style="color:var(--muted)">赛前</span>',
+  live: '<span class="pill pill-live" title="赛时面板下的滚球注单（真实记录）">真实·滚球</span>',
+  backfill: '<span class="pill pill-backfill" title="脚本用历史信号补的回顾性注单，不是你下的">模拟</span>',
+  pregame: '<span style="color:var(--muted)" title="跟信号或手动录入的真实注单">真实·赛前</span>',
 };
 
 function renderLedger(bets) {
@@ -173,7 +172,7 @@ function renderLedger(bets) {
   }
   box.innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>比赛日</th><th>比赛</th><th>场景</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th></tr></thead>
+      <thead><tr><th>比赛日</th><th>比赛</th><th>来源</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th></tr></thead>
       <tbody>
         ${bets
           .slice()
@@ -316,7 +315,7 @@ async function loadBets() {
     const data = await api("/api/bets/analysis");
     const s = data.summary;
     renderBetStats(s);
-    renderKindStats(s.by_kind);
+    renderSourceStats(s.by_source, s.by_kind);
     renderMarkets(s.by_market);
     renderLedger(data.bets);
 

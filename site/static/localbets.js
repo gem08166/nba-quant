@@ -114,6 +114,33 @@ function lbKind(bet) {
   return "pregame";
 }
 
+// 与后端 settle.bet_source 同口径：回填=模拟，其余=我的真实注单
+function lbSource(bet) {
+  return lbKind(bet) === "backfill" ? "sim" : "mine";
+}
+
+function lbMerge(a, b) {
+  const stake = (a?.stake || 0) + (b?.stake || 0);
+  const profit = (a?.profit || 0) + (b?.profit || 0);
+  const wins = (a?.wins || 0) + (b?.wins || 0);
+  const losses = (a?.losses || 0) + (b?.losses || 0);
+  return {
+    settled: (a?.settled || 0) + (b?.settled || 0),
+    open: (a?.open || 0) + (b?.open || 0),
+    wins,
+    losses,
+    pushes: (a?.pushes || 0) + (b?.pushes || 0),
+    stake: Math.round(stake * 100) / 100,
+    profit: Math.round(profit * 100) / 100,
+    roi: stake > 0 ? profit / stake : null,
+    hit_rate: wins + losses ? wins / (wins + losses) : null,
+    avg_clv: null,
+    clv_positive_rate: null,
+    avg_clv_line: null,
+    clv_line_positive_rate: null,
+  };
+}
+
 function lbSummary(bets) {  const settled = bets.filter((bet) => bet.result !== "open");
   const wins = settled.filter((bet) => bet.result === "won").length;
   const losses = settled.filter((bet) => bet.result === "lost").length;
@@ -176,6 +203,10 @@ function lbSummary(bets) {  const settled = bets.filter((bet) => bet.result !== 
     open: bets.length - settled.length,
     by_market: byMarket,
     by_kind: byKind,
+    by_source: {
+      mine: lbMerge(byKind.pregame, byKind.live),
+      sim: byKind.backfill,
+    },
   };
 }
 
@@ -196,7 +227,11 @@ function lbCurve(bets) {
 }
 
 function lbAnalysis() {
-  const bets = lbRead().map((bet) => ({ ...bet, kind: lbKind(bet) }));
+  const bets = lbRead().map((bet) => ({
+    ...bet,
+    kind: lbKind(bet),
+    source: lbSource(bet),
+  }));
   return { summary: lbSummary(bets), bets, curve: lbCurve(bets) };
 }
 

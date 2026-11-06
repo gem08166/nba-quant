@@ -258,6 +258,7 @@ function renderBettablePanel(games) {
 
 function renderGames(games, betsByGame = {}) {
   const box = $("#games");
+  state.slateGames = games || [];
   if (!games.length) {
     box.innerHTML = `<div class="empty">当天没有比赛。换一天，或先运行 <code>python -m app.cli ingest --date ${state.date}</code> 拉取数据。</div>`;
     return;
@@ -315,10 +316,179 @@ function renderGames(games, betsByGame = {}) {
           </div>
           ${bets.length ? `<div class="bet-row">${bets.map((bet) => slateBetChip(bet, game)).join("")}</div>` : ""}
           ${badge}
+          ${info.cls === "" ? `<div class="card-actions">
+            <button class="btn small" data-manual-bet="1" data-game-id="${esc(game.id)}"
+              title="手动记录一条纸面注单（盘口/赔率自己填）">记一笔</button>
+          </div>` : ""}
         </article>
       `;
     })
     .join("");
+}
+
+// ---- 赛前看板「记一笔」：手动填盘口/赔率/注额 ----
+
+const MANUAL_SIDES = {
+  spread: [["home", "主"], ["away", "客"]],
+  total: [["over", "大"], ["under", "小"]],
+  moneyline: [["home", "主"], ["away", "客"]],
+};
+
+function manualModelProb(game, market, side, line) {
+  const pred = game && game.prediction;
+  if (!pred) return null;
+  const cdf = typeof window.jsNormalCdf === "function" ? window.jsNormalCdf : null;
+  if (market === "moneyline") {
+    if (pred.home_win_prob == null) return null;
+    return side === "home" ? pred.home_win_prob : 1 - pred.home_win_prob;
+  }
+  if (!cdf || !Number.isFinite(Number(line))) return null;
+  const L = Number(line);
+  if (market === "spread" && pred.sigma_margin) {
+    const p = cdf((pred.pred_margin + L) / pred.sigma_margin);
+    return Math.min(Math.max(side === "home" ? p : 1 - p, 0.0001), 0.9999);
+  }
+  if (market === "total" && pred.sigma_total) {
+    const over = 1 - cdf((L - pred.pred_total) / pred.sigma_total);
+    return Math.min(Math.max(side === "over" ? over : 1 - over, 0.0001), 0.9999);
+  }
+  return null;
+}
+
+function closeManualBetPanel() {
+  document.getElementById("manual-bet-panel")?.remove();
+}
+
+function openManualBetPanel(game) {
+  closeManualBetPanel();
+  const pred = game.prediction || {};
+  const edge = game.best_edge || {};
+  const startMarket = ["spread", "total", "moneyline"].includes(edge.market) ? edge.market : "spread";
+  const lines = pred.lines || {};
+
+  const panel = document.createElement("div");
+  panel.className = "lm-panel";
+  panel.id = "manual-bet-panel";
+  panel.innerHTML = `
+    <div class="lm-panel-head">
+      <b>记一笔</b>
+      <span>${esc(teamShortZh(game.away.abbrev, game.away.name))} @ ${esc(teamShortZh(game.home.abbrev, game.home.name))} · ${esc(game.slate_date || state.date)}</span>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:repeat(2,1fr)">
+      <label>市场<select id="mb-market">
+        <option value="spread">让分</option>
+        <option value="total">大小分</option>
+        <option value="moneyline">胜负</option>
+      </select></label>
+      <label>方向<select id="mb-side"></select></label>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px">
+      <label>盘口<input id="mb-line" type="number" step="0.5"></label>
+      <label>赔率<input id="mb-price" type="number" step="0.01" min="1.01" value="1.91"></label>
+      <label>注额<input id="mb-stake" type="number" step="0.5" min="0.5" value="1"></label>
+    </div>
+    <div class="lm-panel-meta" id="mb-meta"></div>
+    <div class="lm-panel-actions">
+      <button class="btn small primary" id="mb-confirm">确认记录</button>
+      <button class="btn small" id="mb-cancel">取消</button>
+    </div>
+    <div class="lm-panel-note">手动录入：用当前赛前模型概率估算 EV（不是信号，也不会进入信号统计）。仅纸面跟踪。</div>`;
+  document.body.appendChild(panel);
+
+  const marketEl = panel.querySelector("#mb-market");
+  const sideEl = panel.querySelector("#mb-side");
+  const lineEl = panel.querySelector("#mb-line");
+  const priceEl = panel.querySelector("#mb-price");
+  const stakeEl = panel.querySelector("#mb-stake");
+  const metaEl = panel.querySelector("#mb-meta");
+
+  function applyMarket(market, keepSide = false) {
+    const prev = sideEl.value;
+    sideEl.innerHTML = MANUAL_SIDES[market]
+      .map(([v, label]) => `<option value="${v}">${label}</option>`)
+      .join("");
+    if (keepSide && MANUAL_SIDES[market].some(([v]) => v === prev)) sideEl.value = prev;
+    if (market === "moneyline") {
+      lineEl.value = "";
+      lineEl.disabled = true;
+    } else {
+      lineEl.disabled = false;
+      const def = market === "spread" ? lines.spread : lines.total;
+      lineEl.value = def != null ? Number(def).toFixed(1) : "";
+    }
+    if (edge.price && market === startMarket && edge.side) {
+      sideEl.value = edge.side;
+      priceEl.value = Number(edge.price).toFixed(2);
+    }
+  }
+
+  function renderMeta() {
+    const market = marketEl.value;
+    const side = sideEl.value;
+    const line = market === "moneyline" ? null : Number(lineEl.value);
+    const price = Number(priceEl.value);
+    const prob = manualModelProb(game, market, side, line);
+    const used = prob == null ? 0.5 : prob;
+    const ev = used * price - 1;
+    metaEl.innerHTML =
+      `模型概率 <b>${fmtPct(used)}</b> · EV <b class="${ev >= 0 ? "pos" : "neg"}">${fmtSignedPct(ev)}</b>` +
+      (prob == null ? "（无预测/无盘口，按 50% 记录）" : "");
+  }
+
+  marketEl.value = startMarket;
+  applyMarket(startMarket);
+  renderMeta();
+
+  marketEl.addEventListener("change", () => {
+    applyMarket(marketEl.value);
+    renderMeta();
+  });
+  sideEl.addEventListener("change", renderMeta);
+  lineEl.addEventListener("input", renderMeta);
+  priceEl.addEventListener("input", renderMeta);
+
+  stakeEl.focus();
+  stakeEl.select();
+
+  panel.querySelector("#mb-cancel").addEventListener("click", closeManualBetPanel);
+  panel.querySelector("#mb-confirm").addEventListener("click", async () => {
+    const market = marketEl.value;
+    const side = sideEl.value;
+    const price = Number(priceEl.value);
+    const stake = Number(stakeEl.value);
+    const line = market === "moneyline" ? null : Number(lineEl.value);
+    if (!Number.isFinite(price) || price <= 1) return toast("赔率必须大于 1");
+    if (!Number.isFinite(stake) || stake <= 0) return toast("注额无效");
+    if (market !== "moneyline" && !Number.isFinite(line)) return toast("请输入盘口");
+    const prob = manualModelProb(game, market, side, line);
+    const used = prob == null ? 0.5 : prob;
+    const marketZh = { spread: "让分", total: "大小", moneyline: "胜负" }[market];
+    const sideZh = MANUAL_SIDES[market].find(([v]) => v === side)?.[1] || side;
+    const lineText = line == null ? "" : market === "spread" ? " " + fmtSpread(line) : " " + fmtTotal(line);
+    try {
+      await api("/api/bets", {
+        method: "POST",
+        body: JSON.stringify({
+          game_id: game.id,
+          slate_date: game.slate_date || state.date,
+          matchup: `${teamShortZh(game.away.abbrev, game.away.name)}@${teamShortZh(game.home.abbrev, game.home.name)}`,
+          market,
+          side,
+          line,
+          price,
+          stake,
+          model_prob: used,
+          ev: used * price - 1,
+          note: `手动 ${marketZh} ${sideZh}${lineText} @${price.toFixed(2)} · ${game.slate_date || state.date}`,
+        }),
+      });
+      closeManualBetPanel();
+      toast("已记录纸面注单");
+      await load({ silent: true });
+    } catch (error) {
+      toast(`记录失败：${error.message}`);
+    }
+  });
 }
 
 async function load({ repredict = false, silent = false } = {}) {
@@ -977,9 +1147,16 @@ $("#modal").addEventListener("click", (event) => {
   if (event.target.id === "modal") $("#modal").hidden = true;
 });
 $("#games").addEventListener("click", async (event) => {
+  const manual = event.target.closest("[data-manual-bet]");
   const quick = event.target.closest("[data-quick-bet]");
   const card = event.target.closest("[data-game]");
   if (!card) return;
+  if (manual) {
+    event.stopPropagation();
+    const game = (state.slateGames || []).find((g) => String(g.id) === String(manual.dataset.gameId));
+    if (game) openManualBetPanel(game);
+    return;
+  }
   if (quick) {
     event.stopPropagation();
     await openGame(quick.dataset.gameId || card.dataset.game);

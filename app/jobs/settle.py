@@ -210,6 +210,15 @@ def bet_kind(bet: dict) -> str:
     return "pregame"
 
 
+def bet_source(bet: dict) -> str:
+    """两种来源：真实下注 vs 信号模拟。
+
+    - `mine`：你真实记录过的注单（跟信号记一笔 / 手动录入 / 滚球）
+    - `sim`：`scripts/backfill_bets.py` 用历史信号回填的模拟注单
+    """
+    return "sim" if bet_kind(bet) == "backfill" else "mine"
+
+
 def _stats(rows: list[dict]) -> dict:
     """一组已结算注单的统计（含分市场拆分）。"""
     decided = [bet for bet in rows if bet["result"] in ("won", "lost", "push")]
@@ -270,8 +279,7 @@ def summarize(conn: sqlite3.Connection) -> dict:
     result = _stats(settled)
     result["open"] = len(open_rows)
 
-    # 赛前 / 滚球分开统计：滚球注单的 CLV 口径不同（相对下注时的滚球线），
-    # 混在一起会污染赛前 CLV 结论。
+    # 赛前 / 滚球 / 回填（细分）
     by_kind: dict[str, dict] = {}
     for kind in ("pregame", "live", "backfill"):
         rows = [bet for bet in settled if bet_kind(bet) == kind]
@@ -279,4 +287,13 @@ def summarize(conn: sqlite3.Connection) -> dict:
         stats["open"] = sum(1 for bet in open_rows if bet_kind(bet) == kind)
         by_kind[kind] = stats
     result["by_kind"] = by_kind
+
+    # 真实 vs 模拟（主口径）：模拟 = 回填，真实 = 其余
+    by_source: dict[str, dict] = {}
+    for source in ("mine", "sim"):
+        rows = [bet for bet in settled if bet_source(bet) == source]
+        stats = _stats(rows)
+        stats["open"] = sum(1 for bet in open_rows if bet_source(bet) == source)
+        by_source[source] = stats
+    result["by_source"] = by_source
     return result
