@@ -607,7 +607,7 @@ def live_odds_snapshots(game_id: str, limit: int = 500) -> dict:
     try:
         rows = conn.execute(
             """
-            SELECT period, clock, score, market_raw, detail_raw, captured_at
+            SELECT period, clock, score, market_raw, suspended, captured_at
             FROM live_odds WHERE game_id=? ORDER BY id LIMIT ?
             """,
             (game_id, max(1, min(limit, 3000))),
@@ -615,19 +615,11 @@ def live_odds_snapshots(game_id: str, limit: int = 500) -> dict:
     finally:
         conn.close()
     points = []
-    from .ingest.hao import parse_live_market
-
     for r in rows:
         item = dict(r)
-        try:
-            market = json.loads(item.pop("market_raw"))
-            parsed = parse_live_market(market)
-            item["suspended"] = bool(parsed.get("suspended"))
-            item["has_market"] = not parsed.get("empty", False)
-        except (TypeError, ValueError):
-            item["suspended"] = None
-            item["has_market"] = None
+        item.pop("market_raw", None)
         item.pop("detail_raw", None)
+        item["suspended"] = bool(item.get("suspended"))
         points.append(item)
     return {"game_id": game_id, "count": len(points), "points": points}
 

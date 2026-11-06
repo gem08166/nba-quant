@@ -107,8 +107,11 @@ function lbSettle(games) {
 }
 
 function lbKind(bet) {
-  // 与后端 settle.bet_kind 同口径：滚球注单备注含「滚球」
-  return String((bet && bet.note) || "").includes("滚球") ? "live" : "pregame";
+  // 与后端 settle.bet_kind 同口径：滚球 / 回填 / 赛前
+  const note = String((bet && bet.note) || "");
+  if (note.includes("滚球")) return "live";
+  if (note.includes("回填")) return "backfill";
+  return "pregame";
 }
 
 function lbSummary(bets) {  const settled = bets.filter((bet) => bet.result !== "open");
@@ -133,7 +136,7 @@ function lbSummary(bets) {  const settled = bets.filter((bet) => bet.result !== 
     bucket.avg_clv_line = null;
   }
   const byKind = {};
-  for (const kind of ["pregame", "live"]) {
+  for (const kind of ["pregame", "live", "backfill"]) {
     const rows = bets.filter((bet) => lbKind(bet) === kind);
     const settledRows = rows.filter((bet) => bet.result !== "open");
     const kStake = settledRows.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);

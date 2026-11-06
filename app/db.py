@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS live_odds (
     score       TEXT,
     market_raw  TEXT NOT NULL,
     detail_raw  TEXT,
+    suspended   INTEGER,
     captured_at TEXT NOT NULL,
     UNIQUE(game_id, book, period, clock, score)
 );
@@ -227,6 +228,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE games ADD COLUMN live_home_score INTEGER")
     if games_columns and "live_away_score" not in games_columns:
         conn.execute("ALTER TABLE games ADD COLUMN live_away_score INTEGER")
+
+    # 滚球封盘标记：价格全 0.00 / 市场消失即封盘。存成列后分析可以直接
+    # WHERE suspended=0 过滤，不必每次重新解析 market_raw。
+    live_odds_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(live_odds)")
+    }
+    if live_odds_columns and "suspended" not in live_odds_columns:
+        conn.execute("ALTER TABLE live_odds ADD COLUMN suspended INTEGER")
+        # 回填历史行（只处理还没有标记的行）
+        try:
+            from .ingest.hao import parse_live_market
+            import json as _json
+
+            pending = conn.execute(
+                "SELECT id, market_raw FROM live_odds WHERE suspended IS NULL"
+            ).fetchall()
+            for row in pending:
+                try:
+                    parsed = parse_live_market(_json.loads(row["market_raw"]))
+                    flag = 1 if parsed.get("suspended") else 0
+                except (TypeError, ValueError):
+                    flag = None
+                conn.execute(
+                    "UPDATE live_odds SET suspended=? WHERE id=?", (flag, row["id"])
+                )
+        except Exception:  # noqa: BLE001 - 回填失败不影响启动
+            pass
     conn.commit()
     # Tables added in 0.3 (players / PBP / RAPM). CREATE IF NOT EXISTS is
     # idempotent, but skip the DDL entirely when the tables already exist:

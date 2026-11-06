@@ -41,10 +41,6 @@ function renderKindStats(byKind) {
   const box = document.getElementById("bets-kinds");
   if (!box) return;
   const rows = byKind || {};
-  const pre = rows.pregame || null;
-  const live = rows.live || null;
-  const hasLive = live && (live.settled > 0 || live.open > 0);
-  const cell = (v) => (v == null || v === "" ? "—" : v);
   const line = (label, s) => {
     if (!s) return "";
     const roi = s.roi != null ? fmtSignedPct(s.roi) : "—";
@@ -56,18 +52,32 @@ function renderKindStats(byKind) {
       <td>${s.settled}</td>
       <td>${s.open}</td>
       <td class="${profitCls}">${s.settled || s.open ? (s.profit >= 0 ? "+" : "") + s.profit.toFixed(2) : "—"}</td>
-      <td class="${s.roi > 0 ? "pos" : ""}">${cell(roi)}</td>
-      <td>${cell(hit)}</td>
-      <td>${cell(clv)}</td>
+      <td class="${s.roi > 0 ? "pos" : ""}">${roi}</td>
+      <td>${hit}</td>
+      <td>${clv}</td>
     </tr>`;
   };
+  const live = rows.live || {};
+  const back = rows.backfill || {};
+  const hasLive = (live.settled || 0) + (live.open || 0) > 0;
+  const hasBack = (back.settled || 0) + (back.open || 0) > 0;
   box.innerHTML = `
     <div class="table-wrap" style="margin-bottom:16px"><table>
-      <thead><tr><th>场景</th><th>已结算</th><th>未结算</th><th>盈亏</th><th>ROI</th><th>命中率</th><th>平均 CLV</th></tr></thead>
+      <thead><tr><th>来源</th><th>已结算</th><th>未结算</th><th>盈亏</th><th>ROI</th><th>命中率</th><th>平均 CLV</th></tr></thead>
       <tbody>
-        ${line("赛前", pre)}
+        ${line("赛前（跟信号）", rows.pregame)}
         ${line("滚球", live)}
-        ${!hasLive ? `<tr><td colspan="7" style="color:var(--muted);font-size:11.5px">还没有滚球注单（赛时面板的盘口点「主/客/大/小」即可记一笔）。滚球 CLV 口径与赛前不同，单独统计。</td></tr>` : ""}
+        ${line("历史回填", back)}
+        ${
+          !hasLive
+            ? `<tr><td colspan="7" style="color:var(--muted);font-size:11.5px">还没有滚球注单（赛时面板的盘口点「主/客/大/小」即可记一笔）。滚球 CLV 口径与赛前不同，单独统计。</td></tr>`
+            : ""
+        }
+        ${
+          hasBack
+            ? `<tr><td colspan="7" style="color:var(--muted);font-size:11.5px">「历史回填」是脚本用历史信号补的回顾性注单，不是当时的真实决策；仅供扩大样本，不要当成绩看。</td></tr>`
+            : ""
+        }
       </tbody>
     </table></div>`;
 }
@@ -142,8 +152,18 @@ function liveBadgeFor(bet) {
 
 function ledgerKind(bet) {
   // API 模式带 kind 字段；静态模式从备注推断（与后端 settle.bet_kind 同口径）
-  return bet.kind || (String(bet.note || "").includes("滚球") ? "live" : "pregame");
+  if (bet.kind) return bet.kind;
+  const note = String(bet.note || "");
+  if (note.includes("滚球")) return "live";
+  if (note.includes("回填")) return "backfill";
+  return "pregame";
 }
+
+const KIND_BADGE = {
+  live: '<span class="pill pill-live" title="赛时面板下的滚球注单">滚球</span>',
+  backfill: '<span class="pill pill-backfill" title="脚本用历史信号补的回顾性注单">回填</span>',
+  pregame: '<span style="color:var(--muted)">赛前</span>',
+};
 
 function renderLedger(bets) {
   const box = document.getElementById("bets-ledger");
@@ -174,9 +194,7 @@ function renderLedger(bets) {
                 data-goto-date="${esc(bet.slate_date || "")}"
                 data-goto-status="${esc(bet.game_status || "")}"
                 title="跳转到该场比赛">${esc(bet.matchup_zh || matchupZh(bet.matchup))}</button></td>
-              <td>${ledgerKind(bet) === "live"
-                ? '<span class="pill pill-live" title="赛时面板下的滚球注单">滚球</span>'
-                : '<span style="color:var(--muted)">赛前</span>'}</td>
+              <td>${KIND_BADGE[ledgerKind(bet)] || KIND_BADGE.pregame}</td>
               <td>${marketLabel(bet.market)}</td>
               <td>${sideLabel(bet)}</td>
               <td>${line}</td>

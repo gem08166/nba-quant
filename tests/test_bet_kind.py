@@ -6,6 +6,7 @@ from app.jobs.settle import bet_kind, summarize
 
 def test_bet_kind():
     assert bet_kind({"note": "滚球 大小 大 220.5 @1.90 · 好体育 q2 11:13"}) == "live"
+    assert bet_kind({"note": "回填 赛前信号 · hao-tiyu · EV +8.0% · 2026-11-04"}) == "backfill"
     assert bet_kind({"note": "draftkings / model 61.9% / fair 56.2%"}) == "pregame"
     assert bet_kind({"note": None}) == "pregame"
     assert bet_kind({}) == "pregame"

@@ -269,16 +269,16 @@ def live_market_snapshot(conn: sqlite3.Connection, game_id: str) -> dict | None:
     避免面板直接空白——但仍标记 suspended，不提供下单入口。
     """
     try:
-        rows = conn.execute(
+        latest = conn.execute(
             """
-            SELECT period, clock, score, market_raw, captured_at
-            FROM live_odds WHERE game_id=? ORDER BY id DESC LIMIT 60
+            SELECT id, period, clock, score, market_raw, captured_at, suspended
+            FROM live_odds WHERE game_id=? ORDER BY id DESC LIMIT 1
             """,
             (game_id,),
-        ).fetchall()
+        ).fetchone()
     except sqlite3.OperationalError:  # 旧库还没有 live_odds 表
         return None
-    if not rows:
+    if latest is None:
         return None
 
     from ..ingest.hao import parse_live_market
@@ -294,12 +294,10 @@ def live_market_snapshot(conn: sqlite3.Connection, game_id: str) -> dict | None:
 
     def _parse(row) -> dict | None:
         try:
-            market = json.loads(row["market_raw"])
+            return parse_live_market(json.loads(row["market_raw"]))
         except (TypeError, ValueError):
             return None
-        return parse_live_market(market)
 
-    latest = rows[0]
     parsed = _parse(latest)
     if parsed is None:
         return None
@@ -308,20 +306,35 @@ def live_market_snapshot(conn: sqlite3.Connection, game_id: str) -> dict | None:
         parsed.get("handicap") or parsed.get("total") or parsed.get("moneyline")
     )
     if not has_prices:
-        for row in rows[1:]:
-            prev = _parse(row)
-            if prev and (
-                prev.get("handicap") or prev.get("total") or prev.get("moneyline")
+        # 用 suspended 列直接定位最近一次有效快照，避免逐条重新解析
+        try:
+            prev = conn.execute(
+                """
+                SELECT period, clock, score, market_raw, captured_at
+                FROM live_odds
+                WHERE game_id=? AND COALESCE(suspended, 0) = 0 AND id < ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (game_id, latest["id"]),
+            ).fetchone()
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            prev = None
+        if prev is not None:
+            prev_parsed = _parse(prev)
+            if prev_parsed and (
+                prev_parsed.get("handicap")
+                or prev_parsed.get("total")
+                or prev_parsed.get("moneyline")
             ):
+                prev_age = _age(prev["captured_at"])
                 parsed["last_valid"] = {
-                    **prev,
-                    "period": row["period"],
-                    "clock": row["clock"],
-                    "score": row["score"],
-                    "captured_at": row["captured_at"],
-                    "age_seconds": round(age, 0) if (age := _age(row["captured_at"])) is not None else None,
+                    **prev_parsed,
+                    "period": prev["period"],
+                    "clock": prev["clock"],
+                    "score": prev["score"],
+                    "captured_at": prev["captured_at"],
+                    "age_seconds": round(prev_age, 0) if prev_age is not None else None,
                 }
-                break
 
     age = _age(latest["captured_at"])
     parsed.update(

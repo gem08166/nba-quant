@@ -21,7 +21,8 @@ def _conn():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             game_id TEXT NOT NULL, book TEXT NOT NULL DEFAULT 'hao-tiyu',
             iid TEXT, period TEXT, clock TEXT, score TEXT,
-            market_raw TEXT NOT NULL, detail_raw TEXT, captured_at TEXT NOT NULL,
+            market_raw TEXT NOT NULL, detail_raw TEXT, suspended INTEGER,
+            captured_at TEXT NOT NULL,
             UNIQUE(game_id, book, period, clock, score)
         );
         INSERT INTO teams VALUES (1,'LAL','Los Angeles Lakers'),(2,'BOS','Boston Celtics');
@@ -92,6 +93,33 @@ def test_no_live_matches(monkeypatch):
     monkeypatch.setattr(hao, "fetch_inplay_matches", lambda: [])
     stats = hao.store_live_odds(_conn(), "2026-11-06")
     assert stats == {"live_nba": 0, "matched": 0, "written": 0}
+
+
+def test_suspended_flag_stored(monkeypatch):
+    """封盘快照要落库并打上 suspended=1（分析时可直接过滤）。"""
+    monkeypatch.setattr(hao, "fetch_inplay_matches", lambda: [MATCH])
+    monkeypatch.setattr(
+        hao,
+        "fetch_live_market",
+        lambda iid: {
+            "detail": {"period": "q4", "time": "10:37", "score": "99-75"},
+            "market": {
+                "ah": [{"k": "-20.5", "h": "0.00", "a": "0.00", "absK": "-44.5"}],
+                "ou": [{"ov": "0.00", "ud": "0.00", "k": "220.5"}],
+                "1x2": None,
+            },
+        },
+    )
+    conn = _conn()
+    hao.store_live_odds(conn, "2026-11-06")
+    row = conn.execute("SELECT suspended FROM live_odds").fetchone()
+    assert row["suspended"] == 1
+
+
+def test_normal_snapshot_not_suspended(patched):
+    conn = _conn()
+    hao.store_live_odds(conn, "2026-11-06")
+    assert conn.execute("SELECT suspended FROM live_odds").fetchone()["suspended"] == 0
 
 
 def test_unmatched_team_skipped(monkeypatch):

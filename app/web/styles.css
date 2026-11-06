@@ -976,6 +976,12 @@ td.neg { color: var(--muted); }
   background: #211a0e;
   font-weight: 600;
 }
+.pill-backfill {
+  color: var(--blue);
+  border-color: #2c4a6b;
+  background: #121b26;
+  font-weight: 600;
+}
 
 .inj-list { display: grid; gap: 6px; }
 .inj {

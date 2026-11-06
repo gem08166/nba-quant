@@ -485,12 +485,14 @@ def store_live_odds(conn, slate_date: str) -> dict:
         if not market:
             continue
         d = parse_live_detail(detail.get("detail"))
+        parsed_market = parse_live_market(market)
+        suspended = 1 if parsed_market.get("suspended") else 0
         cur = conn.execute(
             """
             INSERT OR IGNORE INTO live_odds
                 (game_id, book, iid, period, clock, score,
-                 market_raw, detail_raw, captured_at)
-            VALUES (?, 'hao-tiyu', ?, ?, ?, ?, ?, ?, ?)
+                 market_raw, detail_raw, suspended, captured_at)
+            VALUES (?, 'hao-tiyu', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 game["id"],
@@ -500,6 +502,7 @@ def store_live_odds(conn, slate_date: str) -> dict:
                 d["score"],
                 json.dumps(market, ensure_ascii=False),
                 json.dumps(detail.get("detail") or {}, ensure_ascii=False),
+                suspended,
                 captured_at,
             ),
         )

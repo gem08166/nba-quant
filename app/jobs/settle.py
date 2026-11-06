@@ -191,16 +191,23 @@ def capture_closing(
 
 
 LIVE_NOTE_TAG = "滚球"
+BACKFILL_NOTE_TAG = "回填"
 
 
 def bet_kind(bet: dict) -> str:
-    """区分赛前注单与滚球注单。
+    """区分注单来源：赛前信号 / 滚球 / 历史回填。
 
-    滚球注单是「记一笔」时从赛时面板下的，备注固定以"滚球 ..."开头
-    （见 app/web/live.js）。赛前注单的备注是信号描述，不含该标记。
+    - 滚球：赛时面板「记一笔」下的，备注含「滚球」
+    - 回填：`scripts/backfill_bets.py` 用历史信号补的，备注以「回填」开头
+    - 赛前：其余（真实跟信号记的）
+    回填是回顾性数据，必须和真实决策分开统计。
     """
     note = bet.get("note") or ""
-    return "live" if LIVE_NOTE_TAG in note else "pregame"
+    if LIVE_NOTE_TAG in note:
+        return "live"
+    if BACKFILL_NOTE_TAG in note:
+        return "backfill"
+    return "pregame"
 
 
 def _stats(rows: list[dict]) -> dict:
@@ -266,7 +273,7 @@ def summarize(conn: sqlite3.Connection) -> dict:
     # 赛前 / 滚球分开统计：滚球注单的 CLV 口径不同（相对下注时的滚球线），
     # 混在一起会污染赛前 CLV 结论。
     by_kind: dict[str, dict] = {}
-    for kind in ("pregame", "live"):
+    for kind in ("pregame", "live", "backfill"):
         rows = [bet for bet in settled if bet_kind(bet) == kind]
         stats = _stats(rows)
         stats["open"] = sum(1 for bet in open_rows if bet_kind(bet) == kind)

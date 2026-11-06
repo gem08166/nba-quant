@@ -625,3 +625,27 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **交互保护**：`suspended` 或 `stale` 时**不渲染「记一笔」按钮**，只展示数字；注释说明原因。这样不会把 0.00 当成赔率记进台账、也不会用过期价格下注。
 - **分析层**：`/api/live-odds/{game_id}` 每条快照附带 `suspended` / `has_market`，后续做"模型 vs 市场"对照时可以过滤掉封盘样本。
 - **实测**：真实数据里 ORL@PHX（Q4 大比分）确实处于封盘，面板显示 `封盘中` + 上次有效 `Q3 07:34 让分 -12.5`，`lm-bet` 按钮数为 0。**98 passed**。
+
+### 10.34 2026-11-06 `live_odds.suspended` 列 + 历史注单回填
+
+**1. 封盘标记落库**
+- `live_odds` 新增 `suspended INTEGER`；`_migrate` 自动 `ALTER` 并**回填历史行**（逐行解析 `market_raw`，失败置 NULL）。
+- `store_live_odds` 写入时就算好：价格全 0 / 市场消失 → `1`。
+- `live_market_snapshot` 找「上次有效」改成直接 `WHERE COALESCE(suspended,0)=0`，不再逐条重新解析 JSON（原来最多回溯 60 条）。
+- `/api/live-odds/{game_id}` 直接带 `suspended`，分析可 `WHERE suspended=0` 过滤。
+- 迁移实测：17 条正常 + 1 条封盘，标记正确。
+
+**2. 历史注单回填**（`scripts/backfill_bets.py`）
+- 遍历有终局比分的预测，取**每个 (game, market, side, line) 首次出现的 signal=True**（模拟当时下注），用信号时刻可拿到的报价（`_entry_snapshot`），拿不到才退回信号价。
+- 用 `settle_edge` 立即结算，CLV/线移动按赛前收盘价计算。
+- 备注统一 `回填 赛前信号 · <book> · EV … · <日期>`，**与真实决策区分**。
+- 参数：`--stake`（默认 1）、`--start/--end`、`--dry-run`；重复运行会跳过已存在的注单（幂等）。
+- **首次回填结果：21 条 · 10 胜 11 负 · 盈亏 −1.86 · ROI −8.9% · 命中 47.6%**（与此前 signal_backtest 的负 ROI 结论一致）。
+
+**3. 注单分三类统计**
+- `bet_kind()` 扩展为 `pregame / live / backfill`（备注含「滚球」→ live，含「回填」→ backfill）。
+- `summarize.by_kind` 三组；收益页对比表变成「赛前（跟信号）/ 滚球 / 历史回填」三行，并注明回填是回顾性数据、不能当成绩。
+- 台账「来源」列三种标签：赛前（灰字）/ 滚球（琥珀）/ 回填（冷蓝）。
+- 静态模式 `localbets.js` 同步。
+
+**4. 测试**：`tests/test_backfill_bets.py` 4 例（只回填一次、用当时报价、幂等、dry-run、日期过滤）+ 封盘入库 2 例 + `bet_kind` 回填分类。**104 passed**。
