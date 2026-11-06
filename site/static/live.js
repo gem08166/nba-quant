@@ -307,14 +307,34 @@ function liveMarketBlock(game) {
 
 // ---- 滚球「记一笔」：浮动面板（卡片每 30 秒重绘也不会打断填写）----
 
+// 按自定义盘口重算模型概率（与后端 devig 同式）：
+//   让分：cover = Φ((proj_margin + line) / σ_margin)
+//   大小：over  = 1 − Φ((line − proj_total) / σ_total)
+function lmProbForLine(game, market, side, line) {
+  const live = game && game.live;
+  const cdf = typeof window.jsNormalCdf === "function" ? window.jsNormalCdf : null;
+  if (!live || !cdf || line == null || !Number.isFinite(Number(line))) return null;
+  const L = Number(line);
+  if (market === "spread" && live.sigma_margin) {
+    const p = cdf((live.proj_margin + L) / live.sigma_margin);
+    return Math.min(Math.max(side === "home" ? p : 1 - p, 0.0001), 0.9999);
+  }
+  if (market === "total" && live.sigma_total) {
+    const over = 1 - cdf((L - live.proj_total) / live.sigma_total);
+    return Math.min(Math.max(side === "over" ? over : 1 - over, 0.0001), 0.9999);
+  }
+  return null;
+}
+
 function openLmBetPanel(game, data) {
   closeLmBetPanel();
   const price = Number(data.lmPrice);
   const probRaw = data.lmProb === "" ? null : Number(data.lmProb);
-  const prob = Number.isFinite(probRaw) ? probRaw : 0.5;
+  const baseProb = Number.isFinite(probRaw) ? probRaw : 0.5;
   const marketZh = { spread: "让分", total: "大小", moneyline: "胜负" }[data.lmMarket] || data.lmMarket;
   const line = data.lmLine === "" ? null : Number(data.lmLine);
   const lineText = line == null ? "" : data.lmMarket === "spread" ? " " + fmtSpread(line) : " " + fmtTotal(line);
+  const editableLine = data.lmMarket !== "moneyline";
 
   const panel = document.createElement("div");
   panel.className = "lm-panel";
@@ -324,31 +344,65 @@ function openLmBetPanel(game, data) {
       <b>记一笔</b>
       <span>${esc(game.matchup_zh || game.matchup)} · ${esc(marketZh)} ${esc(data.lmLabel)}${esc(lineText)}</span>
     </div>
-    <div class="lm-panel-grid">
+    <div class="lm-panel-grid" style="grid-template-columns:repeat(${editableLine ? 3 : 2},1fr)">
       <label>注额<input id="lm-stake" type="number" step="0.5" min="0.5" value="1"></label>
+      ${editableLine ? `<label>盘口<input id="lm-line" type="number" step="0.5" value="${line ?? ""}"></label>` : ""}
       <label>赔率<input id="lm-price" type="number" step="0.01" min="1.01" value="${price.toFixed(2)}"></label>
     </div>
-    <div class="lm-panel-meta">
-      模型概率 <b>${fmtPct(prob)}</b> · EV <b class="${prob * price - 1 >= 0 ? "pos" : "neg"}">${fmtSignedPct(prob * price - 1)}</b>
-      ${data.lmProb === "" ? "（模型概率缺失，按 50% 记录）" : ""}
-    </div>
+    <div class="lm-panel-meta" id="lm-meta"></div>
     <div class="lm-panel-actions">
       <button class="btn small primary" id="lm-confirm">确认记录</button>
       <button class="btn small" id="lm-cancel">取消</button>
     </div>
-    <div class="lm-panel-note">滚球注单按当前状态下的模型概率记录（赛前模型投射，未经滚球验证）；仅纸面跟踪。</div>`;
+    <div class="lm-panel-note">滚球注单按当前状态下的模型概率记录（赛前模型投射，未经滚球验证）；盘口可改成你实际看到的线，概率会跟着重算。仅纸面跟踪。</div>`;
   document.body.appendChild(panel);
 
-  const stakeEl = panel.querySelector("#lm-stake");
-  stakeEl?.focus();
-  stakeEl?.select();
+  const els = {
+    stake: panel.querySelector("#lm-stake"),
+    line: panel.querySelector("#lm-line"),
+    price: panel.querySelector("#lm-price"),
+    meta: panel.querySelector("#lm-meta"),
+  };
+
+  // 当前生效的模型概率：改了盘口就按新盘口重算
+  function currentProb() {
+    if (!editableLine) return { prob: baseProb, recalc: false, missing: data.lmProb === "" };
+    const lineValue = els.line ? Number(els.line.value) : NaN;
+    const p = lmProbForLine(game, data.lmMarket, data.lmSide, lineValue);
+    if (p != null) return { prob: p, recalc: true, missing: false };
+    return { prob: baseProb, recalc: false, missing: data.lmProb === "" };
+  }
+
+  function renderMeta() {
+    const { prob, recalc, missing } = currentProb();
+    const px = Number(els.price.value) || price;
+    const ev = prob * px - 1;
+    els.meta.innerHTML =
+      `模型概率 <b>${fmtPct(prob)}</b> · EV <b class="${ev >= 0 ? "pos" : "neg"}">${fmtSignedPct(ev)}</b>` +
+      (recalc ? ` <span class="lm-meta-tip">（按盘口 ${Number(els.line.value).toFixed(1)} 重算）</span>` : "") +
+      (missing ? "（模型概率缺失，按 50% 记录）" : "");
+  }
+
+  renderMeta();
+  els.line?.addEventListener("input", renderMeta);
+  els.price.addEventListener("input", renderMeta);
+
+  els.stake.focus();
+  els.stake.select();
 
   panel.querySelector("#lm-cancel").addEventListener("click", closeLmBetPanel);
   panel.querySelector("#lm-confirm").addEventListener("click", async () => {
-    const stake = Number(panel.querySelector("#lm-stake").value);
-    const px = Number(panel.querySelector("#lm-price").value);
+    const stake = Number(els.stake.value);
+    const px = Number(els.price.value);
     if (!Number.isFinite(stake) || stake <= 0) return toast("注额无效");
     if (!Number.isFinite(px) || px <= 1) return toast("赔率必须大于 1");
+    let finalLine = null;
+    if (editableLine) {
+      finalLine = els.line ? Number(els.line.value) : null;
+      if (!Number.isFinite(finalLine)) return toast("请输入盘口");
+    }
+    const { prob } = currentProb();
+    const showLine = finalLine == null ? "" : data.lmMarket === "spread" ? " " + fmtSpread(finalLine) : " " + fmtTotal(finalLine);
     const stamp = [game.live_market?.period, game.live_market?.clock].filter(Boolean).join(" ");
     try {
       await api("/api/bets", {
@@ -360,12 +414,12 @@ function openLmBetPanel(game, data) {
           matchup: game.matchup_zh || game.matchup,
           market: data.lmMarket,
           side: data.lmSide,
-          line,
+          line: finalLine,
           price: px,
           stake,
           model_prob: prob,
           ev: prob * px - 1,
-          note: `滚球 ${marketZh} ${data.lmLabel}${lineText} @${px.toFixed(2)} · 好体育 ${stamp}`.trim(),
+          note: `滚球 ${marketZh} ${data.lmLabel}${showLine} @${px.toFixed(2)} · 好体育 ${stamp}`.trim(),
         }),
       });
       closeLmBetPanel();

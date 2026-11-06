@@ -760,6 +760,7 @@ tr.row-bettable td:first-child { font-weight: 700; color: #c3e6cd; }
   line-height: 1.5;
   color: var(--muted);
 }
+.lm-meta-tip { color: var(--blue); }
 
 .plays {
   margin-top: 9px;
