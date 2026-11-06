@@ -1100,6 +1100,9 @@ body.static-mode .bets-scope::after {
   .stat { flex: 1 1 40%; min-width: 0; border-bottom: 1px solid var(--line-soft); }
   .live-labels { margin-left: 0; }
   .stats { border-radius: var(--radius); }
+  /* 窄屏：赛时标题栏只留「刷新数据」按钮，说明文字会挤 */
+  .live-hint { display: none; }
+  .live-header { flex-wrap: wrap; gap: 6px 8px; }
 }
 
 /* 注单台账：比赛名做成可点击链接（跳到赛时/看板并高亮该场） */
