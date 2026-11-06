@@ -416,6 +416,8 @@ async function espnLive(date) {
       away_name_zh: boardGame ? (boardGame.away.name_zh || teamNameZh(boardGame.away.name, boardGame.away.abbrev)) : "",
       tipoff: boardGame ? boardGame.tipoff : event.date,
       ...parsed,
+      // 滚球盘口（静态模式）：导出时抓的最新主盘，只有进行中的比赛才有
+      live_market: boardGame?.live_market || null,
       pregame: pred
         ? {
             pred_margin: pred.pred_margin,

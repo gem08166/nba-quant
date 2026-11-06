@@ -326,7 +326,9 @@ function liveCard(game) {
           : ""
       }`;
   } else if (game.state === "in" && !pred) {
-    liveBlock = `<div class="inj" style="color:var(--muted)">没有赛前预测（该场未生成 prediction），无法做投影。</div>`;
+    liveBlock =
+      liveMarketBlock(game) +
+      `<div class="inj" style="color:var(--muted)">没有赛前预测（该场未生成 prediction），无法做投影。</div>`;
   } else if (game.state === "pre" && pred) {
     liveBlock = `<div class="meta"><span>赛前模型 ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)} · 主胜 ${fmtPct(pred.home_win_prob)}</span></div>`;
   } else if (game.state === "post") {

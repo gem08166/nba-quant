@@ -113,6 +113,19 @@ def main() -> None:
         rapm_data = rapm_top(limit=200, conn=conn)
         model = model_info(conn)
 
+        # 滚球盘口：手机是静态模式，没有 /api/live，所以把进行中比赛的
+        # 最新滚球主盘一起导出（同时顺带写入 live_odds 归档）。
+        try:
+            from app.ingest import hao as hao_live
+            from app.jobs.live import live_market_snapshot
+
+            hao_live.store_live_odds(conn, slate)
+            for item in board["games"]:
+                if item.get("status") in ("STATUS_IN_PROGRESS", "STATUS_HALFTIME"):
+                    item["live_market"] = live_market_snapshot(conn, item["id"])
+        except Exception as exc:  # noqa: BLE001 - 第二源必须可失败
+            print(f"  live market skipped: {exc}")
+
         # 最近比赛日的赛后复盘包：静态模式（手机）跳到往期日期时，
         # 需要赛前预测 + 盘口 + 信号历史才能渲染完整的赛后板块
         from scripts.history_pack import build_history

@@ -546,3 +546,13 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **同时修复一个已在线上生效的严重 bug**：`app/web/collector.js` 在另一个会话的提交（`4c5f3aa`）里多了一层重复的 `if (oddsKey) {` 而少一个 `}`，**整个文件解析失败**（`Unexpected token ')'`），导致手机采集端完全不可用。已删除重复判断。
 - **新增防护**：`tests/test_js_syntax.py` —— 轻量词法扫描（跳过注释/单双引号/模板字符串含 `${}` 嵌套/正则字面量），检查 `() [] {}` 配平；含正反用例（能捕获"少一个花括号"，且不误报字符串/注释/正则里的括号）。pytest 覆盖不到 JS，这类事故以后会在 CI 拦下。
 - **测试**：`tests/test_live_market.py` 5 例（主盘选择、absK 关系、赔率换算、空市场）。**92 passed**。
+
+### 10.28 2026-11-06 滚球盘口接入手机静态模式
+
+- **问题**：`/api/live` 只有本机后端有；手机是静态模式（从坚果云/Pages 拉 `static.json`），看不到滚球盘。
+- **做法**：
+  1. `scripts/export_static.py`：导出时调用 `hao.store_live_odds(conn, slate)`（顺带归档），再对进行中的比赛写 `item["live_market"]`（复用 `live.live_market_snapshot()`）。
+  2. `app/web/static.js::espnLive()`：把 `boardGame.live_market` 透传到 item → 赛时卡片复用同一个 `liveMarketBlock()` 渲染。
+  3. `app/web/live.js`：没有赛前预测的进行中比赛也显示滚球盘（原来只显示"无法做投影"）。
+- **刷新频率**：`odds-refresh.yml` 每 30 分钟跑一次 `export_static`，所以手机端最迟 30 分钟更新一次滚球盘。
+- **验证**：静态模式实测渲染 `滚球盘口 · 好体育 · Q1 00:46 · 让分 -6.5（1.87/1.89）· 大小 226.5（1.85/1.91）· 胜负 1.40/3.15`；`absK = k − margin` 第三次独立验证通过（-15.5 = -6.5 − 9）。
