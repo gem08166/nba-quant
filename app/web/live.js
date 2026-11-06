@@ -255,6 +255,48 @@ function lmBetButton(game, market, side, line, price, label) {
   );
 }
 
+// 赛时页「刷新数据」：手动 ingest + 抓滚球盘口 + 记录胜率轨迹，然后重绘。
+// watch 每 15 分钟才跑一轮，刚开赛时滚球盘可能还没入库——手动点一下立刻补上。
+async function refreshLiveData() {
+  const btn = document.getElementById("live-refresh");
+  if (!btn) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "刷新中…";
+  try {
+    await detectMode();
+    if (window.APP_MODE === "static") {
+      // 静态模式没有后端：只能重新拉 ESPN 实时比分，盘口等下一次静态快照（≤30 分钟）
+      try {
+        await refreshStaticPayload?.();
+      } catch (_) {
+        /* 快照通道不可用时仍然刷新实时比分 */
+      }
+      await loadLive(true);
+      toast("已刷新比分（手机静态模式的滚球盘口每 30 分钟随快照更新）");
+      return;
+    }
+    const stats = await api(`/api/live/refresh?date=${encodeURIComponent(state.date)}`, {
+      method: "POST",
+    });
+    const odds = stats.live_odds || {};
+    const captured = odds.written != null ? odds.written : 0;
+    await loadLive(true);
+    toast(
+      captured
+        ? `已刷新：${odds.live_nba || 0} 场进行中，新增 ${captured} 条滚球盘口`
+        : `已刷新比分与状态（当前没有新的滚球盘口）`
+    );
+  } catch (error) {
+    toast(`刷新失败：${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+document.getElementById("live-refresh")?.addEventListener("click", refreshLiveData);
+
 function liveMarketBlock(game) {
   const mk = game.live_market;
   if (!mk) return "";

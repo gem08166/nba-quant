@@ -530,6 +530,40 @@ def live_get(date: str | None = None, conn: sqlite3.Connection = Depends(get_con
         raise HTTPException(status_code=502, detail=f"ESPN live fetch failed: {exc}") from exc
 
 
+@router.post("/live/refresh")
+def live_refresh(date: str | None = None, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """手动刷新赛时数据：重新 ingest 比分/状态 + 抓滚球盘口 + 记录胜率轨迹。
+
+    赛时页的「刷新」按钮用它——watch 每 15 分钟才跑一轮，刚开赛那几分钟
+    滚球盘口可能还没入库，手动点一下可以立刻补上。
+    """
+    slate = date or current_slate_date()
+    stats: dict = {"date": slate}
+
+    try:
+        from .ingest import service as ingest_service
+
+        stats["ingest"] = ingest_service.ingest_date(slate)
+    except Exception as exc:  # noqa: BLE001
+        stats["ingest_error"] = str(exc)
+
+    try:
+        from .ingest import hao
+
+        stats["live_odds"] = hao.store_live_odds(conn, slate)
+    except Exception as exc:  # noqa: BLE001
+        stats["live_odds_error"] = str(exc)
+
+    try:
+        from .models.live_wp import record_snapshot
+
+        stats["live_wp"] = record_snapshot(conn, slate)
+    except Exception as exc:  # noqa: BLE001
+        stats["live_wp_error"] = str(exc)
+
+    return stats
+
+
 @router.get("/live-wp")
 def live_wp_report() -> dict:
     """赛中胜率模型验收报告（研究模块，不产生下注信号）。"""
