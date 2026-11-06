@@ -376,6 +376,10 @@ def parse_live_market(market: dict | None) -> dict:
       且实测恒有 `absK = k - (主队得分 - 客队得分)`
     - `1x2`：胜负（篮球的"平"无意义，仅占位）
     多档盘口取赔付最均衡的一档作为主盘。
+
+    封盘判定（2026-11-06 实测）：盘口键存在但两侧价格全为 `"0.00"`、
+    `1x2` 变 `null`——例如 99-75 的第四节垃圾时间常见。
+    这类快照不能当成有效盘口，否则会记出假价格/假 EV。
     """
     mk = market or {}
     out: dict = {}
@@ -405,6 +409,17 @@ def parse_live_market(market: dict | None) -> dict:
     if home_ml and away_ml:
         out["moneyline"] = {"home": home_ml, "away": away_ml}
 
+    # 市场结构是否存在（键有值），用于区分「封盘」与「本来就没有这个市场」
+    had_structure = any(bool(mk.get(key)) for key in ("ah", "ou", "1x2", "ml"))
+    if not out:
+        out["suspended"] = had_structure
+        out["empty"] = not had_structure
+    else:
+        out["suspended"] = False
+        # 部分市场被封（比如让分还在、大小已停）
+        out["partial"] = not (
+            "handicap" in out and "total" in out and "moneyline" in out
+        )
     return out
 
 

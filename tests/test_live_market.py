@@ -49,7 +49,58 @@ def test_moneyline_converted():
 
 
 def test_empty_market_returns_empty():
-    assert hao.parse_live_market(None) == {}
-    assert hao.parse_live_market({}) == {}
-    # 只有占位 ML（0 赔率）时不输出胜负
-    assert hao.parse_live_market({"1x2": {"h": "0.00", "a": "0.00"}}) == {}
+    out = hao.parse_live_market(None)
+    assert out.get("empty") is True and out.get("suspended") is False
+    out = hao.parse_live_market({})
+    assert out.get("empty") is True and out.get("suspended") is False
+    # 只有占位 ML（0 赔率）时也不算封盘，只是没有可用市场
+    out = hao.parse_live_market({"1x2": {"h": "0.00", "a": "0.00"}})
+    assert "moneyline" not in out
+
+
+# 实测封盘样本（2026-11-06 99-75、第四节垃圾时间）：价格全为 "0.00"、1x2 变 null
+SUSPENDED = {
+    "ah": [
+        {"k": "-20.5", "h": "0.00", "a": "0.00", "absK": "-44.5"},
+        {"k": "-21.5", "h": "0.00", "a": "0.00", "absK": "-45.5"},
+    ],
+    "ou": [
+        {"ov": "0.00", "ud": "0.00", "k": "220.5"},
+        {"ov": "0.00", "ud": "0.00", "k": "221.5"},
+    ],
+    "1x2": None,
+    "ml": {"h": "0.00", "a": "0.00"},
+}
+
+
+def test_suspended_market_detected():
+    out = hao.parse_live_market(SUSPENDED)
+    assert out["suspended"] is True
+    assert "handicap" not in out and "total" not in out and "moneyline" not in out
+    assert not out.get("empty")
+
+
+def test_partial_market_flagged():
+    """让分还在、大小被封 → partial=True，且只展示可用部分。"""
+    market = {
+        "ah": [{"k": "-3.5", "h": "0.90", "a": "0.90", "absK": "-5.5"}],
+        "ou": [{"ov": "0.00", "ud": "0.00", "k": "220.5"}],
+        "1x2": {"h": "1.80", "a": "2.00"},
+    }
+    out = hao.parse_live_market(market)
+    assert out["suspended"] is False
+    assert out["partial"] is True
+    assert out["handicap"]["line"] == -3.5
+    assert "total" not in out
+
+
+def test_one_side_zero_is_not_used():
+    """一侧价格 0 的档位不能当成主盘（会被 _pick_main_line 跳过）。"""
+    market = {
+        "ou": [
+            {"ov": "0.00", "ud": "0.00", "k": "220.5"},
+            {"ov": "0.80", "ud": "0.95", "k": "221.5"},
+        ]
+    }
+    out = hao.parse_live_market(market)
+    assert out["total"]["line"] == 221.5

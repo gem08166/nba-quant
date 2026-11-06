@@ -297,53 +297,123 @@ async function refreshLiveData() {
 
 document.getElementById("live-refresh")?.addEventListener("click", refreshLiveData);
 
+function lmPair(game, interactive, market, lineLeft, lineRight, left, right) {
+  if (interactive) {
+    return (
+      `<span class="lm-btns">` +
+      lmBetButton(game, market, left.side, lineLeft, left.price, left.label) +
+      lmBetButton(game, market, right.side, lineRight, right.price, right.label) +
+      `</span>`
+    );
+  }
+  // 封盘 / 数据过期：只展示数字，不提供「记一笔」入口
+  return `<span class="lm-px">${left.label} ${fmtPrice(left.price)} / ${right.label} ${fmtPrice(right.price)}</span>`;
+}
+
 function liveMarketBlock(game) {
   const mk = game.live_market;
-  if (!mk) return "";
-  const items = [];
-  if (mk.handicap) {
-    const hc = mk.handicap;
-    items.push(
-      `<span class="lm-item"><span class="lm-k">让分</span>` +
-        `<b class="lm-line">${fmtSpread(hc.line)}</b>` +
-        `<span class="lm-btns">` +
-        lmBetButton(game, "spread", "home", hc.line, hc.home, "主") +
-        lmBetButton(game, "spread", "away", -(hc.line ?? 0), hc.away, "客") +
-        `</span></span>`
-    );
+  if (!mk) {
+    return `
+      <div class="live-market lm-muted">
+        <div class="lm-head">
+          <span class="lm-title">滚球盘口</span>
+          <span class="lm-src">暂无数据</span>
+        </div>
+        <div class="lm-note">还没抓到这场球的滚球盘 —— 点上方「刷新数据」立即抓一次。</div>
+      </div>`;
   }
-  if (mk.total) {
-    const t = mk.total;
-    items.push(
-      `<span class="lm-item"><span class="lm-k">大小</span>` +
-        `<b class="lm-line">${fmtTotal(t.line)}</b>` +
-        `<span class="lm-btns">` +
-        lmBetButton(game, "total", "over", t.line, t.over, "大") +
-        lmBetButton(game, "total", "under", t.line, t.under, "小") +
-        `</span></span>`
-    );
-  }
-  if (mk.moneyline) {
-    const ml = mk.moneyline;
-    items.push(
-      `<span class="lm-item"><span class="lm-k">胜负</span>` +
-        `<span class="lm-btns">` +
-        lmBetButton(game, "moneyline", "home", null, ml.home, "主") +
-        lmBetButton(game, "moneyline", "away", null, ml.away, "客") +
-        `</span></span>`
-    );
-  }
-  if (!items.length) return "";
-  const stamp = [mk.period ? String(mk.period).toUpperCase() : "", mk.clock || ""]
+
+  const suspended = mk.suspended === true;
+  const stale = mk.stale === true;
+  const interactive = !suspended && !stale;
+  const ageMin = mk.age_seconds != null ? Math.max(1, Math.round(mk.age_seconds / 60)) : null;
+
+  // 封盘时退回到「上一次有效盘口」，只展示数字（不能下单）
+  const lastValid = suspended && mk.last_valid ? mk.last_valid : null;
+  const showMk = lastValid || mk;
+
+  const stampSource = lastValid || mk;
+  const stamp = [stampSource.period ? String(stampSource.period).toUpperCase() : "", stampSource.clock || ""]
     .filter(Boolean)
     .join(" ");
+  const src = `${mk.book === "hao-tiyu" ? "好体育" : mk.book || ""}${stamp ? " · " + stamp : ""}${
+    lastValid ? "（上次有效）" : ""
+  }`;
+
+  const items = [];
+  const hc = showMk.handicap;
+  const tt = showMk.total;
+  const ml = showMk.moneyline;
+
+  if (hc) {
+    items.push(
+      `<span class="lm-item"><span class="lm-k">让分</span><b class="lm-line">${fmtSpread(hc.line)}</b>` +
+        lmPair(
+          game,
+          interactive,
+          "spread",
+          hc.line,
+          -(hc.line ?? 0),
+          { label: "主", side: "home", price: hc.home },
+          { label: "客", side: "away", price: hc.away }
+        ) +
+        `</span>`
+    );
+  }
+  if (tt) {
+    items.push(
+      `<span class="lm-item"><span class="lm-k">大小</span><b class="lm-line">${fmtTotal(tt.line)}</b>` +
+        lmPair(
+          game,
+          interactive,
+          "total",
+          tt.line,
+          tt.line,
+          { label: "大", side: "over", price: tt.over },
+          { label: "小", side: "under", price: tt.under }
+        ) +
+        `</span>`
+    );
+  }
+  if (ml) {
+    items.push(
+      `<span class="lm-item"><span class="lm-k">胜负</span>` +
+        lmPair(
+          game,
+          interactive,
+          "moneyline",
+          null,
+          null,
+          { label: "主", side: "home", price: ml.home },
+          { label: "客", side: "away", price: ml.away }
+        ) +
+        `</span>`
+    );
+  }
+
+  let badge = "";
+  if (suspended) badge = `<span class="lm-badge warn">封盘中</span>`;
+  else if (stale) badge = `<span class="lm-badge warn">数据 ${ageMin} 分钟前</span>`;
+  else if (mk.partial) badge = `<span class="lm-badge">部分市场已停</span>`;
+
+  let note = "";
+  if (suspended) {
+    note = lastValid
+      ? "盘口暂时关闭，上面是封盘前最后一次有效价格（不能下单）。稍后刷新再试。"
+      : "盘口暂时关闭（进球/回放/末节垃圾时间常见），此时不能下单，稍后刷新再试。";
+  } else if (stale) {
+    note = "快照已过期，价格可能已变动 —— 点上方「刷新数据」更新后再记。";
+  }
+
   return `
-    <div class="live-market">
+    <div class="live-market ${interactive ? "" : "lm-muted"}">
       <div class="lm-head">
         <span class="lm-title">滚球盘口</span>
-        <span class="lm-src">${esc(mk.book === "hao-tiyu" ? "好体育" : mk.book || "")}${stamp ? " · " + esc(stamp) : ""}</span>
+        <span class="lm-src">${esc(src)}</span>
+        ${badge}
       </div>
-      <div class="lm-row">${items.join("")}</div>
+      ${items.length ? `<div class="lm-row">${items.join("")}</div>` : ""}
+      ${note ? `<div class="lm-note">${esc(note)}</div>` : ""}
     </div>`;
 }
 

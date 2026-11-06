@@ -35,6 +35,9 @@ OT_SECONDS = 300
 REGULATION_SECONDS = 4 * PERIOD_SECONDS
 LIVE_STATES = {"in"}
 
+# 滚球盘口快照超过这个秒数就视为"不新鲜"，不再当作可下单价格展示
+LIVE_MARKET_STALE_SECONDS = 300
+
 # --- 信号历史（赛后板块用）--------------------------
 # "曾经出现的信号" = 该场全部历史 prediction 版本里 signal=True 的边缘，
 # 按 (市场, 方向, 线) 去重合并。/api/live 每 30s 被轮询（本机+手机），
@@ -260,34 +263,75 @@ def _summary_extras(event_id: str) -> dict:
 
 
 def live_market_snapshot(conn: sqlite3.Connection, game_id: str) -> dict | None:
-    """该场最近一次滚球盘口快照（解析后的主盘）。没有记录返回 None。"""
+    """该场最近一次滚球盘口快照（解析后的主盘）。
+
+    封盘时（价格全 0 / 市场消失）附上「上一次有效盘口」，
+    避免面板直接空白——但仍标记 suspended，不提供下单入口。
+    """
     try:
-        row = conn.execute(
+        rows = conn.execute(
             """
             SELECT period, clock, score, market_raw, captured_at
-            FROM live_odds WHERE game_id=? ORDER BY id DESC LIMIT 1
+            FROM live_odds WHERE game_id=? ORDER BY id DESC LIMIT 60
             """,
             (game_id,),
-        ).fetchone()
+        ).fetchall()
     except sqlite3.OperationalError:  # 旧库还没有 live_odds 表
         return None
-    if row is None:
+    if not rows:
         return None
-    try:
-        market = json.loads(row["market_raw"])
-    except (TypeError, ValueError):
-        return None
+
     from ..ingest.hao import parse_live_market
 
-    parsed = parse_live_market(market)
-    if not parsed:
+    def _age(captured_at: str) -> float | None:
+        try:
+            captured = datetime.fromisoformat(str(captured_at))
+            if captured.tzinfo is None:
+                captured = captured.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - captured).total_seconds()
+        except (TypeError, ValueError):
+            return None
+
+    def _parse(row) -> dict | None:
+        try:
+            market = json.loads(row["market_raw"])
+        except (TypeError, ValueError):
+            return None
+        return parse_live_market(market)
+
+    latest = rows[0]
+    parsed = _parse(latest)
+    if parsed is None:
         return None
+
+    has_prices = bool(
+        parsed.get("handicap") or parsed.get("total") or parsed.get("moneyline")
+    )
+    if not has_prices:
+        for row in rows[1:]:
+            prev = _parse(row)
+            if prev and (
+                prev.get("handicap") or prev.get("total") or prev.get("moneyline")
+            ):
+                parsed["last_valid"] = {
+                    **prev,
+                    "period": row["period"],
+                    "clock": row["clock"],
+                    "score": row["score"],
+                    "captured_at": row["captured_at"],
+                    "age_seconds": round(age, 0) if (age := _age(row["captured_at"])) is not None else None,
+                }
+                break
+
+    age = _age(latest["captured_at"])
     parsed.update(
         {
-            "period": row["period"],
-            "clock": row["clock"],
-            "score": row["score"],
-            "captured_at": row["captured_at"],
+            "period": latest["period"],
+            "clock": latest["clock"],
+            "score": latest["score"],
+            "captured_at": latest["captured_at"],
+            "age_seconds": round(age, 0) if age is not None else None,
+            "stale": (age is not None and age > LIVE_MARKET_STALE_SECONDS),
             "book": "hao-tiyu",
         }
     )

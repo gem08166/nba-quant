@@ -761,6 +761,26 @@ tr.row-bettable td:first-child { font-weight: 700; color: #c3e6cd; }
   color: var(--muted);
 }
 .lm-meta-tip { color: var(--blue); }
+.live-market.lm-muted { border-color: var(--line); background: #171a20; }
+.live-market.lm-muted .lm-title { color: var(--muted); }
+.lm-badge {
+  margin-left: auto;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  border: 1px solid rgba(232, 163, 61, 0.4);
+  color: var(--amber);
+  background: rgba(232, 163, 61, 0.1);
+  white-space: nowrap;
+}
+.lm-badge.warn { border-color: #6b4a15; background: #241a0c; }
+.lm-note {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.lm-px { font-variant-numeric: tabular-nums; }
 
 .plays {
   margin-top: 9px;
