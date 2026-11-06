@@ -949,6 +949,32 @@ td.neg { color: var(--muted); }
 .table-wrap th:first-child, .table-wrap td:first-child { padding-left: 12px; }
 .table-wrap th:last-child, .table-wrap td:last-child { padding-right: 12px; }
 
+/* 收益页台账：真实 / 模拟 分区 */
+.ledger-section {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.ledger-section:first-child { margin-top: 0; }
+.ledger-count {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.ledger-count b { font-family: var(--font-num); }
+.ledger-hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
 /* 盘口快照分组小标题 */
 #modal-body h4 {
   margin: 14px 0 6px;

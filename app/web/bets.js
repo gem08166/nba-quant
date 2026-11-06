@@ -167,10 +167,42 @@ const KIND_BADGE = {
 function renderLedger(bets) {
   const box = document.getElementById("bets-ledger");
   if (!bets.length) {
-    box.innerHTML = `<div class="inj" style="color:var(--muted)">还没有注单。在看板比赛详情里对信号点"记一笔"，或用 <code>POST /api/bets</code>。</div>`;
+    box.innerHTML = `<div class="inj" style="color:var(--muted)">还没有注单。在看板卡片上点「记一笔」，或用收益页的「自定义记一笔」。</div>`;
     return;
   }
-  box.innerHTML = `
+
+  const mine = bets.filter((b) => ledgerKind(b) !== "backfill");
+  const sim = bets.filter((b) => ledgerKind(b) === "backfill");
+
+  const section = (title, rows, hint) => {
+    const settled = rows.filter((b) => b.result && b.result !== "open");
+    const stake = settled.reduce((s, b) => s + Number(b.stake || 0), 0);
+    const profit = settled.reduce((s, b) => s + Number(b.profit || 0), 0);
+    const roi = stake > 0 ? profit / stake : null;
+    const money = settled.length
+      ? ` · 盈亏 <b class="${profit >= 0 ? "pos" : "neg"}">${profit >= 0 ? "+" : ""}${profit.toFixed(2)}</b>` +
+        (roi != null ? ` · ROI ${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%` : "")
+      : "";
+    return `
+      <h3 class="ledger-section">${title}
+        <span class="ledger-count">${rows.length} 条（结算 ${settled.length}）${money}</span>
+      </h3>
+      ${hint ? `<p class="ledger-hint">${hint}</p>` : ""}
+      ${rows.length ? ledgerTable(rows) : `<div class="inj" style="color:var(--muted)">暂无</div>`}
+    `;
+  };
+
+  box.innerHTML =
+    section("我的注单（真实）", mine, "") +
+    section(
+      "信号模拟（历史回填）",
+      sim,
+      "脚本用历史信号补的回顾性注单，不是当时的真实决策；只用于扩大样本。"
+    );
+}
+
+function ledgerTable(bets) {
+  return `
     <div class="table-wrap"><table>
       <thead><tr><th>比赛日</th><th>比赛</th><th>来源</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th></tr></thead>
       <tbody>
@@ -211,23 +243,186 @@ function renderLedger(bets) {
     </table></div>`;
 }
 
+// ---- 自定义记一笔：任选比赛/市场/盘口/赔率（不依赖信号）----
+async function openCustomBetPanel() {
+  document.getElementById("custom-bet-panel")?.remove();
+  let games = [];
+  try {
+    if (window.APP_MODE === "static") {
+      games = (window.STATIC_PAYLOAD?.board?.games || []).slice();
+    } else {
+      const data = await api(`/api/games?date=${encodeURIComponent(state.date)}`);
+      games = data.games || [];
+    }
+  } catch (error) {
+    toast(`加载比赛失败：${error.message}`);
+    return;
+  }
+  if (!games.length) {
+    toast(`${state.date} 没有比赛，请先在上方切换日期`);
+    return;
+  }
+
+  const MZ = { spread: "让分", total: "大小", moneyline: "胜负" };
+  const panel = document.createElement("div");
+  panel.className = "lm-panel";
+  panel.id = "custom-bet-panel";
+  panel.innerHTML = `
+    <div class="lm-panel-head">
+      <b>自定义记一笔</b>
+      <span>${esc(state.date)} · 共 ${games.length} 场</span>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:1fr">
+      <label>比赛<select id="cb-game">
+        ${games
+          .map(
+            (g) =>
+              `<option value="${esc(g.id)}">${esc(teamShortZh(g.away.abbrev, g.away.name))} @ ${esc(
+                teamShortZh(g.home.abbrev, g.home.name)
+              )}${g.status === "STATUS_FINAL" ? "（已结束）" : ""}</option>`
+          )
+          .join("")}
+      </select></label>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:1fr 1fr;margin-top:8px">
+      <label>市场<select id="cb-market">
+        <option value="spread">让分</option>
+        <option value="total">大小分</option>
+        <option value="moneyline">胜负</option>
+      </select></label>
+      <label>方向<select id="cb-side"></select></label>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px">
+      <label>盘口<input id="cb-line" type="number" step="0.5"></label>
+      <label>赔率<input id="cb-price" type="number" step="0.01" min="1.01" value="1.91"></label>
+      <label>注额<input id="cb-stake" type="number" step="0.5" min="0.5" value="1"></label>
+    </div>
+    <div class="lm-panel-meta" id="cb-meta"></div>
+    <div class="lm-panel-actions">
+      <button class="btn small primary" id="cb-confirm">确认记录</button>
+      <button class="btn small" id="cb-cancel">取消</button>
+    </div>
+    <div class="lm-panel-note">自定义注单用该场赛前预测估算概率（无预测按 50%）；备注以「自定义」开头，与信号注单区分。仅纸面跟踪。</div>`;
+  document.body.appendChild(panel);
+
+  const els = {
+    game: panel.querySelector("#cb-game"),
+    market: panel.querySelector("#cb-market"),
+    side: panel.querySelector("#cb-side"),
+    line: panel.querySelector("#cb-line"),
+    price: panel.querySelector("#cb-price"),
+    stake: panel.querySelector("#cb-stake"),
+    meta: panel.querySelector("#cb-meta"),
+  };
+
+  const currentGame = () => games.find((g) => String(g.id) === String(els.game.value));
+
+  function applyMarket() {
+    const market = els.market.value;
+    els.side.innerHTML = MANUAL_SIDES[market].map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+    if (market === "moneyline") {
+      els.line.value = "";
+      els.line.disabled = true;
+    } else {
+      els.line.disabled = false;
+      const lines = currentGame()?.prediction?.lines || {};
+      const def = market === "spread" ? lines.spread : lines.total;
+      els.line.value = def != null ? Number(def).toFixed(1) : "";
+    }
+  }
+
+  function renderMeta() {
+    const game = currentGame();
+    const market = els.market.value;
+    const line = market === "moneyline" ? null : Number(els.line.value);
+    const prob = game ? manualModelProb(game, market, els.side.value, line) : null;
+    const used = prob == null ? 0.5 : prob;
+    const ev = used * Number(els.price.value || 0) - 1;
+    els.meta.innerHTML =
+      `模型概率 <b>${fmtPct(used)}</b> · EV <b class="${ev >= 0 ? "pos" : "neg"}">${fmtSignedPct(ev)}</b>` +
+      (prob == null ? "（无预测，按 50% 记录）" : "");
+  }
+
+  applyMarket();
+  renderMeta();
+  els.game.addEventListener("change", () => {
+    applyMarket();
+    renderMeta();
+  });
+  els.market.addEventListener("change", () => {
+    applyMarket();
+    renderMeta();
+  });
+  els.side.addEventListener("change", renderMeta);
+  els.line.addEventListener("input", renderMeta);
+  els.price.addEventListener("input", renderMeta);
+  els.stake.focus();
+  els.stake.select();
+
+  panel.querySelector("#cb-cancel").addEventListener("click", () => panel.remove());
+  panel.querySelector("#cb-confirm").addEventListener("click", async () => {
+    const game = currentGame();
+    if (!game) return toast("请选择比赛");
+    const market = els.market.value;
+    const side = els.side.value;
+    const price = Number(els.price.value);
+    const stake = Number(els.stake.value);
+    const line = market === "moneyline" ? null : Number(els.line.value);
+    if (!Number.isFinite(price) || price <= 1) return toast("赔率必须大于 1");
+    if (!Number.isFinite(stake) || stake <= 0) return toast("注额无效");
+    if (market !== "moneyline" && !Number.isFinite(line)) return toast("请输入盘口");
+    const prob = manualModelProb(game, market, side, line);
+    const used = prob == null ? 0.5 : prob;
+    const sideZh = MANUAL_SIDES[market].find(([v]) => v === side)?.[1] || side;
+    const lineText = line == null ? "" : market === "spread" ? " " + fmtSpread(line) : " " + fmtTotal(line);
+    try {
+      await api("/api/bets", {
+        method: "POST",
+        body: JSON.stringify({
+          game_id: game.id,
+          slate_date: game.slate_date || state.date,
+          matchup: `${teamShortZh(game.away.abbrev, game.away.name)}@${teamShortZh(game.home.abbrev, game.home.name)}`,
+          market,
+          side,
+          line,
+          price,
+          stake,
+          model_prob: used,
+          ev: used * price - 1,
+          note: `自定义 ${MZ[market]} ${sideZh}${lineText} @${price.toFixed(2)} · ${game.slate_date || state.date}`,
+        }),
+      });
+      panel.remove();
+      toast("已记录纸面注单");
+      await loadBets();
+    } catch (error) {
+      toast(`记录失败：${error.message}`);
+    }
+  });
+}
+
 function renderBetsToolbar() {
   const box = document.getElementById("bets-toolbar");
   if (!box) return;
-  if (window.APP_MODE !== "static") {
-    box.innerHTML = "";
-    return;
-  }
+  const staticMode = window.APP_MODE === "static";
   const apk = window.DAV?.isApk();
   box.innerHTML = `
     <div class="bets-toolbar">
-      <button class="btn small" id="bets-export">导出台账</button>
+      <button class="btn small primary" id="bets-custom" title="任选比赛、市场、盘口、赔率，手动记一条">＋ 自定义记一笔</button>
+      ${
+        staticMode
+          ? `<button class="btn small" id="bets-export">导出台账</button>
       <button class="btn small" id="bets-import">导入台账</button>
       ${apk ? `<button class="btn small" id="bets-dav-sync">立即同步</button>
       <button class="btn small" id="bets-dav-settings">同步设置</button>` : ""}
       <input type="file" id="bets-import-file" accept=".json,application/json" hidden>
-      ${apk ? `<span class="hint">坚果云自动同步已启用</span>` : `<span class="hint">手机：导出 → 坚果云 app 上传到 nbaq/inbox/；PC 端 30 分钟内自动合并</span>`}
+      ${apk ? `<span class="hint">坚果云自动同步已启用</span>` : `<span class="hint">手机：导出 → 坚果云 app 上传到 nbaq/inbox/；PC 端 30 分钟内自动合并</span>`}`
+          : `<span class="hint">自定义记一笔：任选比赛、市场、盘口、赔率（不依赖信号）</span>`
+      }
     </div>`;
+  document.getElementById("bets-custom").addEventListener("click", openCustomBetPanel);
+
+  if (!staticMode) return;
   document.getElementById("bets-export").addEventListener("click", () => {
     const rows = window.LB.read();
     const blob = new Blob([JSON.stringify(rows, null, 1)], { type: "application/json" });
