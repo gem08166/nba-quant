@@ -12,6 +12,8 @@ PUB_MARK="$RUN/last_publish"
 FULL_MARK="$RUN/last_full"
 PUB_INTERVAL=1800
 FULL_INTERVAL=43200
+# 由 systemd 托管时（进程重启交给 Restart=always），健康巡检关掉，只留调度
+GUARD_HEALTH="${NBAQ_GUARD_HEALTH:-1}"
 mkdir -p "$RUN" "$ROOT/data/log"
 
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$1" >> "$LOG"; }
@@ -31,11 +33,13 @@ rotate() {
 log "guard started (pid $$) publish=${PUB_INTERVAL}s full=${FULL_INTERVAL}s"
 
 while true; do
-  # 1) 进程健康
-  if ! STATUS=$("$ROOT/deploy/nbaq" status 2>&1); then
-    log "unhealthy: $(printf '%s' "$STATUS" | tr '\n' ';' | cut -c1-140)"
-    "$ROOT/deploy/nbaq" start >> "$LOG" 2>&1
-    log "start rc=$?"
+  # 1) 进程健康（systemd 托管时跳过，避免两套守护互相打架）
+  if [[ "$GUARD_HEALTH" != "0" ]]; then
+    if ! STATUS=$("$ROOT/deploy/nbaq" status 2>&1); then
+      log "unhealthy: $(printf '%s' "$STATUS" | tr '\n' ';' | cut -c1-140)"
+      "$ROOT/deploy/nbaq" start >> "$LOG" 2>&1
+      log "start rc=$?"
+    fi
   fi
 
   # 2) 定时发布

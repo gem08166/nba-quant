@@ -1,0 +1,21 @@
+[Unit]
+Description=nba-quant panel + API (serve)
+Documentation=https://gem08166.github.io/nba-quant/
+After=network-online.target
+Wants=network-online.target
+
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__ROOT__
+EnvironmentFile=__ROOT__/.env
+ExecStart=__ROOT__/.venv/bin/python -m app.cli serve --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=append:__ROOT__/data/log/serve.log
+StandardError=append:__ROOT__/data/log/serve.log
+
+[Install]
+WantedBy=multi-user.target

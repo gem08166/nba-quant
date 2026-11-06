@@ -1,0 +1,24 @@
+[Unit]
+Description=nba-quant 常驻刷新循环 (watch)
+Documentation=https://gem08166.github.io/nba-quant/
+After=network-online.target nba-quant-serve.service
+Wants=network-online.target
+
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__ROOT__
+EnvironmentFile=__ROOT__/.env
+Environment=NBAQ_WATCH_INTERVAL=300
+Environment=NBAQ_WATCH_LIVE_INTERVAL=120
+ExecStart=__ROOT__/.venv/bin/python -m app.cli watch
+Restart=always
+RestartSec=10
+# watch 自己用 Tee 写 data/watch.log，journal 只兜 import 阶段的报错
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

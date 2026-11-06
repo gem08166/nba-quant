@@ -68,7 +68,7 @@ sudo -n service cron start && bash deploy/install.sh
 
 - `install.sh` 幂等，会重写 crontab（含 `@reboot`），cron 下次启动时 `@reboot` 条目会把服务拉起来
 - 恢复后建议 `deploy/nbaq status` 确认，和 `kill -9 $(cat data/run/serve.pid)` 实测自愈
-- 如果长期 24/7 跑，这种容器不合适：换一台有 systemd 的 VPS，把 `deploy/nbaq start` 写成 systemd unit，开机自启 + `Restart=always` 由 init 保证
+- 如果长期 24/7 跑，这种容器不合适：换一台有 systemd 的 VPS，用下一节的 `deploy/systemd/install-units.sh` 交给 init 托管
 
 ## 访问方式
 
@@ -91,6 +91,42 @@ sudo -n service cron start && bash deploy/install.sh
 - `HOOPS_API_KEY`：已写入 `.env`，但当前处于 429 退避（`data/hoops_state.json` 的 `rate_limited_until` = 2026-11-07 08:00 北京时间），到点后 cron 的下一轮刷新会自动接管，无需手动干预。
 
 注意额度：The Odds API 免费层约 500 次/月，代码默认 20 小时才拉一次（`NBAQ_ODDSAPI_MIN_HOURS`），正常一天 1-2 次，够用。临时验证时可用 `NBAQ_ODDSAPI_MIN_HOURS=0` 覆盖，但别长期设为 0。
+
+## 搬到有 systemd 的 VPS（推荐长期跑）
+
+本容器的 cron 和进程都会被平台回收，`guard` 只是补救。真正常驻建议换一台有 systemd 的机器，由 init 保证进程：
+
+```bash
+git clone https://github.com/gem08166/nba-quant.git
+cd nba-quant
+scp 旧机器:/path/nba-quant/.env .   # 或者手写一份（含 4 个密钥，见下文数据源说明）
+bash deploy/install.sh          # 依赖 + 数据库 + 首次训练
+sudo bash deploy/systemd/install-units.sh
+```
+
+`install-units.sh` 做的事情：
+
+- 把 `deploy/systemd/*.service` 里的 `__ROOT__` / `__USER__` 替换成实际路径和运行用户，写入 `/etc/systemd/system/`
+- 清掉旧的 nba-quant crontab 条目（避免 cron 和 systemd 抢进程）
+- `daemon-reload` + `enable --now` 三个 unit
+
+三个 unit：
+
+| unit | 作用 | 重启策略 |
+|---|---|---|
+| `nba-quant-serve.service` | 面板 + API，0.0.0.0:8000 | `Restart=always`，5 秒 |
+| `nba-quant-watch.service` | 常驻刷新循环，300s / 赛中 120s | `Restart=always`，10 秒 |
+| `nba-quant-guard.service` | 调度发布与全量训练（`NBAQ_GUARD_HEALTH=0`，健康交给 systemd） | `Restart=always`，10 秒 |
+
+验证与排障：
+
+```bash
+systemctl status nba-quant-serve nba-quant-watch nba-quant-guard
+journalctl -u nba-quant-watch -f      # 实时看刷新
+journalctl -u nba-quant-guard -n 50   # 看发布/训练记录
+```
+
+> unit 文件已在本地用 `systemd-analyze verify` 校验通过（无告警）。
 
 ## 发布到 GitHub Pages
 

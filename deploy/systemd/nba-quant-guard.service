@@ -1,0 +1,23 @@
+[Unit]
+Description=nba-quant 调度器（发布到 Pages / 全量训练）
+Documentation=https://gem08166.github.io/nba-quant/
+After=network-online.target nba-quant-serve.service nba-quant-watch.service
+Wants=network-online.target
+
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__ROOT__
+EnvironmentFile=__ROOT__/.env
+# systemd 负责进程重启，调度器只保留定时任务
+Environment=NBAQ_GUARD_HEALTH=0
+ExecStart=/bin/bash __ROOT__/deploy/guard.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

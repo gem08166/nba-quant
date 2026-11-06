@@ -144,9 +144,10 @@ target="${2:-all}"
 
 case "${1:-status}" in
   start)
-    if [[ "$target" == "all" || "$target" == "guard" ]]; then start_guard || true; fi
+    # 先起被守护的，再起守护者，避免 guard 抢着做同一件事
     if [[ "$target" == "all" || "$target" == "watch" ]]; then start_watch || true; fi
     if [[ "$target" == "all" || "$target" == "serve" ]]; then start_serve || true; fi
+    if [[ "$target" == "all" || "$target" == "guard" ]]; then start_guard || true; fi
     ;;
   stop)
     # guard 先停，否则它会把刚停掉的进程又拉起来
@@ -155,9 +156,11 @@ case "${1:-status}" in
     if [[ "$target" == "all" || "$target" == "serve" ]]; then stop_one serve "$SERVE_PID"; fi
     ;;
   restart)
-    if [[ "$target" == "all" || "$target" == "guard" ]]; then
+    if [[ "$target" == "all" ]]; then
       stop_one guard "$GUARD_PID"; stop_one watch "$WATCH_PID"; stop_one serve "$SERVE_PID"
-      start_guard; start_watch; start_serve
+      start_watch; start_serve; start_guard
+    elif [[ "$target" == "guard" ]]; then
+      stop_one guard "$GUARD_PID"; start_guard
     elif [[ "$target" == "watch" ]]; then
       stop_one watch "$WATCH_PID"; start_watch
     elif [[ "$target" == "serve" ]]; then
