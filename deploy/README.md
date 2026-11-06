@@ -43,6 +43,20 @@ bash deploy/install.sh
 
 > 机器重启后 cron 守护进程不一定自启（容器里没有 systemd），重跑一次 `sudo service cron start` 或 `bash deploy/install.sh` 即可。
 
+## 机器被回收后的恢复（重要）
+
+这台机器是容器环境，没有 systemd，实测过：**VM 被回收重启后，cron 守护进程不启动、`/var/spool/cron/crontabs/` 会被清空、服务进程也没了**。三条一起消失，看门狗自然也不会干活。
+
+一条命令恢复：
+
+```bash
+sudo -n service cron start && bash deploy/install.sh
+```
+
+- `install.sh` 幂等，会重写 crontab（含 `@reboot`），cron 下次启动时 `@reboot` 条目会把服务拉起来
+- 恢复后建议 `deploy/nbaq status` 确认，和 `kill -9 $(cat data/run/serve.pid)` 实测自愈
+- 如果长期 24/7 跑，这种容器不合适：换一台有 systemd 的 VPS，把 `deploy/nbaq start` 写成 systemd unit，开机自启 + `Restart=always` 由 init 保证
+
 ## 访问方式
 
 1. **本机/内网**：`http://<云主机IP>:8000`
