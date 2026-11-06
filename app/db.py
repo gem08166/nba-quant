@@ -145,6 +145,24 @@ CREATE TABLE IF NOT EXISTS starters (
     PRIMARY KEY(game_id, team_id, player_id)
 );
 
+-- 赛中胜率轨迹（研究用）：watch 每轮给进行中的比赛写一行。
+-- 唯一键带 period+clock，同一时刻不会重复写入。
+CREATE TABLE IF NOT EXISTS live_wp (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id          TEXT NOT NULL,
+    period           INTEGER,
+    clock            TEXT,
+    home_score       INTEGER,
+    away_score       INTEGER,
+    margin           INTEGER,
+    seconds_remaining REAL,
+    prior_margin     REAL,
+    home_win_prob    REAL NOT NULL,
+    captured_at      TEXT NOT NULL,
+    UNIQUE(game_id, period, clock)
+);
+CREATE INDEX IF NOT EXISTS idx_live_wp_game ON live_wp(game_id, id);
+
 CREATE TABLE IF NOT EXISTS rapm_models (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,

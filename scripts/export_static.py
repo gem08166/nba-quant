@@ -163,6 +163,11 @@ def main() -> None:
         holdout_path = DATA_DIR / "holdout_report.json"
         if holdout_path.exists():
             payload["holdout"] = json.loads(holdout_path.read_text(encoding="utf-8"))
+
+        # 赛中胜率模型验收报告（研究模块：只报告校准，不产生滚球信号）
+        lwp_path = DATA_DIR / "live_wp_report.json"
+        if lwp_path.exists():
+            payload["live_wp"] = json.loads(lwp_path.read_text(encoding="utf-8"))
         (out_dir / "static.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
         # 球员中文名映射：静态模式（手机）在浏览器里翻译赛况时需要

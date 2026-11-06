@@ -258,7 +258,7 @@ function liveCard(game) {
       <div class="model-grid" style="grid-template-columns:repeat(4,1fr);margin:10px 0">
         ${cell("投影最终分差", fmtSpread(live.proj_margin))}
         ${cell("投影最终总分", fmtTotal(live.proj_total))}
-        ${cell("模型主胜", fmtPct(live.home_win_prob))}
+        ${cell("模型主胜", fmtPct(game.model_wp ?? live.home_win_prob))}
         ${cell("剩余时间", `${Math.round(live.remaining_factor * 100)}%`)}
       </div>
       ${

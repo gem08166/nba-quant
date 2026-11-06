@@ -26,6 +26,8 @@ from ..models import ratings
 from ..pricing.devig import cover_prob, moneyline_prob, over_prob
 from .predict import latest_prediction
 from .signal_backtest import settle_edge
+from ..models.live_wp import seconds_remaining as wp_seconds_remaining
+from ..models.live_wp import win_prob as wp_win_prob
 from .. import i18n
 
 PERIOD_SECONDS = 720
@@ -330,6 +332,16 @@ def live_board(conn: sqlite3.Connection, slate_date: str) -> dict:
                 current_total,
             )
             item["live"] = proj
+            # 校准后的赛中胜率（研究模块）：与 live_projection 的临时口径分开，
+            # 用历史逐回合标定的参数，口径可复现、可验收。不进入信号通道。
+            item["model_wp"] = round(
+                wp_win_prob(
+                    current_margin,
+                    wp_seconds_remaining(event.get("period"), event.get("clock_seconds")),
+                    float(pred["pred_margin"]),
+                ),
+                4,
+            )
             spread_line = lines.get("spread")
             total_line = lines.get("total")
             item["live_cover"] = {

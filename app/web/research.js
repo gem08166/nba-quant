@@ -477,6 +477,61 @@ async function loadBaselineCard() {
 }
 window.loadBaselineCard = loadBaselineCard;
 
+// 赛中胜率模型验收（研究模块）：只报告校准质量，不产生任何下注建议
+async function loadLiveWpCard() {
+  const box = document.getElementById("livewp-card");
+  if (!box) return;
+  try {
+    const data = await api("/api/live-wp");
+    const rep = data.report;
+    if (!rep) {
+      box.innerHTML = `<h2>赛中胜率模型 · 校准验收</h2>
+        <p style="color:var(--muted);font-size:12.5px;margin:4px 0 0">
+        暂无标定报告（运行 <code>python -m scripts.live_wp_fit</code> 生成）。</p>`;
+      return;
+    }
+    const p = data.params || rep.params || {};
+    const hold = rep.holdout;
+    const m = (hold && hold.metrics) || rep.in_sample || {};
+    const cal = (hold && hold.calibration) || rep.calibration || [];
+    const rows = cal
+      .map(
+        (r) =>
+          `<tr><td>${r.bin}</td><td>${r.n}</td><td>${(r.pred * 100).toFixed(1)}%</td>` +
+          `<td>${(r.actual * 100).toFixed(1)}%</td>` +
+          `<td class="${Math.abs(r.gap) <= 0.03 ? "pos" : ""}">${(r.gap * 100 >= 0 ? "+" : "")}${(r.gap * 100).toFixed(1)}pp</td></tr>`
+      )
+      .join("");
+    const maxGap = cal.length ? Math.max(...cal.map((r) => Math.abs(r.gap))) : null;
+    box.innerHTML = `
+      <h2>赛中胜率模型 · 校准验收</h2>
+      <div class="table-wrap" style="margin-top:6px"><table>
+        <thead><tr><th>指标</th><th>样本外（${hold ? hold.split_date + " 之后" : "—"}）</th><th>样本内</th></tr></thead>
+        <tbody>
+          <tr><td>LogLoss</td><td class="pos">${m.logloss ?? "—"}</td><td>${rep.in_sample?.logloss ?? "—"}</td></tr>
+          <tr><td>Brier</td><td class="pos">${m.brier ?? "—"}</td><td>${rep.in_sample?.brier ?? "—"}</td></tr>
+          <tr><td>基线 LogLoss（恒定 50%）</td><td colspan="2">${m["baseline_logloss_0.5"] ?? "—"}</td></tr>
+        </tbody>
+      </table></div>
+      <div class="table-wrap" style="margin-top:8px"><table>
+        <thead><tr><th>预测区间</th><th>样本</th><th>平均预测</th><th>实际胜率</th><th>偏差</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <p class="notice" style="border:none;margin-top:8px;padding-top:0">
+        模型：<code>μ = 分差 + 赛前预期·剩余时间占比</code>，
+        <code>σ = √(σ_full²·(t/T)^2γ + σ_floor²)</code>，<code>P = Φ(μ/σ)</code>。
+        参数 σ_full=${p.sigma_full} · γ=${p.gamma} · σ_floor=${p.sigma_floor} · 赛前权重=${p.prior_weight}。
+        样本 ${rep.sample?.plays ?? "—"} 个回合 / ${rep.sample?.games ?? "—"} 场。
+        ${maxGap != null ? `<br>样本外最大分箱偏差 <b>${(maxGap * 100).toFixed(1)}pp</b>。` : ""}
+        ${rep.caveat ? `<br>${rep.caveat}` : ""}
+        <br><b>此模块只做记录与校准研究，不产生滚球信号、不构成下注建议。</b>
+      </p>`;
+  } catch (e) {
+    box.textContent = "赛中胜率报告加载失败：" + e.message;
+  }
+}
+window.loadLiveWpCard = loadLiveWpCard;
+
 // 标签页切换（research.js/live.js 各自暴露 window.loadResearch / window.loadLive，
 // 首次切入时才加载数据）
 document.getElementById("tabs").addEventListener("click", (event) => {
@@ -488,7 +543,7 @@ document.getElementById("tabs").addEventListener("click", (event) => {
     const panel = document.getElementById(`tab-${name}`);
     if (panel) panel.hidden = name !== target;
   });
-  if (target === "research") { window.loadResearch?.(); window.loadBaselineCard?.(); window.loadGateCard?.(); }
+  if (target === "research") { window.loadResearch?.(); window.loadBaselineCard?.(); window.loadGateCard?.(); window.loadLiveWpCard?.(); }
   if (target === "live") window.loadLive?.();
   if (target === "post") window.loadPost?.();
   if (target === "bets") window.loadBets?.();

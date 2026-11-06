@@ -156,6 +156,18 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
             except Exception as exc:  # noqa: BLE001
                 print(f"[watch] pending-day sweep failed: {exc}")
 
+            # 赛中胜率轨迹（研究模块）：每轮给进行中的比赛记一行。
+            # 只记录、不产生信号；未来用于与滚球盘口做校准对照。
+            if with_ingest:
+                try:
+                    from ..models.live_wp import record_snapshot
+
+                    wp_stats = record_snapshot(conn, slate)
+                    if wp_stats.get("in_play"):
+                        print(f"[watch] live_wp: {wp_stats}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] live_wp skipped: {exc}")
+
             if with_ingest and slate != last_slate:
                 ratings.train_and_save(conn)
                 last_slate = slate

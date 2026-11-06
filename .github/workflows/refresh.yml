@@ -115,6 +115,9 @@ jobs:
       - name: Signal → line-move gate report
         run: python -m scripts.linemove_analysis || true
 
+      - name: In-game win probability calibration (research, no signals)
+        run: python -m scripts.live_wp_fit || true
+
       - name: Export static site
         run: python -m scripts.export_static --out site
 

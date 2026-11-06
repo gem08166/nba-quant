@@ -165,6 +165,11 @@ function staticApi(path) {
   if (path.startsWith("/api/holdout")) {
     return payload.holdout || { error: "no holdout report" };
   }
+  if (path.startsWith("/api/live-wp")) {
+    // 静态模式只有验收报告，没有逐场轨迹（轨迹来自本机 watch 的实时记录）
+    const lw = payload.live_wp || null;
+    return { report: lw, params: (lw && lw.params) || null, points: [], count: 0 };
+  }
   if (path.startsWith("/api/trends")) {
     return payload.trends;
   }

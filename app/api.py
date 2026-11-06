@@ -528,6 +528,42 @@ def live_get(date: str | None = None, conn: sqlite3.Connection = Depends(get_con
         raise HTTPException(status_code=502, detail=f"ESPN live fetch failed: {exc}") from exc
 
 
+@router.get("/live-wp")
+def live_wp_report() -> dict:
+    """赛中胜率模型验收报告（研究模块，不产生下注信号）。"""
+    from .models.live_wp import load_params, load_report
+
+    report = load_report()
+    if report is None:
+        return {"report": None, "params": load_params()}
+    return {"report": report, "params": load_params()}
+
+
+@router.get("/live-wp/{game_id}")
+def live_wp_trajectory(game_id: str, limit: int = 400) -> dict:
+    """该场已记录的赛中胜率轨迹（watch 每轮写入）。"""
+    from .models.live_wp import load_params
+
+    conn = db.connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT period, clock, home_score, away_score, margin,
+                   seconds_remaining, home_win_prob, captured_at
+            FROM live_wp WHERE game_id=? ORDER BY id LIMIT ?
+            """,
+            (game_id, max(1, min(limit, 2000))),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "game_id": game_id,
+        "count": len(rows),
+        "params": load_params(),
+        "points": [dict(r) for r in rows],
+    }
+
+
 @router.get("/model-clv")
 def model_clv(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     """模型 vs 收盘线历史检验报告（基准对照）。"""
