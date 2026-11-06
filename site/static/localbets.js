@@ -210,19 +210,25 @@ function lbSummary(bets) {  const settled = bets.filter((bet) => bet.result !== 
   };
 }
 
-function lbCurve(bets) {
+function lbCurve(bets, normalize = false) {
   const byDate = {};
   for (const bet of bets) {
     if (bet.result === "open") continue;
     const key = bet.slate_date || (bet.placed_at || "").slice(0, 10);
-    byDate[key] = (byDate[key] || 0) + Number(bet.profit || 0);
+    let step = Number(bet.profit || 0);
+    if (normalize) {
+      const stake = Number(bet.stake || 0);
+      step = stake ? step / stake : 0;
+    }
+    byDate[key] = (byDate[key] || 0) + step;
   }
+  const round = (v) => Math.round(v * (normalize ? 10000 : 100)) / (normalize ? 10000 : 100);
   let cumulative = 0;
   return Object.keys(byDate)
     .sort()
     .map((date) => {
       cumulative += byDate[date];
-      return { date, cum_profit: Math.round(cumulative * 100) / 100 };
+      return { date, cum_profit: round(cumulative) };
     });
 }
 
@@ -239,6 +245,7 @@ function lbAnalysis() {
     bets,
     curve: lbCurve(bets),
     curves: { mine: lbCurve(mine), sim: lbCurve(sim) },
+    curves_unit: { mine: lbCurve(mine, true), sim: lbCurve(sim, true) },
   };
 }
 
@@ -271,6 +278,8 @@ window.LB = {
   settle: lbSettle,
   summary: lbSummary,
   curve: lbCurve,
+  kind: lbKind,
+  source: lbSource,
   analysis: lbAnalysis,
   importRows: lbImport,
   davSync: lbDavSync,

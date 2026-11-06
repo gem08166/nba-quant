@@ -24,7 +24,19 @@ function lbAllBets(payload) {
 
 function lbAllAnalysis(payload) {
   const bets = lbAllBets(payload);
-  return { summary: window.LB.summary(bets), bets, curve: window.LB.curve(bets) };
+  const mine = bets.filter((bet) => window.LB?.source(bet) === "mine");
+  const sim = bets.filter((bet) => window.LB?.source(bet) === "sim");
+  return {
+    summary: window.LB.summary(bets),
+    bets: bets.map((bet) => ({
+      ...bet,
+      kind: window.LB?.kind(bet),
+      source: window.LB?.source(bet),
+    })),
+    curve: window.LB.curve(bets),
+    curves: { mine: window.LB.curve(mine), sim: window.LB.curve(sim) },
+    curves_unit: { mine: window.LB.curve(mine, true), sim: window.LB.curve(sim, true) },
+  };
 }
 
 async function detectMode() {

@@ -84,7 +84,12 @@
       <div id="bets-kinds"></div>
       <section class="charts" style="grid-template-columns:1fr">
         <div class="chart-card">
-          <h2>累计收益 · 真实 vs 模拟（按比赛日）</h2>
+          <h2 class="chart-head">累计收益 · 真实 vs 模拟（按比赛日）
+            <span class="chart-toggle" id="profit-mode">
+              <button class="on" data-profit-mode="unit" title="每注按 1 单位计算，排除仓位大小影响">归一化</button>
+              <button data-profit-mode="raw" title="按实际注额累计">金额</button>
+            </span>
+          </h2>
           <canvas id="chart-profit" height="240"></canvas>
         </div>
       </section>

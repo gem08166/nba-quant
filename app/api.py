@@ -437,8 +437,9 @@ def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         item["source"] = bet_source(item)
         bets.append(item)
 
-    # 累计收益曲线：整体 + 真实/模拟分开（滚球与回填口径不同，混在一起看不出问题）
-    def _curve(items: list[dict]) -> list[dict]:
+    # 累计收益曲线：整体 + 真实/模拟分开。
+    # normalize=True 时把每笔盈亏换算成「每注 1 单位」，排除仓位大小的影响。
+    def _curve(items: list[dict], normalize: bool = False) -> list[dict]:
         decided = [
             b for b in items if b["result"] in ("won", "lost", "push") and b["slate_date"]
         ]
@@ -446,21 +447,37 @@ def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         out: list[dict] = []
         running = 0.0
         for bet in decided:
-            running += bet["profit"] or 0.0
+            step = bet["profit"] or 0.0
+            if normalize:
+                stake = bet["stake"] or 0.0
+                step = (step / stake) if stake else 0.0
+            running += step
             if out and out[-1]["date"] == bet["slate_date"]:
-                out[-1]["cum_profit"] = round(running, 2)
+                out[-1]["cum_profit"] = round(running, 4 if normalize else 2)
                 out[-1]["n"] += 1
             else:
-                out.append({"date": bet["slate_date"], "cum_profit": round(running, 2), "n": 1})
+                out.append(
+                    {
+                        "date": bet["slate_date"],
+                        "cum_profit": round(running, 4 if normalize else 2),
+                        "n": 1,
+                    }
+                )
         return out
 
-    curve = _curve(bets)
-    curves = {
-        "mine": _curve([b for b in bets if b["source"] == "mine"]),
-        "sim": _curve([b for b in bets if b["source"] == "sim"]),
-    }
+    def _curves(items: list[dict], normalize: bool = False) -> dict:
+        return {
+            "mine": _curve([b for b in items if b["source"] == "mine"], normalize),
+            "sim": _curve([b for b in items if b["source"] == "sim"], normalize),
+        }
 
-    return {"summary": summary, "curve": curve, "curves": curves, "bets": bets}
+    return {
+        "summary": summary,
+        "curve": _curve(bets),
+        "curves": _curves(bets),
+        "curves_unit": _curves(bets, normalize=True),
+        "bets": bets,
+    }
 
 
 class ImpactIn(BaseModel):

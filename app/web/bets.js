@@ -2,6 +2,66 @@
 // 依赖 app.js 的 api()/esc()/fmt* 与 research.js 暴露的 window.drawLineChart。
 
 let betsLoaded = false;
+let betsChartData = null;
+
+// 累计收益曲线口径：unit=每注 1 单位（排除仓位大小），raw=实际金额
+function profitMode() {
+  return localStorage.getItem("nbaq:profit-mode") === "raw" ? "raw" : "unit";
+}
+
+function syncProfitModeButtons() {
+  const box = document.getElementById("profit-mode");
+  if (!box) return;
+  const mode = profitMode();
+  box.querySelectorAll("button").forEach((btn) => {
+    btn.classList.toggle("on", btn.dataset.profitMode === mode);
+  });
+}
+
+function renderProfitChart() {
+  const canvas = document.getElementById("chart-profit");
+  if (!canvas) return;
+  const data = betsChartData;
+  const mode = profitMode();
+  const normalized = mode === "unit";
+  const curves = (normalized ? data?.curves_unit : data?.curves) || data?.curves || {};
+  const mine = curves.mine || [];
+  const sim = curves.sim || [];
+  const unit = normalized ? "u" : "";
+
+  if (mine.length || sim.length) {
+    window.drawMultiLineChart?.(canvas, [
+      {
+        label: "真实",
+        color: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#46b95c",
+        points: mine.map((p) => ({ date: p.date, value: p.cum_profit })),
+      },
+      {
+        label: "模拟",
+        color: getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#4b8fd6",
+        points: sim.map((p) => ({ date: p.date, value: p.cum_profit })),
+      },
+    ], { unit });
+    return;
+  }
+
+  if (!normalized && data?.curve && data.curve.length) {
+    window.drawLineChart?.(
+      canvas,
+      data.curve.map((p) => p.date.slice(2)),
+      data.curve.map((p) => p.cum_profit),
+      { unit }
+    );
+    return;
+  }
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#79828f";
+  ctx.font = '12px "Plex Mono", ui-monospace, monospace';
+  ctx.textAlign = "center";
+  ctx.fillText("暂无已结算注单：结算后这里会出现累计收益曲线", canvas.width / 2, 120);
+}
 
 const marketLabel = (market) =>
   market === "spread" ? "让分" : market === "total" ? "大小分" : market === "moneyline" ? "胜负" : market;
@@ -557,38 +617,9 @@ async function loadBets() {
     renderMarkets(s.by_market);
     renderLedger(data.bets);
 
-    const canvas = document.getElementById("chart-profit");
-    const curves = data.curves || {};
-    const mine = curves.mine || [];
-    const sim = curves.sim || [];
-    if (mine.length || sim.length) {
-      window.drawMultiLineChart?.(canvas, [
-        {
-          label: "真实",
-          color: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#46b95c",
-          points: mine.map((p) => ({ date: p.date.slice(2), value: p.cum_profit })),
-        },
-        {
-          label: "模拟",
-          color: getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#4b8fd6",
-          points: sim.map((p) => ({ date: p.date.slice(2), value: p.cum_profit })),
-        },
-      ]);
-    } else if (data.curve && data.curve.length) {
-      window.drawLineChart?.(
-        canvas,
-        data.curve.map((p) => p.date.slice(2)),
-        data.curve.map((p) => p.cum_profit),
-        { unit: "" }
-      );
-    } else {
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "#79828f";
-      ctx.font = '12px "Plex Mono", ui-monospace, monospace';
-      ctx.textAlign = "center";
-      ctx.fillText("暂无已结算注单：结算后这里会出现累计收益曲线", canvas.width / 2, 120);
-    }
+    betsChartData = data;
+    syncProfitModeButtons();
+    renderProfitChart();
     betsLoaded = true;
     ensureBetsAutoRefresh();
     document.getElementById("bets-mode-note").textContent =
@@ -635,3 +666,12 @@ document.getElementById("tabs").addEventListener("click", (event) => {
   if (button?.dataset.tab === "bets") loadBets();
 });
 window.loadBets = loadBets;
+
+// 累计收益口径切换：归一化（每注 1 单位）/ 金额
+document.getElementById("profit-mode")?.addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-profit-mode]");
+  if (!btn) return;
+  localStorage.setItem("nbaq:profit-mode", btn.dataset.profitMode);
+  syncProfitModeButtons();
+  renderProfitChart();
+});

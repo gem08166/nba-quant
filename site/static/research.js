@@ -196,9 +196,10 @@ function drawMultiLineChart(canvas, seriesList, { unit = "" } = {}) {
   ctx.font = '11px "Plex Mono", ui-monospace, monospace';
   ctx.fillStyle = COLORS.muted;
   ctx.textAlign = "right";
+  const decimals = hi - lo < 10 ? 2 : 1;
   for (let i = 0; i <= 4; i++) {
     const v = yMin + ((yMax - yMin) * i) / 4;
-    ctx.fillText(`${v.toFixed(1)}${unit}`, pad.l - 6, y(v) + 4);
+    ctx.fillText(`${v.toFixed(decimals)}${unit}`, pad.l - 6, y(v) + 4);
     if (i > 0) {
       ctx.strokeStyle = COLORS.grid;
       ctx.beginPath();
@@ -255,7 +256,7 @@ function drawMultiLineChart(canvas, seriesList, { unit = "" } = {}) {
   ctx.textAlign = "center";
   dates.forEach((d, i) => {
     if (dates.length > 9 && i % 2 === 1) return;
-    ctx.fillText(d, pad.l + slot * i, height - pad.b + 16);
+    ctx.fillText(d.slice(2), pad.l + slot * i, height - pad.b + 16);
   });
 }
 window.drawMultiLineChart = drawMultiLineChart;
