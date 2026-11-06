@@ -311,17 +311,22 @@ function liveCard(game) {
     </article>`;
 }
 
+let liveToken = 0;
+
 async function loadLive(force = false) {
   if (!liveActive && !force) return;
+  const myToken = ++liveToken;
   const dot = document.getElementById("live-dot");
   const status = document.getElementById("live-status");
   dot.classList.add("on");
   try {
     await detectMode();
+    const requestedDate = state.date;
     const data =
       window.APP_MODE === "static"
-        ? await espnLive(state.date)
-        : await api(`/api/live?date=${encodeURIComponent(state.date)}`);
+        ? await espnLive(requestedDate)
+        : await api(`/api/live?date=${encodeURIComponent(requestedDate)}`);
+    if (myToken !== liveToken) return; // 过期响应，丢弃
     const box = document.getElementById("live-games");
     const inPlay = data.games.filter((g) => g.state === "in").length;
     if (!data.games.length) {
@@ -331,7 +336,7 @@ async function loadLive(force = false) {
     }
     status.textContent = `更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · ${inPlay} 场进行中 / 共 ${data.count} 场`;
   } catch (error) {
-    status.textContent = `加载失败：${error.message}`;
+    if (myToken === liveToken) status.textContent = `加载失败：${error.message}`;
   } finally {
     dot.classList.remove("on");
   }
@@ -339,7 +344,12 @@ async function loadLive(force = false) {
 
 // ---------- 赛后复盘（独立板块）----------
 
+// 请求令牌：切换日期/重复触发时，旧请求晚到会覆盖新结果（竞态）。
+// 每次加载自增，渲染前校验是否仍是最新一次。
+let postToken = 0;
+
 async function loadPost(force = false) {
+  const myToken = ++postToken;
   const dot = document.getElementById("post-dot");
   const status = document.getElementById("post-status");
   const box = document.getElementById("post-games");
@@ -347,18 +357,28 @@ async function loadPost(force = false) {
   if (dot) dot.classList.add("on");
   try {
     await detectMode();
+    const requestedDate = state.date;
     const data =
       window.APP_MODE === "static"
-        ? await espnLive(state.date)
-        : await api(`/api/live?date=${encodeURIComponent(state.date)}`);
+        ? await espnLive(requestedDate)
+        : await api(`/api/live?date=${encodeURIComponent(requestedDate)}`);
+    if (myToken !== postToken) return; // 已有更新的请求，丢弃这次结果
     const done = (data.games || []).filter((g) => g.state === "post");
     if (!done.length) {
-      box.innerHTML = `<div class="empty">${esc(data.date)} 没有已结束的比赛。赛后复盘会在比赛收官后出现——可点右上角「跳到最近完赛日」。</div>`;
+      box.innerHTML = `<div class="empty">${esc(data.date)} 没有已结束的比赛。赛后复盘会在比赛收官后出现——点上方「跳到最近完赛日」查看往期。</div>`;
       if (stats) stats.innerHTML = "";
       status.textContent = `${esc(data.date)} · 0 场已结束`;
       return;
     }
     box.innerHTML = done.map(postCard).join("");
+    // 这些比赛没有赛前预测记录（模型从 2026-11-04 才开始写预测）。
+    // 不说明的话用户会以为赛后分析坏了。
+    if (!done.some((g) => g.pregame)) {
+      const hint = document.createElement("div");
+      hint.className = "empty";
+      hint.innerHTML = `${esc(data.date)} 的比赛没有赛前预测记录（模型从 2026-11-04 才开始保存预测），只能看到最终比分与注单。`;
+      box.appendChild(hint);
+    }
 
     // 汇总统计
     let errM = 0, errT = 0, nPred = 0, mlHit = 0;
@@ -411,7 +431,7 @@ async function loadPost(force = false) {
     }
     status.textContent = `${esc(data.date)} · ${done.length} 场已结束 · 更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   } catch (error) {
-    status.textContent = `加载失败：${error.message}`;
+    if (myToken === postToken) status.textContent = `加载失败：${error.message}`;
   } finally {
     if (dot) dot.classList.remove("on");
   }
@@ -427,38 +447,55 @@ async function jumpToLastFinished() {
     // 直接用它的日期定位——不必逐个日期去请求 ESPN（手机上一来一回很慢）
     if (window.APP_MODE === "static") {
       const hist = window.STATIC_PAYLOAD?.history || {};
-      const days = Object.keys(hist).sort(); // 升序，末尾最近
-      // 优先取 <= 当前日期的最近一个；没有就取最近的
-      let target = [...days].reverse().find((d) => d <= state.date);
-      if (!target) target = days[days.length - 1];
-      if (!target) {
+      const days = Object.keys(hist).sort().reverse(); // 最近优先
+      if (!days.length) {
         toast("静态数据里还没有已结束的比赛");
         return;
       }
+      // 优先跳到"真的有赛前分析"的日期——早期比赛日只有比分没有预测，
+      // 跳过去赛后复盘会是空的（模型 11-04 才开始记录预测）
+      const hasAnalysis = (day) => (hist[day] || []).some((g) => g.pregame);
+      let target =
+        days.find((d) => d <= state.date && hasAnalysis(d)) ||
+        days.find((d) => d <= state.date) ||
+        days[0];
       const n = (hist[target] || []).length;
       state.date = target;
       const el = document.getElementById("date");
       if (el) el.value = target;
       await loadPost(true);
-      toast(`已跳到 ${target}（${n} 场已结束）`);
+      const rendered = document.querySelectorAll(".post-card").length || n;
+      toast(`已跳到 ${target}（${rendered} 场已结束）`);
       return;
     }
 
-    // API 模式：按日期列表逐个探（兜底最可靠）
+    // API 模式：按日期列表逐个探（宿主机接口可靠，但仍优先选有预测的日期）
     const dates = await api("/api/dates");
     const list = (dates.dates || []).map((d) => d.date);
+    let fallback = null;
     for (const day of [...list].reverse()) {
       if (day > state.date) continue;
       const data = await api(`/api/live?date=${encodeURIComponent(day)}`);
-      const done = (data.games || []).filter((g) => g.state === "post").length;
-      if (done > 0) {
+      const done = (data.games || []).filter((g) => g.state === "post");
+      if (!done.length) continue;
+      // 有赛前预测的日期才是真正的"赛后复盘"
+      if (done.some((g) => g.pregame)) {
         state.date = day;
         const el = document.getElementById("date");
         if (el) el.value = day;
         await loadPost(true);
-        toast(`已跳到 ${day}（${done} 场已结束）`);
+        toast(`已跳到 ${day}（${done.length} 场已结束）`);
         return;
       }
+      if (!fallback) fallback = { day, n: done.length };
+    }
+    if (fallback) {
+      state.date = fallback.day;
+      const el = document.getElementById("date");
+      if (el) el.value = fallback.day;
+      await loadPost(true);
+      toast(`已跳到 ${fallback.day}（${fallback.n} 场已结束，该日无赛前预测记录）`);
+      return;
     }
     toast("没有已结束的比赛日期");
   } catch (error) {

@@ -130,6 +130,9 @@ def build_history(
                 }
             )
         if items:
-            history[day] = items
+            # 只保留至少有 1 场赛前预测的日期：赛后复盘的核心是"预测 vs 实际"，
+            # 早期比赛日（模型还没开始记录预测）只有比分，导出了也没内容可复盘。
+            if any(item.get("pregame") for item in items):
+                history[day] = items
 
     return history

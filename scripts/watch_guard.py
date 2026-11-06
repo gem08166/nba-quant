@@ -95,32 +95,31 @@ def main() -> None:
         time.sleep(INTERVAL)
 
 
-def already_running() -> bool:
-    """单例检查：已有 watch_guard 实例在跑就不再启动第二个。"""
+def acquire_single_instance_lock():
+    """用文件锁保证单实例（venv trampoline 会让一个实例显示成两个进程，
+    按进程个数判断会误判，详见 serve_watchdog.py 的说明）。"""
+    import msvcrt
+
+    lock_path = ROOT / "data" / "watch_guard.lock"
     try:
-        out = subprocess.run(
-            [
-                "wmic",
-                "process",
-                "where",
-                "name='python.exe' or name='pythonw.exe'",
-                "get",
-                "CommandLine",
-                "/value",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=25,
-            encoding="utf-8",
-            errors="replace",
-        ).stdout or ""
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return out.count("scripts.watch_guard") > 1
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "a+")
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        return fh
+    except OSError:
+        try:
+            fh.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
 
 if __name__ == "__main__":
-    if already_running():
+    lock = acquire_single_instance_lock()
+    if lock is None:
         log("watch guard already running - exiting")
         raise SystemExit(0)
-    main()
+    try:
+        main()
+    finally:
+        lock.close()

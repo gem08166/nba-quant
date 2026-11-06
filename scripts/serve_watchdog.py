@@ -119,32 +119,36 @@ def main() -> None:
         time.sleep(INTERVAL)
 
 
-def already_running() -> bool:
-    """单例检查：已有 serve_watchdog 实例在跑就不再启动第二个。"""
+def acquire_single_instance_lock():
+    """用文件锁保证单实例。
+
+    为什么不用"数进程个数"：venv 的 python.exe 是 trampoline 启动器，
+    一个逻辑实例会派生两个命令行相同的进程（父+子），按个数判断会
+    永远误认为"已有实例在跑"而直接退出，导致守护从不工作。
+    Windows 在进程退出时会自动释放文件锁，所以不需要清理陈旧锁。
+    """
+    import msvcrt
+
+    lock_path = ROOT / "data" / "serve_watchdog.lock"
     try:
-        out = subprocess.run(
-            [
-                "wmic",
-                "process",
-                "where",
-                "name='python.exe' or name='pythonw.exe'",
-                "get",
-                "CommandLine",
-                "/value",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=25,
-            encoding="utf-8",
-            errors="replace",
-        ).stdout or ""
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return out.count("scripts.serve_watchdog") > 1
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "a+")
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        return fh  # 必须保持打开，锁才有效
+    except OSError:
+        try:
+            fh.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
 
 if __name__ == "__main__":
-    if already_running():
+    lock = acquire_single_instance_lock()
+    if lock is None:
         log("serve watchdog already running - exiting")
         raise SystemExit(0)
-    main()
+    try:
+        main()
+    finally:
+        lock.close()
