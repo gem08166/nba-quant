@@ -231,6 +231,30 @@ function postCard(game) {
 }
 
 
+function lmBetButton(game, market, side, line, price, label) {
+  if (price == null) return "";
+  // 滚球注单用「当前状态下的模型概率」记录（赛前模型投射，尚未验证）；
+  // 缺字段时退回 0.5 并在备注里写明。
+  let modelProb = null;
+  const cover = game.live_cover || {};
+  if (market === "spread" && cover.spread_home != null) {
+    modelProb = side === "home" ? cover.spread_home : 1 - cover.spread_home;
+  } else if (market === "total" && cover.over != null) {
+    modelProb = side === "over" ? cover.over : 1 - cover.over;
+  } else if (market === "moneyline" && game.model_wp != null) {
+    modelProb = side === "home" ? game.model_wp : 1 - game.model_wp;
+  }
+  return (
+    `<button class="lm-bet" data-lm-bet="1"` +
+    ` data-lm-market="${market}" data-lm-side="${side}"` +
+    ` data-lm-line="${line ?? ""}" data-lm-price="${price}"` +
+    ` data-lm-label="${esc(label)}"` +
+    ` data-lm-prob="${modelProb != null ? modelProb : ""}"` +
+    ` title="${esc(label)} @${fmtPrice(price)}${modelProb != null ? " · 模型 " + fmtPct(modelProb) : ""}">` +
+    `${esc(label)} <b>${fmtPrice(price)}</b></button>`
+  );
+}
+
 function liveMarketBlock(game) {
   const mk = game.live_market;
   if (!mk) return "";
@@ -240,7 +264,10 @@ function liveMarketBlock(game) {
     items.push(
       `<span class="lm-item"><span class="lm-k">让分</span>` +
         `<b class="lm-line">${fmtSpread(hc.line)}</b>` +
-        `<span class="lm-px">主 ${fmtPrice(hc.home)} / 客 ${fmtPrice(hc.away)}</span></span>`
+        `<span class="lm-btns">` +
+        lmBetButton(game, "spread", "home", hc.line, hc.home, "主") +
+        lmBetButton(game, "spread", "away", -(hc.line ?? 0), hc.away, "客") +
+        `</span></span>`
     );
   }
   if (mk.total) {
@@ -248,14 +275,20 @@ function liveMarketBlock(game) {
     items.push(
       `<span class="lm-item"><span class="lm-k">大小</span>` +
         `<b class="lm-line">${fmtTotal(t.line)}</b>` +
-        `<span class="lm-px">大 ${fmtPrice(t.over)} / 小 ${fmtPrice(t.under)}</span></span>`
+        `<span class="lm-btns">` +
+        lmBetButton(game, "total", "over", t.line, t.over, "大") +
+        lmBetButton(game, "total", "under", t.line, t.under, "小") +
+        `</span></span>`
     );
   }
   if (mk.moneyline) {
     const ml = mk.moneyline;
     items.push(
       `<span class="lm-item"><span class="lm-k">胜负</span>` +
-        `<span class="lm-px">主 ${fmtPrice(ml.home)} / 客 ${fmtPrice(ml.away)}</span></span>`
+        `<span class="lm-btns">` +
+        lmBetButton(game, "moneyline", "home", null, ml.home, "主") +
+        lmBetButton(game, "moneyline", "away", null, ml.away, "客") +
+        `</span></span>`
     );
   }
   if (!items.length) return "";
@@ -270,6 +303,82 @@ function liveMarketBlock(game) {
       </div>
       <div class="lm-row">${items.join("")}</div>
     </div>`;
+}
+
+// ---- 滚球「记一笔」：浮动面板（卡片每 30 秒重绘也不会打断填写）----
+
+function openLmBetPanel(game, data) {
+  closeLmBetPanel();
+  const price = Number(data.lmPrice);
+  const probRaw = data.lmProb === "" ? null : Number(data.lmProb);
+  const prob = Number.isFinite(probRaw) ? probRaw : 0.5;
+  const marketZh = { spread: "让分", total: "大小", moneyline: "胜负" }[data.lmMarket] || data.lmMarket;
+  const line = data.lmLine === "" ? null : Number(data.lmLine);
+  const lineText = line == null ? "" : data.lmMarket === "spread" ? " " + fmtSpread(line) : " " + fmtTotal(line);
+
+  const panel = document.createElement("div");
+  panel.className = "lm-panel";
+  panel.id = "lm-panel";
+  panel.innerHTML = `
+    <div class="lm-panel-head">
+      <b>记一笔</b>
+      <span>${esc(game.matchup_zh || game.matchup)} · ${esc(marketZh)} ${esc(data.lmLabel)}${esc(lineText)}</span>
+    </div>
+    <div class="lm-panel-grid">
+      <label>注额<input id="lm-stake" type="number" step="0.5" min="0.5" value="1"></label>
+      <label>赔率<input id="lm-price" type="number" step="0.01" min="1.01" value="${price.toFixed(2)}"></label>
+    </div>
+    <div class="lm-panel-meta">
+      模型概率 <b>${fmtPct(prob)}</b> · EV <b class="${prob * price - 1 >= 0 ? "pos" : "neg"}">${fmtSignedPct(prob * price - 1)}</b>
+      ${data.lmProb === "" ? "（模型概率缺失，按 50% 记录）" : ""}
+    </div>
+    <div class="lm-panel-actions">
+      <button class="btn small primary" id="lm-confirm">确认记录</button>
+      <button class="btn small" id="lm-cancel">取消</button>
+    </div>
+    <div class="lm-panel-note">滚球注单按当前状态下的模型概率记录（赛前模型投射，未经滚球验证）；仅纸面跟踪。</div>`;
+  document.body.appendChild(panel);
+
+  const stakeEl = panel.querySelector("#lm-stake");
+  stakeEl?.focus();
+  stakeEl?.select();
+
+  panel.querySelector("#lm-cancel").addEventListener("click", closeLmBetPanel);
+  panel.querySelector("#lm-confirm").addEventListener("click", async () => {
+    const stake = Number(panel.querySelector("#lm-stake").value);
+    const px = Number(panel.querySelector("#lm-price").value);
+    if (!Number.isFinite(stake) || stake <= 0) return toast("注额无效");
+    if (!Number.isFinite(px) || px <= 1) return toast("赔率必须大于 1");
+    const stamp = [game.live_market?.period, game.live_market?.clock].filter(Boolean).join(" ");
+    try {
+      await api("/api/bets", {
+        method: "POST",
+        body: JSON.stringify({
+          game_id: game.game_id,
+          // 静态模式（本机台账）需要这两项做日期分组/显示；服务端模型会忽略多余字段
+          slate_date: state.date,
+          matchup: game.matchup_zh || game.matchup,
+          market: data.lmMarket,
+          side: data.lmSide,
+          line,
+          price: px,
+          stake,
+          model_prob: prob,
+          ev: prob * px - 1,
+          note: `滚球 ${marketZh} ${data.lmLabel}${lineText} @${px.toFixed(2)} · 好体育 ${stamp}`.trim(),
+        }),
+      });
+      closeLmBetPanel();
+      toast("已记录滚球纸面注单");
+      await loadLive(true);
+    } catch (error) {
+      toast(`记录失败：${error.message}`);
+    }
+  });
+}
+
+function closeLmBetPanel() {
+  document.getElementById("lm-panel")?.remove();
 }
 
 function liveCard(game) {
@@ -356,6 +465,7 @@ function liveCard(game) {
 }
 
 let liveToken = 0;
+let lastLiveGames = [];  // 最近一次渲染的赛时数据（滚球记一笔要用完整对象）
 
 async function loadLive(force = false) {
   if (!liveActive && !force) return;
@@ -373,6 +483,7 @@ async function loadLive(force = false) {
     if (myToken !== liveToken) return; // 过期响应，丢弃
     const box = document.getElementById("live-games");
     const inPlay = data.games.filter((g) => g.state === "in").length;
+    lastLiveGames = data.games || [];
     if (!data.games.length) {
       box.innerHTML = `<div class="empty">${esc(data.date)} 没有比赛。换一天，或先 ingest 该日期赛程。</div>`;
     } else {
@@ -567,6 +678,21 @@ document.getElementById("tabs").addEventListener("click", (event) => {
   if (button) setLiveActive(button.dataset.tab === "live");
 });
 document.addEventListener("visibilitychange", () => setLiveActive(liveActive && !document.hidden));
+
+// 滚球盘口「记一笔」：点击赔率按钮 → 打开浮动面板
+document.getElementById("live-games").addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-lm-bet]");
+  if (!btn) return;
+  event.stopPropagation();
+  const card = btn.closest(".card");
+  const gameId = card?.dataset.game;
+  const game = (lastLiveGames || []).find((g) => String(g.game_id) === String(gameId));
+  if (!game) return;
+  openLmBetPanel(game, btn.dataset);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeLmBetPanel();
+});
 document.getElementById("post-jump")?.addEventListener("click", jumpToLastFinished);
 window.loadLive = loadLive;
 window.loadPost = loadPost;
