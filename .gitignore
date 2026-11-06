@@ -10,8 +10,6 @@ dist/
 # 注意：用 /* 而不是 data/，否则子文件例外不生效
 # nba.db 不进主仓：由 Actions 持久化到独立的 data 分支（见 refresh.yml）
 data/*
-!data/odds_api_state.json
-!data/hoops_state.json
 !data/player_zh.json
 !data/backup/
 data/backup/*
@@ -35,7 +33,11 @@ ses_*.json
 /nba-quant-20261103/
 tmp_status.py
 
+# 静态站产物（由云主机发布到 gh-pages 分支，不再进 main）
+site/
+
 # 坚果云同步临时文件
 *.nssyncsc
 mobile/screen*.png
 mobile/build.log
+deploy/*.png

@@ -69,7 +69,7 @@ async function api(path, options = {}) {
           return { ok: true };
         }
       }
-      throw new Error("静态模式为只读（数据由 GitHub Actions 定时更新）");
+      throw new Error("静态模式为只读（数据由云主机定时发布）");
     }
     return staticApi(path);
   }

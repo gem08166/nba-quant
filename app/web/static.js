@@ -69,7 +69,7 @@ async function detectMode() {
       if (brand) {
         brand.textContent = window.DAV?.isApk()
           ? "本机模式 · 数据来自 GitHub Pages"
-          : "静态模式 · 数据由 GitHub Actions 定时更新";
+          : "静态模式 · 数据由云主机定时发布";
       }
       return "static";
     }
