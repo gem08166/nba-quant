@@ -949,6 +949,29 @@ td.neg { color: var(--muted); }
 .table-wrap th:first-child, .table-wrap td:first-child { padding-left: 12px; }
 .table-wrap th:last-child, .table-wrap td:last-child { padding-right: 12px; }
 
+/* 收益页：真实 / 模拟 两组统计卡 */
+#bets-stats.split { display: block; }
+.stats-group { margin-bottom: 14px; }
+.stats-group:last-child { margin-bottom: 18px; }
+.stats-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-bottom: 7px;
+}
+.stats-head::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--green);
+}
+.stats-head.sim::before { background: var(--blue); }
+.stats-group .stats { margin-bottom: 0; }
+
 /* 收益页台账：真实 / 模拟 分区 */
 .ledger-section {
   display: flex;

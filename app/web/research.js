@@ -159,8 +159,108 @@ function drawLineChart(canvas, labels, series, { min, max, unit = "" } = {}) {
   });
 }
 
-function drawRapmChart(canvas, players) {
+// 多序列累计曲线（真实 vs 模拟）：日期取并集，缺失日沿用上一个累计值
+function drawMultiLineChart(canvas, seriesList, { unit = "" } = {}) {
   const { ctx, width, height } = setupCanvas(canvas);
+  const pad = { l: 54, r: 14, t: 26, b: 34 };
+  const list = (seriesList || []).filter((s) => s && s.points && s.points.length);
+  if (!list.length) return;
+
+  const dates = Array.from(new Set(list.flatMap((s) => s.points.map((p) => p.date)))).sort();
+  const aligned = list.map((s) => {
+    const map = new Map(s.points.map((p) => [p.date, p.value]));
+    let last = 0;
+    let started = false;
+    return {
+      label: s.label,
+      color: s.color || COLORS.green,
+      values: dates.map((d) => {
+        if (map.has(d)) {
+          last = map.get(d);
+          started = true;
+        }
+        return started ? last : 0;
+      }),
+    };
+  });
+
+  const all = aligned.flatMap((a) => a.values);
+  const lo = Math.min(0, ...all);
+  const hi = Math.max(0, ...all);
+  const padV = (hi - lo) * 0.12 || 1;
+  const yMin = lo - padV;
+  const yMax = hi + padV;
+  const y = yScale(height, pad, yMin, yMax);
+  drawFrame(ctx, width, height, pad);
+
+  ctx.font = '11px "Plex Mono", ui-monospace, monospace';
+  ctx.fillStyle = COLORS.muted;
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 4; i++) {
+    const v = yMin + ((yMax - yMin) * i) / 4;
+    ctx.fillText(`${v.toFixed(1)}${unit}`, pad.l - 6, y(v) + 4);
+    if (i > 0) {
+      ctx.strokeStyle = COLORS.grid;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, y(v));
+      ctx.lineTo(width - pad.r, y(v));
+      ctx.stroke();
+    }
+  }
+
+  if (yMin < 0 && yMax > 0) {
+    ctx.strokeStyle = "rgba(232, 163, 61, 0.45)";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y(0));
+    ctx.lineTo(width - pad.r, y(0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  const n = dates.length;
+  const slot = (width - pad.l - pad.r) / Math.max(n - 1, 1);
+  aligned.forEach((s) => {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    s.values.forEach((v, i) => {
+      const cx = pad.l + slot * i;
+      if (i === 0) ctx.moveTo(cx, y(v));
+      else ctx.lineTo(cx, y(v));
+    });
+    ctx.stroke();
+    ctx.fillStyle = s.color;
+    s.values.forEach((v, i) => {
+      if (n > 24 && i % 2 === 1) return;
+      ctx.beginPath();
+      ctx.arc(pad.l + slot * i, y(v), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  });
+
+  // 图例
+  let lx = pad.l;
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "left";
+  aligned.forEach((s) => {
+    ctx.fillStyle = s.color;
+    ctx.fillRect(lx, pad.t - 15, 10, 3);
+    ctx.fillStyle = COLORS.muted;
+    ctx.fillText(s.label, lx + 14, pad.t - 10);
+    lx += 14 + ctx.measureText(s.label).width + 18;
+  });
+
+  ctx.fillStyle = COLORS.muted;
+  ctx.textAlign = "center";
+  dates.forEach((d, i) => {
+    if (dates.length > 9 && i % 2 === 1) return;
+    ctx.fillText(d, pad.l + slot * i, height - pad.b + 16);
+  });
+}
+window.drawMultiLineChart = drawMultiLineChart;
+
+function drawRapmChart(canvas, players) {  const { ctx, width, height } = setupCanvas(canvas);
   const rows = players.slice(0, 24); // top12 + bottom12
   const pad = { l: 150, r: 40, t: 10, b: 10 };
   const values = rows.map((p) => p.rating);

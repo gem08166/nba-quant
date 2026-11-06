@@ -232,7 +232,14 @@ function lbAnalysis() {
     kind: lbKind(bet),
     source: lbSource(bet),
   }));
-  return { summary: lbSummary(bets), bets, curve: lbCurve(bets) };
+  const mine = bets.filter((b) => b.source === "mine");
+  const sim = bets.filter((b) => b.source === "sim");
+  return {
+    summary: lbSummary(bets),
+    bets,
+    curve: lbCurve(bets),
+    curves: { mine: lbCurve(mine), sim: lbCurve(sim) },
+  };
 }
 
 function lbImport(rows) {

@@ -437,20 +437,30 @@ def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         item["source"] = bet_source(item)
         bets.append(item)
 
-    # cumulative profit over settled bets, ordered by game date
-    decided = [b for b in bets if b["result"] in ("won", "lost", "push") and b["slate_date"]]
-    decided.sort(key=lambda b: (b["slate_date"], b["id"]))
-    curve = []
-    running = 0.0
-    for bet in decided:
-        running += bet["profit"] or 0.0
-        if curve and curve[-1]["date"] == bet["slate_date"]:
-            curve[-1]["cum_profit"] = round(running, 2)
-            curve[-1]["n"] += 1
-        else:
-            curve.append({"date": bet["slate_date"], "cum_profit": round(running, 2), "n": 1})
+    # 累计收益曲线：整体 + 真实/模拟分开（滚球与回填口径不同，混在一起看不出问题）
+    def _curve(items: list[dict]) -> list[dict]:
+        decided = [
+            b for b in items if b["result"] in ("won", "lost", "push") and b["slate_date"]
+        ]
+        decided.sort(key=lambda b: (b["slate_date"], b["id"]))
+        out: list[dict] = []
+        running = 0.0
+        for bet in decided:
+            running += bet["profit"] or 0.0
+            if out and out[-1]["date"] == bet["slate_date"]:
+                out[-1]["cum_profit"] = round(running, 2)
+                out[-1]["n"] += 1
+            else:
+                out.append({"date": bet["slate_date"], "cum_profit": round(running, 2), "n": 1})
+        return out
 
-    return {"summary": summary, "curve": curve, "bets": bets}
+    curve = _curve(bets)
+    curves = {
+        "mine": _curve([b for b in bets if b["source"] == "mine"]),
+        "sim": _curve([b for b in bets if b["source"] == "sim"]),
+    }
+
+    return {"summary": summary, "curve": curve, "curves": curves, "bets": bets}
 
 
 class ImpactIn(BaseModel):

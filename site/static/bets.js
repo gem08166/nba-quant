@@ -19,9 +19,52 @@ const fmtLineMove = (value) =>
   value == null ? "—" : `${value > 0 ? "+" : ""}${Number(value).toFixed(1)} 分`;
 
 function renderBetStats(s) {
+  const box = document.getElementById("bets-stats");
+  const by = s.by_source || null;
+  const fmtMoney = (v) => (v > 0 ? "+" : "") + Number(v || 0).toFixed(2);
+
+  const group = (title, d, tone) => {
+    if (!d) return "";
+    const cards = [
+      ["已结算", `${d.settled} (胜${d.wins}/负${d.losses}/走${d.pushes})`],
+      ["盈亏", fmtMoney(d.profit), d.profit > 0 ? "green" : ""],
+      ["ROI", d.roi == null ? "—" : fmtSignedPct(d.roi), d.roi > 0 ? "green" : ""],
+      ["命中率", d.hit_rate == null ? "—" : fmtPct(d.hit_rate)],
+    ];
+    if (d.clv_n) {
+      cards.push(["平均 CLV", fmtSignedPct(d.avg_clv), d.avg_clv > 0 ? "green" : ""]);
+      cards.push(["CLV 为正", fmtPct(d.clv_positive_rate)]);
+    }
+    if (d.clv_line_n) {
+      cards.push(["平均线移动", fmtLineMove(d.avg_clv_line), d.avg_clv_line > 0 ? "green" : ""]);
+    }
+    cards.push(["未结算", String(d.open ?? 0)]);
+    return `
+      <div class="stats-group">
+        <div class="stats-head ${tone}">${esc(title)}</div>
+        <div class="stats">
+          ${cards
+            .map(
+              ([k, v, cls]) =>
+                `<div class="stat"><div class="k">${k}</div><div class="v ${cls || ""}" style="font-size:16px">${esc(v)}</div></div>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+  };
+
+  if (by) {
+    box.classList.add("split");
+    box.innerHTML =
+      group("我的注单（真实）", by.mine, "mine") + group("信号模拟（历史回填）", by.sim, "sim");
+    return;
+  }
+
+  // 旧数据兜底（没有 by_source）
+  box.classList.remove("split");
   const stats = [
     ["已结算", `${s.settled} (胜${s.wins}/负${s.losses}/走${s.pushes})`],
-    ["盈亏", `${s.profit >= 0 ? "+" : ""}${s.profit.toFixed(2)}`, s.profit > 0 ? "green" : ""],
+    ["盈亏", fmtMoney(s.profit), s.profit > 0 ? "green" : ""],
     ["ROI", fmtSignedPct(s.roi), s.roi > 0 ? "green" : ""],
     ["命中率", fmtPct(s.hit_rate)],
     ["平均 CLV", fmtSignedPct(s.avg_clv), s.avg_clv > 0 ? "green" : ""],
@@ -30,7 +73,7 @@ function renderBetStats(s) {
     ["线移动为正", fmtPct(s.clv_line_positive_rate)],
     ["未结算", String(s.open)],
   ];
-  document.getElementById("bets-stats").innerHTML = stats
+  box.innerHTML = stats
     .map(([k, v, cls]) => `<div class="stat"><div class="k">${k}</div><div class="v ${cls || ""}" style="font-size:16px">${esc(v)}</div></div>`)
     .join("");
 }
@@ -515,7 +558,23 @@ async function loadBets() {
     renderLedger(data.bets);
 
     const canvas = document.getElementById("chart-profit");
-    if (data.curve && data.curve.length) {
+    const curves = data.curves || {};
+    const mine = curves.mine || [];
+    const sim = curves.sim || [];
+    if (mine.length || sim.length) {
+      window.drawMultiLineChart?.(canvas, [
+        {
+          label: "真实",
+          color: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#46b95c",
+          points: mine.map((p) => ({ date: p.date.slice(2), value: p.cum_profit })),
+        },
+        {
+          label: "模拟",
+          color: getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#4b8fd6",
+          points: sim.map((p) => ({ date: p.date.slice(2), value: p.cum_profit })),
+        },
+      ]);
+    } else if (data.curve && data.curve.length) {
       window.drawLineChart?.(
         canvas,
         data.curve.map((p) => p.date.slice(2)),
