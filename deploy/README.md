@@ -128,6 +128,21 @@ journalctl -u nba-quant-guard -n 50   # 看发布/训练记录
 
 > unit 文件已在本地用 `systemd-analyze verify` 校验通过（无告警）。
 
+## 告警与日报（推送到手机）
+
+`guard` 自带两条推送，走 `.env` 里的 `NBAQ_NTFY_TOPIC`，不依赖任何外部定时服务：
+
+| 触发 | 内容 | 节流 |
+|---|---|---|
+| 三进程拉不起来 | 「nba-quant 服务拉不起来」+ 指向 guard.log / serve.log | 1 小时一次 |
+| 发布失败（rc≠0） | 常见原因是 `GH_TOKEN` 失效（403） | 1 小时一次 |
+| 全量刷新失败（rc≠0） | 指向 refresh.log | 1 小时一次 |
+| 每日简报 | 三进程状态、线上 `generated_at`、Odds API 剩余额度 | 每天 1 条 |
+
+开关：`NBAQ_DIGEST=0` 关掉日报；`NBAQ_DIGEST_HOUR=20` 改发送时间（默认 20 点后第一次巡检时发）。
+
+> 为什么不用平台定时任务：当前套餐只允许 1 个定时任务，名额已被「每日股市新闻早报」占用。告警做成机器内置，免费且不受额度限制。
+
 ## 发布到 GitHub Pages
 
 线上 `https://gem08166.github.io/nba-quant/` 的内容现在由云主机推送，不再是 Actions 算出来的。
