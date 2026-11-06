@@ -106,8 +106,12 @@ function lbSettle(games) {
   return changed;
 }
 
-function lbSummary(bets) {
-  const settled = bets.filter((bet) => bet.result !== "open");
+function lbKind(bet) {
+  // 与后端 settle.bet_kind 同口径：滚球注单备注含「滚球」
+  return String((bet && bet.note) || "").includes("滚球") ? "live" : "pregame";
+}
+
+function lbSummary(bets) {  const settled = bets.filter((bet) => bet.result !== "open");
   const wins = settled.filter((bet) => bet.result === "won").length;
   const losses = settled.filter((bet) => bet.result === "lost").length;
   const pushes = settled.filter((bet) => bet.result === "push").length;
@@ -128,6 +132,31 @@ function lbSummary(bets) {
     bucket.avg_clv = null;
     bucket.avg_clv_line = null;
   }
+  const byKind = {};
+  for (const kind of ["pregame", "live"]) {
+    const rows = bets.filter((bet) => lbKind(bet) === kind);
+    const settledRows = rows.filter((bet) => bet.result !== "open");
+    const kStake = settledRows.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);
+    const kProfit = settledRows.reduce((sum, bet) => sum + Number(bet.profit || 0), 0);
+    const kWins = settledRows.filter((bet) => bet.result === "won").length;
+    const kLosses = settledRows.filter((bet) => bet.result === "lost").length;
+    byKind[kind] = {
+      settled: settledRows.length,
+      open: rows.length - settledRows.length,
+      wins: kWins,
+      losses: kLosses,
+      pushes: settledRows.filter((bet) => bet.result === "push").length,
+      stake: Math.round(kStake * 100) / 100,
+      profit: Math.round(kProfit * 100) / 100,
+      roi: kStake > 0 ? kProfit / kStake : null,
+      hit_rate: kWins + kLosses ? kWins / (kWins + kLosses) : null,
+      avg_clv: null,
+      clv_positive_rate: null,
+      avg_clv_line: null,
+      clv_line_positive_rate: null,
+    };
+  }
+
   return {
     settled: settled.length,
     wins,
@@ -143,6 +172,7 @@ function lbSummary(bets) {
     clv_line_positive_rate: null,
     open: bets.length - settled.length,
     by_market: byMarket,
+    by_kind: byKind,
   };
 }
 
@@ -163,7 +193,7 @@ function lbCurve(bets) {
 }
 
 function lbAnalysis() {
-  const bets = lbRead();
+  const bets = lbRead().map((bet) => ({ ...bet, kind: lbKind(bet) }));
   return { summary: lbSummary(bets), bets, curve: lbCurve(bets) };
 }
 

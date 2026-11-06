@@ -253,6 +253,22 @@ def _print_summary(summary: dict) -> None:
             clv = f"{stats['avg_clv']:+.2%}" if stats["avg_clv"] is not None else "—"
             print(f"  {market}: n={stats['n']} 盈亏 {stats['profit']:+.2f} ROI {roi} CLV {clv}")
 
+    # 赛前 vs 滚球分开统计（滚球注单的 CLV 口径不同，不能混算）
+    by_kind = summary.get("by_kind") or {}
+    if by_kind:
+        print("分场景：")
+        for kind, label in (("pregame", "赛前"), ("live", "滚球")):
+            stats = by_kind.get(kind) or {}
+            if not stats.get("settled") and not stats.get("open"):
+                continue
+            roi = f"{stats['roi']:+.2%}" if stats.get("roi") is not None else "—"
+            clv = f"{stats['avg_clv']:+.2%}" if stats.get("avg_clv") is not None else "—"
+            hit = f"{stats['hit_rate']:.1%}" if stats.get("hit_rate") is not None else "—"
+            print(
+                f"  {label}: 已结算 {stats.get('settled', 0)} · 未结算 {stats.get('open', 0)}"
+                f" · 盈亏 {stats.get('profit', 0):+.2f} · ROI {roi} · 命中 {hit} · CLV {clv}"
+            )
+
 
 def cmd_watch(args: argparse.Namespace) -> None:
     watch_job.run(interval=args.interval, with_ingest=not args.no_ingest, once=args.once)

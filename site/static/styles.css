@@ -950,6 +950,12 @@ td.neg { color: var(--muted); }
   background: #14211a;
   font-weight: 600;
 }
+.pill-live {
+  color: var(--amber);
+  border-color: #5a4318;
+  background: #211a0e;
+  font-weight: 600;
+}
 
 .inj-list { display: grid; gap: 6px; }
 .inj {

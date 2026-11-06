@@ -35,6 +35,43 @@ function renderBetStats(s) {
     .join("");
 }
 
+// 赛前 / 滚球 分开统计：滚球注单的 CLV 口径是「相对下注时的滚球线」，
+// 与赛前 CLV（相对收盘线）不可混算。
+function renderKindStats(byKind) {
+  const box = document.getElementById("bets-kinds");
+  if (!box) return;
+  const rows = byKind || {};
+  const pre = rows.pregame || null;
+  const live = rows.live || null;
+  const hasLive = live && (live.settled > 0 || live.open > 0);
+  const cell = (v) => (v == null || v === "" ? "—" : v);
+  const line = (label, s) => {
+    if (!s) return "";
+    const roi = s.roi != null ? fmtSignedPct(s.roi) : "—";
+    const clv = s.avg_clv != null ? fmtSignedPct(s.avg_clv) : "—";
+    const hit = s.hit_rate != null ? fmtPct(s.hit_rate) : "—";
+    const profitCls = s.profit > 0 ? "pos" : s.profit < 0 ? "neg" : "";
+    return `<tr>
+      <td>${label}</td>
+      <td>${s.settled}</td>
+      <td>${s.open}</td>
+      <td class="${profitCls}">${s.settled || s.open ? (s.profit >= 0 ? "+" : "") + s.profit.toFixed(2) : "—"}</td>
+      <td class="${s.roi > 0 ? "pos" : ""}">${cell(roi)}</td>
+      <td>${cell(hit)}</td>
+      <td>${cell(clv)}</td>
+    </tr>`;
+  };
+  box.innerHTML = `
+    <div class="table-wrap" style="margin-bottom:16px"><table>
+      <thead><tr><th>场景</th><th>已结算</th><th>未结算</th><th>盈亏</th><th>ROI</th><th>命中率</th><th>平均 CLV</th></tr></thead>
+      <tbody>
+        ${line("赛前", pre)}
+        ${line("滚球", live)}
+        ${!hasLive ? `<tr><td colspan="7" style="color:var(--muted);font-size:11.5px">还没有滚球注单（赛时面板的盘口点「主/客/大/小」即可记一笔）。滚球 CLV 口径与赛前不同，单独统计。</td></tr>` : ""}
+      </tbody>
+    </table></div>`;
+}
+
 function renderMarkets(byMarket) {
   const entries = Object.entries(byMarket || {});
   const box = document.getElementById("bets-markets");
@@ -103,6 +140,11 @@ function liveBadgeFor(bet) {
   return text ? `<span class="pill signal" title="实时比分 ${as} : ${hs}">${text}</span>` : "";
 }
 
+function ledgerKind(bet) {
+  // API 模式带 kind 字段；静态模式从备注推断（与后端 settle.bet_kind 同口径）
+  return bet.kind || (String(bet.note || "").includes("滚球") ? "live" : "pregame");
+}
+
 function renderLedger(bets) {
   const box = document.getElementById("bets-ledger");
   if (!bets.length) {
@@ -111,7 +153,7 @@ function renderLedger(bets) {
   }
   box.innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>比赛日</th><th>比赛</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th></tr></thead>
+      <thead><tr><th>比赛日</th><th>比赛</th><th>场景</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th></tr></thead>
       <tbody>
         ${bets
           .slice()
@@ -132,6 +174,9 @@ function renderLedger(bets) {
                 data-goto-date="${esc(bet.slate_date || "")}"
                 data-goto-status="${esc(bet.game_status || "")}"
                 title="跳转到该场比赛">${esc(bet.matchup_zh || matchupZh(bet.matchup))}</button></td>
+              <td>${ledgerKind(bet) === "live"
+                ? '<span class="pill pill-live" title="赛时面板下的滚球注单">滚球</span>'
+                : '<span style="color:var(--muted)">赛前</span>'}</td>
               <td>${marketLabel(bet.market)}</td>
               <td>${sideLabel(bet)}</td>
               <td>${line}</td>
@@ -253,6 +298,7 @@ async function loadBets() {
     const data = await api("/api/bets/analysis");
     const s = data.summary;
     renderBetStats(s);
+    renderKindStats(s.by_kind);
     renderMarkets(s.by_market);
     renderLedger(data.bets);
 

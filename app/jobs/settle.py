@@ -190,33 +190,39 @@ def capture_closing(
             conn.close()
 
 
-def summarize(conn: sqlite3.Connection) -> dict:
-    settled = [
-        dict(row)
-        for row in conn.execute("SELECT * FROM bets WHERE result != 'open'")
-    ]
-    open_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM bets WHERE result = 'open'"
-    ).fetchone()["n"]
+LIVE_NOTE_TAG = "滚球"
 
-    decided = [bet for bet in settled if bet["result"] in ("won", "lost", "push")]
+
+def bet_kind(bet: dict) -> str:
+    """区分赛前注单与滚球注单。
+
+    滚球注单是「记一笔」时从赛时面板下的，备注固定以"滚球 ..."开头
+    （见 app/web/live.js）。赛前注单的备注是信号描述，不含该标记。
+    """
+    note = bet.get("note") or ""
+    return "live" if LIVE_NOTE_TAG in note else "pregame"
+
+
+def _stats(rows: list[dict]) -> dict:
+    """一组已结算注单的统计（含分市场拆分）。"""
+    decided = [bet for bet in rows if bet["result"] in ("won", "lost", "push")]
     wins = sum(1 for bet in decided if bet["result"] == "won")
     losses = sum(1 for bet in decided if bet["result"] == "lost")
     pushes = sum(1 for bet in decided if bet["result"] == "push")
     stake = sum(bet["stake"] for bet in decided)
     profit = sum(bet["profit"] or 0.0 for bet in decided)
-
     clvs = [bet["clv"] for bet in decided if bet["clv"] is not None]
     clv_lines = [bet["clv_line"] for bet in decided if bet.get("clv_line") is not None]
+
     by_market: dict[str, dict] = {}
     for market in sorted({bet["market"] for bet in decided}):
-        rows = [bet for bet in decided if bet["market"] == market]
-        m_stake = sum(bet["stake"] for bet in rows)
-        m_profit = sum(bet["profit"] or 0.0 for bet in rows)
-        m_clv = [bet["clv"] for bet in rows if bet["clv"] is not None]
-        m_clv_line = [bet["clv_line"] for bet in rows if bet.get("clv_line") is not None]
+        mrows = [bet for bet in decided if bet["market"] == market]
+        m_stake = sum(bet["stake"] for bet in mrows)
+        m_profit = sum(bet["profit"] or 0.0 for bet in mrows)
+        m_clv = [bet["clv"] for bet in mrows if bet["clv"] is not None]
+        m_clv_line = [bet["clv_line"] for bet in mrows if bet.get("clv_line") is not None]
         by_market[market] = {
-            "n": len(rows),
+            "n": len(mrows),
             "stake": m_stake,
             "profit": m_profit,
             "roi": (m_profit / m_stake) if m_stake else None,
@@ -225,7 +231,6 @@ def summarize(conn: sqlite3.Connection) -> dict:
         }
 
     return {
-        "open": open_count,
         "settled": len(decided),
         "wins": wins,
         "losses": losses,
@@ -244,3 +249,27 @@ def summarize(conn: sqlite3.Connection) -> dict:
         ) if clv_lines else None,
         "by_market": by_market,
     }
+
+
+def summarize(conn: sqlite3.Connection) -> dict:
+    settled = [
+        dict(row)
+        for row in conn.execute("SELECT * FROM bets WHERE result != 'open'")
+    ]
+    open_rows = [
+        dict(row) for row in conn.execute("SELECT * FROM bets WHERE result = 'open'")
+    ]
+
+    result = _stats(settled)
+    result["open"] = len(open_rows)
+
+    # 赛前 / 滚球分开统计：滚球注单的 CLV 口径不同（相对下注时的滚球线），
+    # 混在一起会污染赛前 CLV 结论。
+    by_kind: dict[str, dict] = {}
+    for kind in ("pregame", "live"):
+        rows = [bet for bet in settled if bet_kind(bet) == kind]
+        stats = _stats(rows)
+        stats["open"] = sum(1 for bet in open_rows if bet_kind(bet) == kind)
+        by_kind[kind] = stats
+    result["by_kind"] = by_kind
+    return result

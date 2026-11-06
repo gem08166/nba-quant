@@ -14,7 +14,7 @@ from .dates import current_slate_date
 from .ingest.service import insert_odds
 from .jobs import live
 from .jobs.predict import latest_odds, latest_prediction, predict_date
-from .jobs.settle import summarize
+from .jobs.settle import bet_kind, summarize
 from .models import rapm
 
 router = APIRouter(prefix="/api")
@@ -432,6 +432,8 @@ def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         away = item.pop("away_abbrev", None)
         item["matchup"] = f"{away or '?'} @ {home or '?'}" if home or away else item["game_id"]
         item["matchup_zh"] = i18n.matchup_zh(item["matchup"])
+        # 赛前 / 滚球分组（滚球注单备注含"滚球"）
+        item["kind"] = bet_kind(item)
         bets.append(item)
 
     # cumulative profit over settled bets, ordered by game date
