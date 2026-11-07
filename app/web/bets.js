@@ -571,8 +571,9 @@ async function apiEditBet(idNum, patch) {
   return api(`/api/bets/${idNum}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
-async function apiDeleteBet(idNum) {
-  return api(`/api/bets/${idNum}`, { method: "DELETE" });
+async function apiDeleteBet(idNum, settled = false) {
+  const force = settled ? "?force=true" : "";
+  return api(`/api/bets/${idNum}${force}`, { method: "DELETE" });
 }
 
 // 静态模式：本地注单就地改；服务端注单只读（下一轮快照会被覆盖，改了也会被冲掉）
@@ -594,6 +595,7 @@ function openBetEditPanel(bet) {
   const local = isLocalBet(bet);
   const settled = bet.result && bet.result !== "open";
   const idNum = betNumericId(bet);
+  const canDelete = local || idNum != null; // 有身份才能删
   const MZ = { spread: "让分", total: "大小分", moneyline: "胜负" };
   const SIDE_ZH = { home: "主", away: "客", over: "大", under: "小" };
   const RESULT_ZH = { open: "未结算", won: "胜", lost: "负", push: "走" };
@@ -634,10 +636,11 @@ function openBetEditPanel(bet) {
     ${!local && settled ? `<div class="lm-panel-note">已结算的服务端注单只能改结果/盈亏/注额/备注——盘口与赔率改动会破坏结算口径。</div>` : ""}
     <div class="lm-panel-actions">
       <button class="btn small primary" id="be-save">保存</button>
-      ${!local && settled ? "" : `<button class="btn small" id="be-delete">删除</button>`}
+      ${canDelete ? `<button class="btn small danger" id="be-delete">删除</button>` : ""}
       <button class="btn small" id="be-cancel">取消</button>
     </div>
-    <div class="lm-panel-note">改回「未结算」会清掉收盘线/CLV（那是结算时写入的）。删除仅限未结算注单。</div>`;
+    <div class="lm-panel-note">改回「未结算」会清掉收盘线/CLV（那是结算时写入的）。
+      ${settled ? "删除已结算注单会破坏历史统计，需要二次确认并输入确认文本。" : "删除仅限你自己记录的注单。"}</div>`;
   document.body.appendChild(panel);
 
   const els = {
@@ -697,12 +700,23 @@ function openBetEditPanel(bet) {
 
   panel.querySelector("#be-cancel").addEventListener("click", () => panel.remove());
   panel.querySelector("#be-delete")?.addEventListener("click", async () => {
-    if (!confirm("删除这条注单？删除后无法恢复。")) return;
+    // 已结算注单进入统计（ROI/CLV/曲线），删除是破坏性操作 → 输入确认文本；
+    // 未结算的用普通 confirm 即可。
+    if (settled && !local) {
+      const word = "删除";
+      const answer = prompt(
+        `这条注单已结算（${RESULT_ZH[bet.result] || bet.result}，盈亏 ${bet.profit ?? 0}），` +
+          `删除会影响历史统计。\n输入「${word}」确认删除：`
+      );
+      if (answer !== word) return toast("未确认，已取消删除");
+    } else if (!confirm("删除这条注单？删除后无法恢复。")) {
+      return;
+    }
     try {
       if (local) {
         window.LB.remove(bet.id);
       } else if (idNum != null) {
-        await apiDeleteBet(idNum);
+        await apiDeleteBet(idNum, settled);
       } else {
         return toast("这条注单没有 ID，无法删除");
       }

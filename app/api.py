@@ -340,6 +340,8 @@ class BetPatch(BaseModel):
     note: str | None = None
     result: Literal["open", "won", "lost", "push"] | None = None
     profit: float | None = None
+    # 危险操作显式确认：删除已结算注单必须带 force=true
+    force: bool = False
 
 
 @router.post("/bets")
@@ -510,16 +512,23 @@ def list_bets(
 
 
 @router.delete("/bets/{bet_id}")
-def delete_bet(bet_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    """撤销纸面注单：仅未结算的可以删。"""
-    row = conn.execute("SELECT id, result FROM bets WHERE id=?", (bet_id,)).fetchone()
+def delete_bet(bet_id: int, force: bool = False, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """撤销纸面注单。
+
+    未结算：直接删（记错了很常见）。
+    已结算：需要 force=true —— 破坏历史样本要显式确认；用于清除完全错误的记录。
+    """
+    row = conn.execute("SELECT id, result, ref FROM bets WHERE id=?", (bet_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="bet not found")
-    if row["result"] != "open":
-        raise HTTPException(status_code=400, detail="settled bets cannot be deleted")
+    if row["result"] != "open" and not force:
+        raise HTTPException(
+            status_code=400,
+            detail="settled bets cannot be deleted without force=true",
+        )
     conn.execute("DELETE FROM bets WHERE id=?", (bet_id,))
     conn.commit()
-    return {"ok": True}
+    return {"ok": True, "id": bet_id, "deleted_ref": row["ref"]}
 
 
 @router.get("/bets/analysis")

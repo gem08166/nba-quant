@@ -992,6 +992,15 @@ td.neg { color: var(--muted); }
 }
 .ledger-count b { font-family: var(--font-num); }
 
+.btn.danger {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.4);
+}
+.btn.danger:hover {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.7);
+}
+
 /* 按比赛日分组的台账 */
 .ledger-day { margin: 10px 0 14px; }
 .ledger-day-head {

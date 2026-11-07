@@ -82,7 +82,13 @@ async function api(path, options = {}) {
           return window.LB.add({ ...local, ...patch, id: local.id, ref: local.ref });
         }
         if (editId && options.method === "DELETE") {
-          window.LB.remove(editId[1]);
+          // 本地注单直接删；服务端注单静态模式改不了（含 force 也拦）
+          const id = editId[1];
+          const local = window.LB.read().find((b) => String(b.id) === String(id));
+          if (!local) {
+            throw new Error("静态模式下服务端注单为只读（等下一轮快照更新）");
+          }
+          window.LB.remove(id);
           return { ok: true };
         }
         if (options.method === "POST") return window.LB.add(JSON.parse(options.body || "{}"));

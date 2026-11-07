@@ -127,4 +127,7 @@ def test_empty_patch_rejected(client):
 
 def test_delete_open_only(client):
     assert client.delete("/api/bets/1").status_code == 200
-    assert client.delete("/api/bets/2").status_code == 400  # 已结算不能删
+    # 已结算需要 force=true
+    assert client.delete("/api/bets/2").status_code == 400
+    assert client.delete("/api/bets/2?force=true").status_code == 200
+    assert client.get("/api/bets?game_id=g1").json()["bets"] == []
