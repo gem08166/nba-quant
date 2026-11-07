@@ -176,6 +176,7 @@ def run(
         return {"skipped": "webdav not configured"}
     stats: dict = {
         "inbox_merged": 0,
+        "inbox_updated": 0,
         "ledger_merged": 0,
         "ledger_updated": 0,
         "pushed": False,
@@ -185,10 +186,11 @@ def run(
     stats["refs_normalized"] = normalize_refs(conn)
 
     # 1) inbox：手机导出的片段
-    #    pull_only 时跳过：本机不该把手机的注单「吃」掉（会 MOVE 到 done/），
-    #    否则 CI 永远看不到这条注单。只读模式只拉全量台账。
+    #    pull_only：只读合并，绝不 MOVE（MOVE 会把文件从 inbox 拿走，CI 就永远
+    #    看不到这条注单）。每轮重复读同一文件是幂等的（按 ref 去重）。
     if not pull_only:
         webdav.ensure_folders()
+    try:
         for path in webdav.list_files(webdav.INBOX):
             if not path.endswith(".json"):
                 continue
@@ -199,9 +201,13 @@ def run(
                     rows = rows.get("bets") or []
                 result = merge_rows(conn, rows if isinstance(rows, list) else [])
                 stats["inbox_merged"] += result["added"]
-                webdav.move(path, f"{webdav.DONE}/{path.rsplit('/', 1)[-1]}")
+                stats["inbox_updated"] += result.get("updated", 0)
+                if not pull_only:
+                    webdav.move(path, f"{webdav.DONE}/{path.rsplit('/', 1)[-1]}")
             except Exception as exc:  # noqa: BLE001 - 单个文件坏了不影响其他
                 stats[f"inbox_error:{path}"] = str(exc)[:120]
+    except Exception as exc:  # noqa: BLE001 - 目录不可读不影响台账同步
+        stats["inbox_error"] = str(exc)[:120]
 
     # 2) 云端全量台账 → 本地
     ledger_text = webdav.get_text(webdav.LEDGER)

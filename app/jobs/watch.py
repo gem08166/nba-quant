@@ -323,6 +323,7 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 sync_stats = betssync.run(conn, pull_only=True)
                 if (
                     sync_stats.get("inbox_merged")
+                    or sync_stats.get("inbox_updated")
                     or sync_stats.get("ledger_merged")
                     or sync_stats.get("ledger_updated")
                     or sync_stats.get("pushed")
