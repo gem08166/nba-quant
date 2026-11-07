@@ -31,7 +31,7 @@ from app import db
 from app.jobs.signal_backtest import _closing_price, _entry_snapshot, settle_edge
 
 
-def _select_signals(rows, strict: bool):
+def _select_signals(rows, strict: bool, bettable_only: bool = False):
     """从历史预测里挑出「当时会真的下注」的信号。
 
     strict（默认）：
@@ -41,6 +41,12 @@ def _select_signals(rows, strict: bool):
 
     raw：
     - 按 (market, side, line) 各取首次出现（旧行为，会有同场相关仓位）
+
+    bettable_only（可下注口径）：
+    - 只取 bettable=True 的边；同一 (game, market, side, line) 取**首个通过阀门的**
+      版本（模拟"当时阀门放行才下注"）；
+    - 11-04 闸门上线前的旧预测没有 bettable 字段，按"阀门未存在"处理：全部排除，
+      不做假设（无法判定就不假装能判定）。
     """
     chosen: dict[tuple, dict] = {}
     for row in rows:
@@ -51,6 +57,10 @@ def _select_signals(rows, strict: bool):
         for edge in details.get("edges") or []:
             if not edge.get("signal"):
                 continue
+            if bettable_only:
+                # 必须是阀门明确放行的版本；无字段的旧版本不算
+                if edge.get("bettable") is not True:
+                    continue
             key = (row["game_id"], edge["market"]) if strict else (
                 row["game_id"], edge["market"], edge["side"], edge.get("line")
             )
@@ -78,7 +88,8 @@ def _select_signals(rows, strict: bool):
 
 
 def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None = None,
-             dry_run: bool = False, strict: bool = True, replace: bool = False) -> dict:
+             dry_run: bool = False, strict: bool = True, replace: bool = False,
+             bettable_only: bool = False) -> dict:
     rows = conn.execute(
         """
         SELECT p.game_id, p.created_at, p.details, g.slate_date, g.tipoff,
@@ -110,7 +121,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         for r in conn.execute("SELECT game_id, market, side, line FROM bets")
     }
 
-    items = _select_signals(rows, strict)
+    items = _select_signals(rows, strict, bettable_only=bettable_only)
 
     inserted = 0
     skipped_dupe = 0
@@ -162,6 +173,9 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
             f"EV {ev:+.1%} · {slate}" if isinstance(ev, (int, float)) else
             f"回填 赛前信号 · {edge.get('book') or '—'} · {slate}"
         )
+        if bettable_only:
+            note = f"回填 可下注 · {edge.get('book') or '—'} · EV {ev:+.1%} · {slate}" \
+                if isinstance(ev, (int, float)) else f"回填 可下注 · {edge.get('book') or '—'} · {slate}"
 
         stats[result] = stats.get(result, 0) + 1
         stake_sum += stake
@@ -208,6 +222,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         "roi": round(profit_sum / stake_sum, 4) if stake_sum else None,
         "dry_run": dry_run,
         "strict": strict,
+        "bettable_only": bettable_only,
     }
 
 
@@ -227,6 +242,11 @@ def main() -> None:
         action="store_true",
         help="先删除已有的回填注单再重填（只删备注以「回填」开头的）",
     )
+    parser.add_argument(
+        "--bettable-only",
+        action="store_true",
+        help="只回填通过可下注阀门（bettable=True）的信号；11-04 闸门上线前的旧信号排除",
+    )
     args = parser.parse_args()
 
     conn = db.connect()
@@ -239,6 +259,7 @@ def main() -> None:
             dry_run=args.dry_run,
             strict=not args.raw,
             replace=args.replace,
+            bettable_only=args.bettable_only,
         )
     finally:
         conn.close()
@@ -247,6 +268,7 @@ def main() -> None:
         ("[dry-run] " if stats["dry_run"] else "") +
         f"回填 {stats['inserted']} 条"
         + (f"（已替换旧回填 {stats['replaced']} 条）" if stats["replaced"] else "")
+        + ("（仅可下注）" if stats["bettable_only"] else "")
         + f" · 胜{stats['wins']}/负{stats['losses']}/走{stats['pushes']} · "
         f"投入 {stats['stake']:.2f} · 盈亏 {stats['profit']:+.2f} · "
         f"ROI {(stats['roi'] * 100 if stats['roi'] is not None else 0):+.1f}%"
