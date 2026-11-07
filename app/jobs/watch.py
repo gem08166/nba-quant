@@ -52,6 +52,31 @@ class Tee:
             pass
 
 
+def _missing_slate_days(conn) -> list[str]:
+    """有注单、但 games 表缺行的比赛日（按注单 placed_at 推断），升序返回。"""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT substr(b.placed_at, 1, 10) AS slate_date
+        FROM bets b LEFT JOIN games g ON g.id = b.game_id
+        WHERE g.id IS NULL AND b.placed_at IS NOT NULL
+        """
+    ).fetchall()
+    return sorted({r["slate_date"] for r in rows if r["slate_date"]})
+
+
+def _repair_missing_slates(conn, ingest=service.ingest_date) -> list[str]:
+    """补 ingest 缺失的 slate；修不好的（ESPN 也没这场）下次不再重试。"""
+    repaired: list[str] = []
+    for day in _missing_slate_days(conn):
+        try:
+            stats = ingest(conn, day)
+            print(f"[watch] repair missing slate {day}: {stats}")
+            repaired.append(day)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[watch] repair missing slate {day} failed: {exc}")
+    return repaired
+
+
 def has_live_games(conn, slate: str) -> bool:
     """当前 slate 是否有进行中的比赛。
 
@@ -199,6 +224,14 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                         break  # 单日失败本轮跳过，下轮重试
             except Exception as exc:  # noqa: BLE001
                 print(f"[watch] pending-day sweep failed: {exc}")
+
+            # 「注单存在、比赛行缺失」兜底：CI 某天持久化失败会让整个 slate 缺失
+            # （实测 2026-11-05），指向那天的注单在台账里永远是裸 game_id。
+            # pending-day 扫描只看已入库的比赛（JOIN games），盖不住这种情况。
+            try:
+                _repair_missing_slates(conn)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[watch] missing-slate repair failed: {exc}")
 
             # 历史「僵尸状态」修复：比赛跨过 slate 后没人再拉，状态会永远停在
             # IN_PROGRESS（实测 11-04 有一场 116-114 卡了一整天，把采样拖在 120s）。

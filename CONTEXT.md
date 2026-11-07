@@ -864,3 +864,16 @@ README.md              # 用户文档（含第 0 节验证结论）
   **140 passed**。
 - **冒烟**：`bets-export`（30 条）→ `bets-import` × 2 全部 `added=0, duplicates=30`；
   `POST /api/bets/import` 同样幂等。
+
+### 10.49 2026-11-07 台账「— / 裸 game_id」修复：缺失 slate 补 ingest
+
+- **现象**：台账里 5 条注单显示「比赛日 — · 401909937」。
+- **根因**：这些比赛（401909936 PHX@ORL、401909937 GS@MIA）属于 **2026-11-05 slate**，
+  而 11-05 那天 CI 的 data 分支持久化正好坏掉（09:39 才修好），整个 slate 从未入库。
+  注单还在（导出/导入链路没丢），但 `bets LEFT JOIN games` 全是 NULL → 日期/对阵都显示不出来。
+- **即时修复**：按注单 `placed_at` 推断缺失日期，`ingest_date('2026-11-05')` 补拉（2 场，皆 FINAL）。
+  注单与比赛重新接上；`bets-sync --pull-only` 后云端 `ledger_updated=5` 同步。
+- **长效兜底（`watch.py`）**：新增 `_missing_slate_days()` / `_repair_missing_slates()`——
+  每轮检查「有注单但 games 缺行」的比赛日并补 ingest。现有 pending-day 扫描只看已入库
+  比赛（JOIN games），盖不住这种缺行情况。CI 的 `--once` 也会走这一兜底。
+- **测试**：`tests/test_watch_missing_slate.py`；**142 passed**。
