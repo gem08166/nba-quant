@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
-from datetime import date as date_cls, timedelta
+from datetime import date as date_cls, datetime, timedelta, timezone
 
 from .. import db
 from ..config import LIVE_INTERVAL, WATCH_INTERVAL
@@ -67,22 +67,30 @@ def has_live_games(conn, slate: str) -> bool:
     )
 
 
-def stale_slate(conn, slate: str, days: int = 7) -> str | None:
+def stale_slate(conn, slate: str, days: int = 7, min_age_minutes: int = 60) -> str | None:
     """最近 N 天内最早一个仍有未完赛比赛的 slate（用于修僵尸状态）。
 
+    以该日最新一次 upsert（`games.updated_at`）做节流：刚补拉过的日期
+    `min_age_minutes` 内不会再拉。这样常驻 watch 和 CI 的 `watch --once`
+    （每 30 分钟一次）都不会重复打接口。
     返回 None 表示没有需要补拉的日期。
     """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)
     row = conn.execute(
         """
-        SELECT MIN(slate_date) d FROM games
+        SELECT slate_date FROM games
         WHERE slate_date < ?
           AND slate_date >= date(?, ?)
           AND COALESCE(status, '') NOT IN
               ('STATUS_FINAL', 'STATUS_POSTPONED', 'STATUS_CANCELED')
+        GROUP BY slate_date
+        HAVING MAX(COALESCE(updated_at, '')) < ?
+        ORDER BY slate_date
+        LIMIT 1
         """,
-        (slate, slate, f"-{days} day"),
+        (slate, slate, f"-{days} day", cutoff.isoformat(timespec="seconds")),
     ).fetchone()
-    return row["d"] if row and row["d"] else None
+    return row["slate_date"] if row else None
 
 
 def _alert(text: str) -> None:
@@ -123,7 +131,6 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     empty_slate_loops = 0
     settle_pending: list[str] = []  # 还有未结算注单的历史比赛日
     was_live = False
-    last_repair_at = 0.0
     while True:
         slate = current_slate_date()
         if slate != last_slate:
@@ -194,12 +201,11 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
 
             # 历史「僵尸状态」修复：比赛跨过 slate 后没人再拉，状态会永远停在
             # IN_PROGRESS（实测 11-04 有一场 116-114 卡了一整天，把采样拖在 120s）。
-            # 每小时最多补拉一天，逐步收敛；没有僵尸日就完全跳过。
+            # 节流在 SQL 里按 games.updated_at 做（1 小时），常驻与 --once 都安全。
             try:
                 stale_day = stale_slate(conn, slate)
-                if stale_day and (time.time() - last_repair_at) > 3600:
+                if stale_day:
                     repair = service.ingest_date(stale_day)
-                    last_repair_at = time.time()
                     print(f"[watch] repair stale slate {stale_day}: {repair}")
             except Exception as exc:  # noqa: BLE001
                 print(f"[watch] stale slate repair failed: {exc}")

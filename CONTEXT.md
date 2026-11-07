@@ -743,6 +743,18 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **发现**：11-04 有一场比赛（`401909935`，116-114）跨 slate 后没人再拉，状态永远停在 `STATUS_IN_PROGRESS`。watch 的「有比赛进行中」查询没有限定日期，于是采样间隔被永久压在 120s，全天高频刷接口。
 - **修复**：
   - 新增 `watch.has_live_games(conn, slate)`，只查**当天**是否进行中。
-  - 新增 `watch.stale_slate(conn, slate, days=7)`：取 7 天内最早一个仍有未完赛比赛的日期；watch 每小时最多补拉一天（`service.ingest_date`），逐步把僵尸状态收敛掉。没有僵尸日则完全不发请求。
+  - 新增 `watch.stale_slate(conn, slate, days=7, min_age_minutes=60)`：取 7 天内最早一个仍有未完赛比赛的日期；用该日 `games.updated_at` 做节流，1 小时内不重复补拉（常驻 watch 与 CI 的 `watch --once` 都安全）。
 - **实测**：重启后立刻 `repair stale slate 2026-11-04`，该场已变为完赛；全库不再有 `IN_PROGRESS` 行，采样回到 900s（今晚开赛再自动切 120s）。
-- **测试**：`test_watch_pending.py` 新增 `has_live_games` 跨日期忽略、`stale_slate` 窗口与排序两个用例。**114 passed**。
+- **测试**：`test_watch_pending.py` 新增 `has_live_games` 跨日期忽略、`stale_slate` 窗口与节流三个用例。**115 passed**。
+
+### 10.43 2026-11-07 架构切换：Actions 主跑 + 云主机只做 serve
+
+> 来自另一台机器（`nba-quant-bot`）的 8 个提交，本机已 `git pull` 同步。
+
+- **新架构**：
+  - GitHub Actions 恢复为主数据源：`odds-refresh` 每 30 分钟 `watch --once`，`refresh` 每天 02:00/08:00 UTC 全量。
+  - 云主机（`deploy/`）只常驻 `serve` + 看门狗；watch/guard 不再常驻，避免和 CI 抢数据、重复推送。
+  - 静态站发布到 `gh-pages`，`site/` 不再进 main（已加入 `.gitignore`）。
+  - The Odds API 额度闸门在 state 文件缺失时回退读 `odds_snapshots` 时间（CI 每次只还原 nba.db）。
+- **本机处理**：停掉本地 `watch` + `watch_guard`（避免第三个数据源重复推送/抢额度）；`serve` 保留用于本机查看；`data/odds_api_state.json`、`data/hoops_state.json` 变为未跟踪的运行时文件并保留。
+- **注意**：本机 `data/nba.db` 不会自动更新；要最新数据用 `cmd /c "git show origin/data:nba.db > data\nba.db"`（先备份）。`site/` 需要本地静态站时跑 `python -m scripts.export_static --out site`。
