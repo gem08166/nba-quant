@@ -43,9 +43,35 @@ def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _last_fetch_from_db() -> float | None:
+    """状态文件缺失时（CI 只还原 nba.db，不带 state json），退回读库里的快照时间。
+    否则 CI 每轮都会认为「首次调用」，30 分钟烧 6 点额度。"""
+    import sqlite3
+    from ..config import DB_PATH
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        row = conn.execute(
+            "SELECT MAX(captured_at) FROM odds_snapshots WHERE source = 'the-odds-api'"
+        ).fetchone()
+        conn.close()
+    except Exception:
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.timestamp()
+
+
 def hours_since_last_fetch() -> float | None:
     state = _load_state()
     last = state.get("last_fetch_ts")
+    if not last:
+        last = _last_fetch_from_db()
     if not last:
         return None
     return (time.time() - last) / 3600.0

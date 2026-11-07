@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# 看门狗：serve 或 watch 任一挂掉就自动拉起。由 cron 每 2 分钟调用。
-#   serve 判断：pid 存活 + /api/health 可响应
-#   watch 判断：pid 存活
+# 看门狗：只兜 serve（面板 API）。由 cron 每 2 分钟调用。
+#   2026-11-07 起改为 GitHub Actions 主跑数据，本机的 watch/guard 不再常驻，
+#   所以这里绝不能把 watch/guard 拉起来，否则会和 CI 抢数据、重复推送。
+#   判断：pid 存活 + /api/health 可响应
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -23,10 +24,12 @@ rotate "$ROOT/data/log/serve.log" 10485760
 rotate "$ROOT/data/watch.log" 10485760
 rotate "$ROOT/data/log/watch.log.boot" 1048576
 
-if STATUS=$("$ROOT/deploy/nbaq" status 2>&1); then
+PORT=$(grep -E '^NBAQ_PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+PORT=${PORT:-8000}
+if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
   exit 0
 fi
 
-log "unhealthy: $(printf '%s' "$STATUS" | tr '\n' ';' | cut -c1-160)"
-"$ROOT/deploy/nbaq" start >> "$LOG" 2>&1
+log "serve unhealthy, restarting"
+"$ROOT/deploy/nbaq" start serve >> "$LOG" 2>&1
 log "restart result: $?"
