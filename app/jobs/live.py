@@ -470,3 +470,24 @@ def live_board(conn: sqlite3.Connection, slate_date: str) -> dict:
         "count": len(games),
         "games": games,
     }
+
+
+def live_overlay(conn: sqlite3.Connection, slate_date: str) -> dict:
+    """本机中转用的「滚球盘口覆盖层」。
+
+    只含进行中比赛的 live_market（约 1-2KB），不含预测/台账。手机静态模式
+    拿到后按 game_id 覆盖到 CI 的静态快照上：预测量仍以 github.io 为准，
+    只有盘口换成本机 2 分钟级的新数据。
+    """
+    board = live_board(conn, slate_date)
+    markets = {
+        str(g["game_id"]): g["live_market"]
+        for g in board.get("games") or []
+        if g.get("live_market")
+    }
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "date": slate_date,
+        "count": len(markets),
+        "markets": markets,
+    }

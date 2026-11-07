@@ -274,7 +274,13 @@ async function refreshLiveData() {
       } catch (_) {
         /* 快照通道不可用时仍然刷新实时比分 */
       }
+      try {
+        await window.refreshLiveOverlay?.();
+      } catch (_) {
+        /* 本机没在推覆盖层 → 忽略 */
+      }
       lastStaticPoll = Date.now();
+      lastOverlayPoll = Date.now();
       await loadLive(true);
       const age = staticAgoText();
       toast(
@@ -641,6 +647,7 @@ function liveCard(game) {
 let liveToken = 0;
 let lastLiveGames = [];  // 最近一次渲染的赛时数据（滚球记一笔要用完整对象）
 let lastStaticPoll = 0;  // 上次自动拉静态快照的时间（毫秒），限流用
+let lastOverlayPoll = 0; // 上次拉本机盘口覆盖层（nbaq/live.json）的时间
 
 // 静态快照多久算「旧」：GitHub Actions 定时任务会被限流（实测约 1 小时一轮），
 // 这里只做提示，不假装数据是实时的。
@@ -654,6 +661,17 @@ function staticAgoText() {
   if (mins < 1) return "盘口快照 刚刚";
   const rounded = Math.round(mins);
   return `盘口快照 ${rounded} 分钟前${rounded >= SNAPSHOT_OLD_MINUTES ? "（GitHub 定时任务延迟）" : ""}`;
+}
+
+// 本机快速通道（坚果云 nbaq/live.json）最近一次覆盖的时间
+function overlayAgoText() {
+  const at = window.liveOverlayAt?.();
+  if (!at) return "";
+  const t = Date.parse(at);
+  if (!Number.isFinite(t)) return "";
+  const mins = Math.max(0, (Date.now() - t) / 60000);
+  if (mins > 15) return "";
+  return `本机盘口 ${mins < 1 ? "刚刚" : Math.round(mins) + " 分钟前"}`;
 }
 
 async function loadLive(force = false) {
@@ -678,6 +696,15 @@ async function loadLive(force = false) {
           /* 快照通道失败不影响下面拉实时比分 */
         }
       }
+      // 本机快速通道：覆盖层必须在快照刷新之后应用（快照可能整个对象被替换）
+      if (now - lastOverlayPoll >= STATIC_POLL_MS) {
+        lastOverlayPoll = now;
+        try {
+          await window.refreshLiveOverlay?.();
+        } catch (_) {
+          /* 没有坚果云 / 本机没在推 → 忽略 */
+        }
+      }
       data = await espnLive(requestedDate);
     } else {
       data = await api(`/api/live?date=${encodeURIComponent(requestedDate)}`);
@@ -692,10 +719,12 @@ async function loadLive(force = false) {
       box.innerHTML = data.games.map(liveCard).join("");
     }
     const snapshot = staticAgoText();
+    const overlay = overlayAgoText();
     status.textContent =
       `更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` +
       ` · ${inPlay} 场进行中 / 共 ${data.count} 场` +
-      (snapshot ? ` · 比分实时（ESPN）· ${snapshot}` : "");
+      (snapshot ? ` · 比分实时（ESPN）· ${snapshot}` : "") +
+      (overlay ? ` · ${overlay}` : "");
   } catch (error) {
     if (myToken === liveToken) status.textContent = `加载失败：${error.message}`;
   } finally {

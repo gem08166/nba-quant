@@ -814,3 +814,25 @@ README.md              # 用户文档（含第 0 节验证结论）
   ```
   PAT 只需 `actions:write`，放到 cron-job.org / UptimeRobot 之类的免费定时器里即可（10 分钟一次）。
 - **静态快照年龄来源**：`static.json.generated_at`（UTC），前端按本地时间算差值。
+
+### 10.47 2026-11-07 滚球盘口的真实瓶颈：CI 被好体育 403
+
+- **实测**：GitHub Actions 的 `watch --once` 日志：
+  `live_odds skipped: all hao mirrors failed: 403 Forbidden`；`data` 分支快照里 `live_odds` 表 **0 行**。
+  即**赛时盘口从来不是「更新慢」，而是 CI 根本抓不到**（本机 IP 可以，Actions 的 IP/ASN 被拦）。
+- **修复思路**：本机是唯一能抓滚球盘口的地方 → 本机采、两路分发：
+  1. **手机快速通道**：本机每轮（赛中 120s）把 `nbaq/live.json`（只含 `markets{game_id: live_market}`，1-2KB）推到坚果云；
+     前端 `static.js::refreshLiveOverlay()` 每 60s 拉取，按 `game_id` 覆盖盘口；
+     只覆盖「captured_at 不更旧」的盘口，并按 `captured_at` 在客户端重算 `age_seconds/stale`（本机停推后 5 分钟自动变「已过期」，不会假装新鲜）。
+  2. **Pages 通道**：本机 watch 在赛时每 `NBAQ_CI_TRIGGER_MINUTES`（默认 10）分钟用 `workflow_dispatch`
+     触发一轮 CI（不受 schedule 限流）；`scripts/export_static.py` 导出前从坚果云拉 `nbaq/live.json`
+     合并进 `board.games[].live_market`（>15 分钟视为过期、丢弃）。CI 的 static.json 再推 Pages + 坚果云。
+- **令牌**：`NBAQ_GH_TOKEN`（classic `repo` 或 fine-grained `actions:write`），只存在本机 `.env`；
+  `scripts/trigger_refresh.py` 是独立 CLI（`python -m scripts.trigger_refresh --dry-run`），watch 复用它的 `trigger_workflow()`。
+  失败只打印、不中断采样；`workflow_dispatch` 的用户是仓库所有者，CI 内该环境变量为空 → 不会自我触发。
+- **掉线语义**：本机关机/断网 → 15 分钟后 Pages 的盘口被导出逻辑丢弃，手机端 5 分钟后标记过期；
+  比分仍由 ESPN 实时提供，页面不会显示"假新鲜"。
+- **验证**：本机日志 `live overlay -> webdav: 2 game(s)`、`ci trigger: 已触发 odds-refresh.yml`；
+  `nbaq/live.json` 的 `generated_at` 与本机采样同步；`export_static` 打印 `live overlay merged: 2 game(s)`。
+- **顺带修复**：分离进程（`scripts/launch_detached.py`）启动 `serve/watch` 时 `sys.stdout=None` 导致秒退——
+  `app/cli.py::_ensure_std_streams()` 兜底到 devnull，`tests/test_cli_streams.py` 回归。

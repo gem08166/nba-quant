@@ -115,6 +115,9 @@ def main() -> None:
 
         # 滚球盘口：手机是静态模式，没有 /api/live，所以把进行中比赛的
         # 最新滚球主盘一起导出（同时顺带写入 live_odds 归档）。
+        # 注意：GitHub Actions 的 IP 被好体育 403，CI 自己抓不到滚球盘。
+        # 本机 watch 会把滚球盘口推到坚果云 nbaq/live.json（2 分钟级），
+        # 这里把它合并进导出结果——这样 Pages 上的赛时页也有盘口。
         try:
             from app.ingest import hao as hao_live
             from app.jobs.live import live_market_snapshot
@@ -125,6 +128,28 @@ def main() -> None:
                     item["live_market"] = live_market_snapshot(conn, item["id"])
         except Exception as exc:  # noqa: BLE001 - 第二源必须可失败
             print(f"  live market skipped: {exc}")
+
+        try:
+            from app.jobs import webdav
+
+            if webdav.enabled():
+                raw = webdav.get_text(webdav.LIVE)
+                overlay = json.loads(raw) if raw else {}
+                gen = datetime.fromisoformat(str(overlay.get("generated_at")).replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - gen).total_seconds()
+                if age <= 900:
+                    by_id = {str(g["id"]): g for g in board["games"]}
+                    applied = 0
+                    for gid, market in (overlay.get("markets") or {}).items():
+                        if gid in by_id and market:
+                            by_id[gid]["live_market"] = market
+                            applied += 1
+                    if applied:
+                        print(f"  live overlay merged: {applied} game(s), age {age:.0f}s")
+                else:
+                    print(f"  live overlay too old ({age:.0f}s) — ignored")
+        except Exception as exc:  # noqa: BLE001 - 覆盖层不可用不影响导出
+            print(f"  live overlay skipped: {exc}")
 
         # 最近比赛日的赛后复盘包：静态模式（手机）跳到往期日期时，
         # 需要赛前预测 + 盘口 + 信号历史才能渲染完整的赛后板块

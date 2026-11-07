@@ -140,6 +140,48 @@ function staticSnapshotAgeMinutes() {
 }
 window.staticSnapshotAgeMinutes = staticSnapshotAgeMinutes;
 
+// 本机快速通道：nbaq/live.json 只含进行中比赛的滚球盘口（约 1-2KB）。
+// 手机 APK / PWA 配了坚果云时，60s 一次的覆盖层让盘口跟本机 watch（赛中 120s）同步；
+// 预测量/信号仍用 github.io（或 CI 推到坚果云）的静态快照，不被本机覆盖。
+let LIVE_OVERLAY_AT = "";
+async function refreshLiveOverlay() {
+  if (window.APP_MODE !== "static") return false;
+  if (!window.DAV?.davEnabled()) return false;
+  try {
+    const text = await window.DAV.davGetText("nbaq/live.json");
+    if (!text) return false;
+    const overlay = JSON.parse(text);
+    if (!overlay?.generated_at || overlay.generated_at <= LIVE_OVERLAY_AT) return false;
+    LIVE_OVERLAY_AT = overlay.generated_at;
+    const games = window.STATIC_PAYLOAD?.board?.games || [];
+    const byId = new Map(games.map((g) => [String(g.id), g]));
+    let patched = 0;
+    for (const [id, market] of Object.entries(overlay.markets || {})) {
+      const game = byId.get(String(id));
+      if (!game || !market) continue;
+      // 只覆盖「不比现有更旧」的盘口（CI 快照有时反而更新）
+      const prevAt = Date.parse(game.live_market?.captured_at || "") || 0;
+      const nextAt = Date.parse(market.captured_at || "") || 0;
+      if (nextAt < prevAt) continue;
+      // 客户端自己按 captured_at 重算年龄：本机停推后盘口会自然变成「已过期」，
+      // 不会永远停在最后一次推送时的 120s。
+      if (nextAt) {
+        const age = (Date.now() - nextAt) / 1000;
+        market.age_seconds = age;
+        market.stale = age > 300;
+      }
+      game.live_market = market;
+      patched += 1;
+    }
+    window.LIVE_OVERLAY_AT = LIVE_OVERLAY_AT;
+    return patched > 0;
+  } catch (_) {
+    return false;
+  }
+}
+window.refreshLiveOverlay = refreshLiveOverlay;
+window.liveOverlayAt = () => LIVE_OVERLAY_AT;
+
 // ---------- 静态模式的 API 映射 ----------
 
 function staticApi(path) {

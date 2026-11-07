@@ -78,6 +78,11 @@ TELEGRAM_CHAT_ID = os.getenv("NBAQ_TG_CHAT_ID", "")
 WATCH_INTERVAL = float(os.getenv("NBAQ_WATCH_INTERVAL", "300"))
 # 有比赛进行中时的采样间隔：赛中价格/胜率变化快，15 分钟一个点不够做校准
 LIVE_INTERVAL = float(os.getenv("NBAQ_WATCH_LIVE_INTERVAL", "120"))
+# 本机把「滚球盘口」小文件推到坚果云（手机快速通道，不碰台账/静态站）
+LOCAL_PUBLISH_LIVE = os.getenv("NBAQ_LOCAL_PUBLISH_LIVE", "0") == "1"
+# 赛时每隔多少分钟主动 workflow_dispatch 一轮 CI（0=关闭）。
+# GitHub 对 schedule 限流到约 1 小时，dispatch 不受限；只在本机开着时生效。
+CI_TRIGGER_MINUTES = float(os.getenv("NBAQ_CI_TRIGGER_MINUTES", "0"))
 
 # The Odds API（多书源共识，按量计费省着用）
 THE_ODDS_API_KEY = os.getenv("NBAQ_ODDS_API_KEY", "")

@@ -5,7 +5,7 @@ import time
 from datetime import date as date_cls, datetime, timedelta, timezone
 
 from .. import db
-from ..config import LIVE_INTERVAL, WATCH_INTERVAL
+from ..config import CI_TRIGGER_MINUTES, LIVE_INTERVAL, LOCAL_PUBLISH_LIVE, WATCH_INTERVAL
 from ..dates import current_slate_date
 from ..ingest import service
 from ..models import rapm, ratings
@@ -131,6 +131,7 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     empty_slate_loops = 0
     settle_pending: list[str] = []  # 还有未结算注单的历史比赛日
     was_live = False
+    last_ci_trigger = 0.0
     while True:
         slate = current_slate_date()
         if slate != last_slate:
@@ -239,6 +240,38 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                         print(f"[watch] live_odds: {lo_stats}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[watch] live_odds skipped: {exc}")
+
+            # 本机快速通道（可选，NBAQ_LOCAL_PUBLISH_LIVE=1）：
+            # 只把「滚球盘口」小文件推到坚果云，绝不碰台账 / static.json。
+            # 手机 APK 拉到后按 game_id 覆盖盘口，预测量仍用 github.io 的快照。
+            if with_ingest and live_now and LOCAL_PUBLISH_LIVE:
+                try:
+                    from . import webdav
+                    from .live import live_overlay
+
+                    overlay = live_overlay(conn, slate)
+                    if overlay["markets"] and webdav.enabled():
+                        import json as _json
+
+                        if webdav.put_text(
+                            webdav.LIVE, _json.dumps(overlay, ensure_ascii=False)
+                        ):
+                            print(f"[watch] live overlay -> webdav: {overlay['count']} game(s)")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] live overlay skipped: {exc}")
+
+            # 赛时主动戳一轮 CI（workflow_dispatch 不受 schedule 限流）：
+            # 让 github.io / 坚果云上的 static.json 保持约 10 分钟级新鲜。
+            if with_ingest and live_now and CI_TRIGGER_MINUTES > 0:
+                if time.time() - last_ci_trigger >= CI_TRIGGER_MINUTES * 60:
+                    last_ci_trigger = time.time()
+                    try:
+                        from scripts.trigger_refresh import trigger_workflow
+
+                        result = trigger_workflow()
+                        print(f"[watch] ci trigger: {result['message']}")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[watch] ci trigger failed: {exc}")
 
             if with_ingest and slate != last_slate:
                 ratings.train_and_save(conn)

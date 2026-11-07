@@ -20,6 +20,7 @@ LEDGER = f"{FOLDER}/bets.json"
 INBOX = f"{FOLDER}/inbox"
 DONE = f"{INBOX}/done"
 STATIC = f"{FOLDER}/static.json"
+LIVE = f"{FOLDER}/live.json"
 SNAP_INBOX = f"{FOLDER}/snapshots/inbox"
 SNAP_DONE = f"{SNAP_INBOX}/done"
 
