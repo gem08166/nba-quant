@@ -1,4 +1,4 @@
-const CACHE = "nbaq-v29";
+const CACHE = "nbaq-v30";
 const ASSETS = [
   "./",
   "static/styles.css",

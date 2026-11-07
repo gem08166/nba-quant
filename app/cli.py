@@ -330,6 +330,54 @@ def cmd_bets_import(args: argparse.Namespace) -> None:
     print(json.dumps(stats, ensure_ascii=False))
 
 
+def cmd_bets_clear(args: argparse.Namespace) -> None:
+    """CLI 清空台账（与 /api/bets/clear 同口径：备份先行 + 确认文本）。"""
+    from .jobs import betssync
+
+    scope = "backfill" if args.backfill_only else "all"
+    word = "回填" if scope == "backfill" else "CLEAR"
+    if not args.yes:
+        answer = input(f"确认清空{'回填的模拟注单' if scope == 'backfill' else '全部注单'}？输入 {word} 继续：").strip()
+        if answer != word:
+            print("已取消")
+            return
+    conn = db.connect()
+    try:
+        if scope == "backfill":
+            rows = conn.execute("SELECT * FROM bets WHERE note LIKE '回填%'").fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM bets").fetchall()
+        if rows:
+            from datetime import datetime, timezone
+
+            backup_dir = betssync.DATA_DIR / "backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            (backup_dir / f"bets-clear-{ts}.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "nbaq.bets/1",
+                        "cleared_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "scope": scope,
+                        "count": len(rows),
+                        "bets": [dict(r) for r in rows],
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                ),
+                encoding="utf-8",
+            )
+            print(f"备份 {len(rows)} 条 -> {backup_dir / f'bets-clear-{ts}.json'}")
+        if scope == "backfill":
+            cur = conn.execute("DELETE FROM bets WHERE note LIKE '回填%'")
+        else:
+            cur = conn.execute("DELETE FROM bets")
+        conn.commit()
+        print(f"已清空 {cur.rowcount} 条")
+    finally:
+        conn.close()
+
+
 def cmd_notify_test(_: argparse.Namespace) -> None:
     enabled = notify.providers_enabled()
     if not enabled:
@@ -496,6 +544,11 @@ def build_parser() -> argparse.ArgumentParser:
     bi.add_argument("--file", required=True)
     bi.add_argument("--dry-run", action="store_true", help="only count rows")
     bi.set_defaults(func=cmd_bets_import)
+
+    bc = sub.add_parser("bets-clear", help="clear the ledger (backs up to data/backup/ first)")
+    bc.add_argument("--backfill-only", action="store_true", help="only clear backfill (sim) bets")
+    bc.add_argument("--yes", action="store_true", help="skip interactive confirmation")
+    bc.set_defaults(func=cmd_bets_clear)
 
     serve = sub.add_parser("serve", help="run the web app")
     serve.add_argument("--host", default="0.0.0.0")

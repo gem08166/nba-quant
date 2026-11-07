@@ -389,6 +389,7 @@ function lbExportJSON() {
 
 window.LB = {
   read: lbRead,
+  write: lbWrite,
   add: lbAdd,
   remove: lbRemove,
   settle: lbSettle,

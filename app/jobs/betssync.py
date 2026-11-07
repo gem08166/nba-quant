@@ -125,8 +125,18 @@ def bets_payload(conn: sqlite3.Connection) -> list[dict]:
 
 def normalize_refs(conn: sqlite3.Connection) -> int:
     """给没有 ref 的历史注单补上 `srv-<id>`（服务端创建的都走这个规则），
-    否则云端合回时会因为 ref 对不上而产生重复。"""
-    cur = conn.execute("UPDATE bets SET ref = 'srv-' || id WHERE ref IS NULL")
+    否则云端合回时会因为 ref 对不上而产生重复。
+
+    只碰 ref IS NULL 的行；如果目标 `srv-<id>` 已被占用（理论上不可能——
+    占用者本身就是那条注单），跳过该行而不是让整轮同步崩溃。
+    """
+    cur = conn.execute(
+        """
+        UPDATE bets SET ref = 'srv-' || id
+        WHERE ref IS NULL
+          AND NOT EXISTS (SELECT 1 FROM bets b2 WHERE b2.ref = 'srv-' || bets.id)
+        """
+    )
     conn.commit()
     return cur.rowcount
 

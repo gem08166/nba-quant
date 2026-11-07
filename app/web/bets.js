@@ -805,6 +805,83 @@ function downloadJSON(data, filename) {
   URL.revokeObjectURL(a.href);
 }
 
+// ---- 清空台账：范围可选（全部 / 仅回填模拟），双重确认 + 自动备份 ----
+async function apiClearBets(scope, confirm) {
+  return api("/api/bets/clear", { method: "POST", body: JSON.stringify({ scope, confirm }) });
+}
+
+function openClearBetsPanel() {
+  document.getElementById("bets-clear-panel")?.remove();
+  const staticMode = window.APP_MODE === "static";
+  const panel = document.createElement("div");
+  panel.className = "lm-panel";
+  panel.id = "bets-clear-panel";
+  panel.innerHTML = `
+    <div class="lm-panel-head">
+      <b>清空台账</b>
+      <span>危险操作 · 不可撤销</span>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:1fr;margin-top:8px">
+      <label>范围<select id="bc-scope">
+        <option value="backfill">仅回填的模拟注单（重新回填前清样本）</option>
+        <option value="all">全部注单（真实 + 模拟，慎重）</option>
+      </select></label>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:1fr;margin-top:8px">
+      <label>确认<input id="bc-confirm" type="text" placeholder="选全部输入 CLEAR；选回填输入 回填" autocomplete="off"></label>
+    </div>
+    <div class="lm-panel-actions">
+      <button class="btn small danger" id="bc-run">执行清空</button>
+      <button class="btn small" id="bc-cancel">取消</button>
+    </div>
+    <div class="lm-panel-note">清空前自动备份到本机 data/backup/（API 模式）或提示先导出（静态模式）。
+      静态模式只能清本机 localStorage 的注单，服务端注单等下一轮快照。</div>`;
+  document.body.appendChild(panel);
+
+  const els = {
+    scope: panel.querySelector("#bc-scope"),
+    confirm: panel.querySelector("#bc-confirm"),
+  };
+  const wordFor = () => (els.scope.value === "all" ? "CLEAR" : "回填");
+  els.scope.addEventListener("change", () => {
+    els.confirm.placeholder = `输入 ${wordFor()} 确认`;
+  });
+
+  panel.querySelector("#bc-cancel").addEventListener("click", () => panel.remove());
+  panel.querySelector("#bc-run").addEventListener("click", async () => {
+    const scope = els.scope.value;
+    const word = wordFor();
+    if (els.confirm.value.trim() !== word) {
+      return toast(`请输入「${word}」确认`);
+    }
+    // 第二重确认：全部清空再 confirm 一次
+    if (scope === "all" && !confirm("即将删除全部注单（含真实记录）。确定继续？")) return;
+    try {
+      if (staticMode) {
+        // 静态模式：服务端注单在快照里，只能清本地 localStorage 的
+        if (scope === "all") {
+          window.LB.write([]);
+          panel.remove();
+          toast("已清空本机注单（服务端注单等下一轮快照）");
+        } else {
+          const kept = window.LB.read().filter((b) => !(b.note || "").startsWith("回填"));
+          const removed = window.LB.read().length - kept.length;
+          window.LB.write(kept);
+          panel.remove();
+          toast(`已清空本机回填注单 ${removed} 条`);
+        }
+      } else {
+        const result = await apiClearBets(scope, word);
+        panel.remove();
+        toast(`已清空 ${result.deleted} 条${result.backed_up ? `（已备份 ${result.backed_up} 条）` : ""}`);
+      }
+      await loadBets();
+    } catch (error) {
+      toast(`清空失败：${error.message}`);
+    }
+  });
+}
+
 function renderBetsToolbar() {
   const box = document.getElementById("bets-toolbar");
   if (!box) return;
@@ -820,12 +897,14 @@ function renderBetsToolbar() {
       <button class="btn small primary" id="bets-custom" title="任选比赛、市场、盘口、赔率，手动记一条">＋ 自定义记一笔</button>
       <button class="btn small" id="bets-export" title="导出可再导入的 JSON；重复导入不会产生重复注单">导出台账</button>
       <button class="btn small" id="bets-import" title="导入台账：按注单身份去重，重复的跳过或单调合并">导入台账</button>
+      <button class="btn small danger" id="bets-clear" title="清空台账：全部（输入 CLEAR）或仅回填模拟（输入 回填）；清空前自动备份到本机">清空…</button>
       ${apk ? `<button class="btn small" id="bets-dav-sync">立即同步</button>
       <button class="btn small" id="bets-dav-settings">同步设置</button>` : ""}
       <input type="file" id="bets-import-file" accept=".json,application/json" hidden>
       <span class="hint">${hint}</span>
     </div>`;
   document.getElementById("bets-custom").addEventListener("click", openCustomBetPanel);
+  document.getElementById("bets-clear").addEventListener("click", openClearBetsPanel);
 
   document.getElementById("bets-export").addEventListener("click", async () => {
     try {

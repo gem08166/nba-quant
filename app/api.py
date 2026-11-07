@@ -531,6 +531,58 @@ def delete_bet(bet_id: int, force: bool = False, conn: sqlite3.Connection = Depe
     return {"ok": True, "id": bet_id, "deleted_ref": row["ref"]}
 
 
+class ClearBetsIn(BaseModel):
+    """清空台账的范围与确认。"""
+
+    scope: Literal["all", "backfill"] = "all"
+    confirm: str  # 必须输入 CLEAR / 回填 才执行
+
+
+@router.post("/bets/clear")
+def clear_bets(body: ClearBetsIn, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """清空台账（危险操作，双重确认）。
+
+    scope:
+      - "all"：删除全部注单（confirm 必须为 "CLEAR"）；
+      - "backfill"：只删回填的模拟注单（note LIKE '回填%'，confirm 必须为 "回填"），
+        用于重新回填前清样本。
+    清空前自动落一份 JSON 备份到 data/backup/（bets-clear-<ts>.json）。
+    """
+    expected = "CLEAR" if body.scope == "all" else "回填"
+    if body.confirm != expected:
+        raise HTTPException(status_code=400, detail=f"确认文本不符，请输入 {expected}")
+    if body.scope == "backfill":
+        rows = conn.execute("SELECT * FROM bets WHERE note LIKE '回填%'").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM bets").fetchall()
+
+    # 清空先备份（本机留档，防止手滑）
+    if rows:
+        try:
+            backup_dir = DATA_DIR / "backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            payload = {
+                "schema": "nbaq.bets/1",
+                "cleared_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "scope": body.scope,
+                "count": len(rows),
+                "bets": [dict(r) for r in rows],
+            }
+            (backup_dir / f"bets-clear-{ts}.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8"
+            )
+        except Exception:  # noqa: BLE001 - 备份失败不阻塞清空
+            pass
+
+    if body.scope == "backfill":
+        cur = conn.execute("DELETE FROM bets WHERE note LIKE '回填%'")
+    else:
+        cur = conn.execute("DELETE FROM bets")
+    conn.commit()
+    return {"ok": True, "deleted": cur.rowcount, "backed_up": len(rows)}
+
+
 @router.get("/bets/analysis")
 def bets_analysis(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     """Bankroll summary + cumulative profit curve + bet ledger (joined with games).

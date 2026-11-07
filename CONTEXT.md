@@ -972,3 +972,21 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **云端同步**：本地台账已推坚果云（pushed=true），CI/手机下一轮拉取。
 - **测试**：`tests/test_backfill_bettable.py` 3 用例（无字段/False 排除、
   首个通过版本入选、bettable_only=False 保持旧口径）。**160 passed**。
+
+### 10.55 2026-11-07 台账清空功能（双重确认 + 自动备份）
+
+- **API**：`POST /api/bets/clear`（`{scope, confirm}`）：
+  - `scope="all"` + confirm="CLEAR"：删除全部注单（额外前端 confirm 二次确认）；
+  - `scope="backfill"` + confirm="回填"：只删 `note LIKE '回填%'` 的模拟注单
+    （重新回填前清样本用）；
+  - **清空前自动备份**到 `data/backup/bets-clear-<ts>.json`（`nbaq.bets/1` 完整形状，
+    可直接 `bets-import` 找回）；
+  - 确认文本不符 → 400。
+- **前端**：收益页工具栏新增「清空…」（红色 danger）→ 浮动面板选范围 + 输确认文本；
+  静态模式只清本机 localStorage（服务端注单等快照），提示先导出。
+- **CLI**：`bets-clear [--backfill-only] [--yes]`，同口径备份。
+- **顺带修复**：`normalize_refs` 在 ref 唯一索引下可能撞 UNIQUE（清空重填后
+  ref='srv-<id>' 已存在）导致整轮同步崩溃 → 改为 `NOT EXISTS` 防御，跳过占用行。
+- **验证**：`tests/test_bets_clear_api.py` 4 用例（确认文本/仅回填/全部/备份落盘）；
+  端到端实测清空回填组（11 条备份落盘、统计卡归零）→ 重新 `--bettable-only` 回填
+  1 条 → 台账推云。**164 passed**。
