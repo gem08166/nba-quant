@@ -42,7 +42,7 @@ def _row(ref_id: str, result: str = "open") -> dict:
 def test_merge_dedups_by_ref():
     conn = _conn()
     first = betssync.merge_rows(conn, [_row("local-abc"), _row("local-abc")])
-    assert first == {"added": 1, "skipped": 1}
+    assert first == {"added": 1, "skipped": 1, "updated": 0}
     again = betssync.merge_rows(conn, [_row("local-abc")])
     assert again["added"] == 0
     assert conn.execute("SELECT COUNT(*) n FROM bets").fetchone()["n"] == 1
@@ -58,14 +58,25 @@ def test_merge_generates_ref_when_missing():
     assert ref.startswith("gen-")
 
 
-def test_settled_version_wins_on_merge_conflict():
-    # 服务端已有 open 的同一注（同 ref），云端带来 settled 版本 → 各自独立；
-    # 去重键是 ref，settled 与 open 的 ref 相同才覆盖，这里 ref 不同则两条都进
+def test_settled_version_overwrites_open():
+    """云端已结算的版本要能补齐本地 open（单调更新），反向不允许降级。"""
     conn = _conn()
     r1 = betssync.merge_rows(conn, [_row("local-abc", result="open")])
-    r2 = betssync.merge_rows(conn, [_row("local-abc", result="won")])
     assert r1["added"] == 1
-    assert r2["skipped"] == 1  # ref 相同：不重复插入（PWA 端才做"已结算覆盖"）
+
+    r2 = betssync.merge_rows(conn, [_row("local-abc", result="won")])
+    assert r2["added"] == 0 and r2["updated"] == 1
+    row = conn.execute("SELECT result, profit FROM bets WHERE ref='local-abc'").fetchone()
+    assert row["result"] == "won"
+    assert row["profit"] == 0.97
+
+    # 已结算的注单不能被后来的 open 版本改回去
+    r3 = betssync.merge_rows(conn, [_row("local-abc", result="open")])
+    assert r3["updated"] == 0
+    assert (
+        conn.execute("SELECT result FROM bets WHERE ref='local-abc'").fetchone()["result"]
+        == "won"
+    )
 
 
 def test_bad_rows_are_skipped_not_fatal():

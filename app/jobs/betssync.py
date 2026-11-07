@@ -60,8 +60,13 @@ def normalize_refs(conn: sqlite3.Connection) -> int:
 
 
 def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
-    """把 PWA 形状的注单合并进 bets 表（按 ref 去重，自然键二次兜底）。"""
-    added = skipped = 0
+    """把 PWA 形状的注单合并进 bets 表（按 ref 去重，自然键二次兜底）。
+
+    对已存在的注单做**单调更新**：云端已结算（won/lost/push）的结果可以覆盖
+    本地的 open，并补上收盘线/CLV；反过来（已结算 → open）绝不覆盖。
+    这样本机只读模式也能跟上 CI 的结算进度。
+    """
+    added = skipped = updated = 0
     for row in rows or []:
         if not isinstance(row, dict) or not row.get("game_id") or not row.get("market") or not row.get("side"):
             skipped += 1
@@ -83,6 +88,29 @@ def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
                 (row.get("game_id"), row.get("market"), row.get("side"), row.get("line"), row.get("placed_at")),
             ).fetchone()
         if exists:
+            # 单调更新：只允许「云端已结算」补齐本地 open 的注单
+            incoming = row.get("result")
+            if incoming in ("won", "lost", "push"):
+                cur = conn.execute(
+                    """
+                    UPDATE bets SET result=?, profit=?,
+                        closing_line=COALESCE(closing_line, ?),
+                        closing_price=COALESCE(closing_price, ?),
+                        clv=COALESCE(clv, ?),
+                        clv_line=COALESCE(clv_line, ?)
+                    WHERE ref=? AND (result IS NULL OR result='open')
+                    """,
+                    (
+                        incoming,
+                        row.get("profit"),
+                        row.get("closing_line"),
+                        row.get("closing_price"),
+                        row.get("clv"),
+                        row.get("clv_line"),
+                        ref,
+                    ),
+                )
+                updated += cur.rowcount
             skipped += 1
             continue
         conn.execute(
@@ -114,7 +142,7 @@ def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
         )
         added += 1
     conn.commit()
-    return {"added": added, "skipped": skipped}
+    return {"added": added, "skipped": skipped, "updated": updated}
 
 
 def _state() -> dict:
@@ -133,36 +161,47 @@ def run(
     force_push: bool = False,
     push_static: bool = False,
     slate_date: str | None = None,
+    pull_only: bool = False,
 ) -> dict:
     """一轮同步：inbox → 本地；云端台账 → 本地；本地 → 云端。
 
     push_static：把 site/data/static.json 推到云端（手机 APK 的数据通道）。
     只在 CI（导出刚完成、数据最新）调用；PC 不推，避免旧数据覆盖新数据。
     slate_date：手机快照合并时的比赛日过滤（默认按 event 的 ET 日期自动匹配）。
+    pull_only：只拉不推（PC 静默采样模式用）。CI 是权威台账（它刚结算过），
+    本机拉下来看即可；回推会把本机较少的注单集盖掉云端——除非本地确实有
+    云端没有的新注单，那走 CLI 的 bets-sync --force。
     """
     if not webdav.enabled():
         return {"skipped": "webdav not configured"}
-    stats: dict = {"inbox_merged": 0, "ledger_merged": 0, "pushed": False}
+    stats: dict = {
+        "inbox_merged": 0,
+        "ledger_merged": 0,
+        "ledger_updated": 0,
+        "pushed": False,
+    }
 
     # 先给历史注单补 ref（服务端创建的 = srv-<id>），否则云端合回会重复
     stats["refs_normalized"] = normalize_refs(conn)
 
-    webdav.ensure_folders()
-
     # 1) inbox：手机导出的片段
-    for path in webdav.list_files(webdav.INBOX):
-        if not path.endswith(".json"):
-            continue
-        try:
-            text = webdav.get_text(path)
-            rows = json.loads(text or "[]")
-            if isinstance(rows, dict):
-                rows = rows.get("bets") or []
-            result = merge_rows(conn, rows if isinstance(rows, list) else [])
-            stats["inbox_merged"] += result["added"]
-            webdav.move(path, f"{webdav.DONE}/{path.rsplit('/', 1)[-1]}")
-        except Exception as exc:  # noqa: BLE001 - 单个文件坏了不影响其他
-            stats[f"inbox_error:{path}"] = str(exc)[:120]
+    #    pull_only 时跳过：本机不该把手机的注单「吃」掉（会 MOVE 到 done/），
+    #    否则 CI 永远看不到这条注单。只读模式只拉全量台账。
+    if not pull_only:
+        webdav.ensure_folders()
+        for path in webdav.list_files(webdav.INBOX):
+            if not path.endswith(".json"):
+                continue
+            try:
+                text = webdav.get_text(path)
+                rows = json.loads(text or "[]")
+                if isinstance(rows, dict):
+                    rows = rows.get("bets") or []
+                result = merge_rows(conn, rows if isinstance(rows, list) else [])
+                stats["inbox_merged"] += result["added"]
+                webdav.move(path, f"{webdav.DONE}/{path.rsplit('/', 1)[-1]}")
+            except Exception as exc:  # noqa: BLE001 - 单个文件坏了不影响其他
+                stats[f"inbox_error:{path}"] = str(exc)[:120]
 
     # 2) 云端全量台账 → 本地
     ledger_text = webdav.get_text(webdav.LEDGER)
@@ -172,10 +211,13 @@ def run(
             if isinstance(rows, list):
                 result = merge_rows(conn, rows)
                 stats["ledger_merged"] = result["added"]
+                stats["ledger_updated"] = result.get("updated", 0)
         except (json.JSONDecodeError, TypeError) as exc:
             stats["ledger_error"] = str(exc)[:120]
 
     # 3) 本地全量台账 → 云端（内容没变就跳过，省坚果云请求配额）
+    if pull_only:
+        return stats
     payload = bets_payload(conn)
     body = json.dumps(payload, ensure_ascii=False, indent=1)
     digest = hashlib.md5(body.encode("utf-8")).hexdigest()

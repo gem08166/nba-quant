@@ -777,3 +777,16 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **实测**：启动即 `notify=off`，7 场进行中 → `live detected → interval 120s`；01:54 与 01:57 两批快照，间隔约 2.5 分钟；日志出现「未配置 NBAQ_ODDS_API_KEY，跳过」「hoops skipped: 429」。
 - **代价**：本机预测的共识书源更少（没有 Odds API），Edge/EV 会与 Pages 不一致；数据不会进 `data` 分支。
 - **停止**：`powershell -File scripts\watch-ctl.ps1 stop`（未启 watch_guard，不会自动复活）。
+
+### 10.45 2026-11-07 本机看板读取 GitHub 台账（只拉不推）
+
+- **目标**：本机也当看板，显示 CI 结算后的注单，但绝不反向污染云端。
+- **`betssync.run(pull_only=True)`**：
+  - 只拉 `nbaq/bets.json` → 本地 `bets`；
+  - **跳过 inbox**（本机不该 MOVE 手机的注单到 done/，否则 CI 永远看不到）；
+  - 跳过 `ensure_folders`、跳过回推、跳过 static 推送。
+- **单调更新 `merge_rows`**：同 ref 的云端注单若已结算（won/lost/push），可补齐本地 `open` 的 result/profit/收盘线/CLV；反向（已结算 → open）拒绝。返回新增 `updated` 计数。
+- **watch**：改为 `betssync.run(conn, pull_only=True)`；不再每轮跑 `export_static`（本地看板走 API，不需要 site/）。CI 的静态站/台账推送由 workflow 里独立的 `bets-sync --push-static` 负责。
+- **本机 `.env`**：恢复 `NBAQ_WEBDAV_USER/PASS`（只读用），`NBAQ_NTFY_TOPIC`、`NBAQ_ODDS_API_KEY`、`HOOPS_API_KEY` 仍为空。
+- **校验**：本地 21 条 = 云端 21 条，result/profit 零不一致；`/api/bets/analysis` 显示 已结算 21 / 盈亏 −5.36（真实 10 条 −4.05，模拟 11 条 −1.31）。
+- **测试**：新增 `tests/test_betssync_pull_only.py`（只拉不推/不碰 inbox/不建目录；正常模式仍会推），`test_betssync.py` 增加单调更新用例。**117 passed**。
