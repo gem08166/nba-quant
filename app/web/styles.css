@@ -1023,6 +1023,14 @@ td.neg { color: var(--muted); }
 }
 .bet-edit { color: var(--muted); font-size: 12px; }
 .bet-edit:hover { color: var(--text); }
+.be-profit-auto {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.be-profit-auto b { color: var(--text); font-family: var(--font-num); }
 .ledger-hint {
   margin: 0 0 8px;
   color: var(--muted);

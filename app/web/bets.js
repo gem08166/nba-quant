@@ -628,7 +628,8 @@ function openBetEditPanel(bet) {
           .map((r) => `<option value="${r}" ${(bet.result || "open") === r ? "selected" : ""}>${RESULT_ZH[r]}</option>`)
           .join("")}
       </select></label>
-      <label>盈亏<input id="be-profit" type="number" step="0.01" value="${bet.profit ?? ""}" placeholder="留空=按注额×赔率算"></label>
+      <label>盈亏<input id="be-profit" type="number" step="0.01" value="${bet.profit ?? ""}" placeholder="留空=自动按下方公式算">
+        <div class="be-profit-auto" id="be-profit-auto"></div></label>
     </div>
     <div class="lm-panel-grid" style="grid-template-columns:1fr;margin-top:8px">
       <label>备注<input id="be-note" type="text" value="${esc(bet.note || "")}"></label>
@@ -667,6 +668,51 @@ function openBetEditPanel(bet) {
   els.line.disabled = settled && !local;
   els.price.disabled = settled && !local;
 
+  // 盈亏实时预览：结果 × 注额 × 赔率（用户手填了盈亏则以手填为准）
+  const profitAuto = panel.querySelector("#be-profit-auto");
+  const expectedProfit = () => {
+    const stake = Number(els.stake.value);
+    const price = Number(els.price.value) || Number(bet.price) || 0;
+    const r = els.result.value;
+    if (!Number.isFinite(stake) || stake <= 0 || r === "open") return null;
+    if (r === "won") return Math.round(stake * (price - 1) * 100) / 100;
+    if (r === "lost") return -Math.round(stake * 100) / 100;
+    return 0;
+  };
+  const renderProfitHint = () => {
+    if (!profitAuto) return;
+    const expected = expectedProfit();
+    if (expected == null) {
+      profitAuto.textContent = "";
+      return;
+    }
+    const manual = els.profit.value.trim();
+    if (manual !== "" && Number.isFinite(Number(manual))) {
+      const diff = Math.round((Number(manual) - expected) * 100) / 100;
+      profitAuto.innerHTML =
+        `按公式应为 <b>${expected >= 0 ? "+" : ""}${expected.toFixed(2)}</b>` +
+        (diff !== 0 ? ` · 你填的差 ${diff >= 0 ? "+" : ""}${diff.toFixed(2)}` : " · 与你填的一致");
+    } else {
+      profitAuto.textContent = `将按公式自动算 ${expected >= 0 ? "+" : ""}${expected.toFixed(2)}`;
+    }
+  };
+  els.stake.addEventListener("input", renderProfitHint);
+  els.price.addEventListener("input", renderProfitHint);
+  els.result.addEventListener("change", renderProfitHint);
+  els.profit.addEventListener("input", renderProfitHint);
+  // 盈亏留空时：改注额/赔率/结果直接回填自动值，所见即所得
+  const fillProfitIfEmpty = () => {
+    if (els.profit.value.trim() === "") {
+      const expected = expectedProfit();
+      if (expected != null) els.profit.value = expected;
+    }
+    renderProfitHint();
+  };
+  els.stake.addEventListener("input", fillProfitIfEmpty);
+  els.price.addEventListener("input", fillProfitIfEmpty);
+  els.result.addEventListener("change", fillProfitIfEmpty);
+  renderProfitHint();
+
   const collectPatch = () => {
     const patch = {};
     if (!settled || local) {
@@ -690,8 +736,11 @@ function openBetEditPanel(bet) {
     }
     patch.result = els.result.value;
     patch.note = els.note.value.trim() || null;
+    const expected = expectedProfit();
     if (els.profit.value.trim() !== "" && Number.isFinite(Number(els.profit.value))) {
       patch.profit = Number(els.profit.value);
+    } else if (expected != null) {
+      patch.profit = expected; // 前端直接带上自动值，避免后端口径差异
     } else if ((bet.result || "open") === "open" && els.result.value !== "open") {
       patch.profit = null; // 让后端按注额×赔率算
     }
