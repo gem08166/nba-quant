@@ -285,7 +285,12 @@ def cmd_bets_sync(args: argparse.Namespace) -> None:
         return
     conn = db.connect()
     try:
-        stats = betssync.run(conn, force_push=args.force, push_static=args.push_static)
+        stats = betssync.run(
+            conn,
+            force_push=args.force,
+            push_static=args.push_static,
+            pull_only=args.pull_only,
+        )
         print(json.dumps(stats, ensure_ascii=False, indent=1))
     finally:
         conn.close()
@@ -442,6 +447,11 @@ def build_parser() -> argparse.ArgumentParser:
     bs.add_argument("--check", action="store_true", help="show config/coverage only")
     bs.add_argument("--force", action="store_true", help="push the ledger even if unchanged")
     bs.add_argument("--push-static", action="store_true", help="also push site/data/static.json (CI use)")
+    bs.add_argument(
+        "--pull-only",
+        action="store_true",
+        help="only pull the cloud ledger (PC dashboard mode; never pushes)",
+    )
     bs.set_defaults(func=cmd_bets_sync)
 
     serve = sub.add_parser("serve", help="run the web app")
