@@ -1,0 +1,1307 @@
+/* ============================================================
+   NBA Quant — 记分台设计系统
+   ------------------------------------------------------------
+   参照 NBA 记分台（scorer's table）：冷调石墨控制台 + 纸白记分卡。
+   数字是主角 —— 等宽字体、成排对齐、纸白记分卡是唯一记忆点。
+
+   所有类名与 JS 强耦合，改动请保持选择器不变。
+   ============================================================ */
+
+/* ---------- 自托管字体（数字/比分/赔率） ---------- */
+
+@font-face {
+  font-family: "Plex Mono";
+  src: url("fonts/plex-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Plex Mono";
+  src: url("fonts/plex-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Plex Mono";
+  src: url("fonts/plex-mono-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Plex Cond";
+  src: url("fonts/plex-cond-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Plex Cond";
+  src: url("fonts/plex-cond-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- 设计令牌 ---------- */
+
+:root {
+  color-scheme: dark;
+
+  /* 记分台石墨底：冷调，不是纯黑 */
+  --bg: #101319;
+  --bg-soft: #141821;
+  --panel: #191d26;
+  --panel-2: #1e232d;
+  --panel-3: #242a35;
+
+  /* 发丝界线 */
+  --line: #2b313d;
+  --line-soft: #222730;
+
+  /* 记分纸：暖白，只给最终比分用 */
+  --paper: #e8e4d9;
+  --paper-ink: #171a20;
+
+  --text: #dfe3ea;
+  --text-dim: #a8b0bd;
+  --muted: #79828f;
+
+  /* 语义色 */
+  --green: #46b95c;
+  --green-strong: #3fb950;
+  --green-deep: #2a7d38;
+  --red: #e0574f;
+  --amber: #e8a33d;
+  --blue: #4b8fd6;
+
+  /* 记分卡纸片：小圆角，靠线条不靠阴影 */
+  --radius: 4px;
+  --radius-sm: 3px;
+
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02);
+  --shadow-2: 0 14px 34px rgba(0, 0, 0, 0.5);
+
+  --font-num: "Plex Mono", ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  --font-cond: "Plex Cond", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-body: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.6 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: rgba(70, 185, 92, 0.28); }
+
+/* 细滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #2b313d;
+  border-radius: 99px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: #3b4351; }
+
+:focus-visible {
+  outline: 2px solid rgba(70, 185, 92, 0.6);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.wrap {
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: 0 20px 72px;
+}
+
+/* ---------- 顶栏：记分牌灯箱 ---------- */
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 -20px 0;
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid var(--line);
+  /* 全站唯一一处渐变：记分牌上方的光 */
+  background:
+    radial-gradient(760px 190px at 6% -60%, rgba(70, 185, 92, 0.13), transparent 62%),
+    radial-gradient(520px 160px at 96% -70%, rgba(75, 143, 214, 0.10), transparent 60%);
+}
+
+.brand { display: flex; align-items: center; gap: 13px; }
+
+/* 记分台上的计时器方块 */
+.logo {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  background: #0c0f14;
+  border: 1px solid var(--line);
+  color: var(--green);
+  font-family: var(--font-num);
+  font-size: 19px;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(70, 185, 92, 0.14);
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--font-cond);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+}
+.brand p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.controls { display: flex; gap: 8px; align-items: center; }
+
+input, select, button { font: inherit; }
+
+input[type="date"], input[type="number"], input[type="text"], select {
+  background: #0c0f14;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  outline: none;
+  font-family: var(--font-num);
+  font-size: 13px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus, select:focus {
+  border-color: #3a7a4c;
+  box-shadow: 0 0 0 2px rgba(70, 185, 92, 0.14);
+}
+
+.btn {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 15px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+  font-weight: 600;
+  font-size: 13px;
+}
+.btn:hover { border-color: #3d4756; background: var(--panel-3); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn.primary {
+  background: #1d5c31;
+  border-color: #2f8a48;
+  color: #eafbee;
+  font-weight: 650;
+}
+.btn.primary:hover { background: #246b3b; }
+.btn.small { padding: 4px 10px; font-size: 12px; }
+
+/* ---------- 标签页：控制台分区选择（发丝下划线，非胶囊） ---------- */
+
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  gap: 22px;
+  margin: 0 -20px 20px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(16, 19, 25, 0.9);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 11px 1px 9px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.tab:hover { color: var(--text-dim); }
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--green);
+}
+
+/* ---------- 统计条：控制台读数 ---------- */
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin-bottom: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.stat {
+  flex: 1 1 130px;
+  padding: 11px 15px;
+  border-right: 1px solid var(--line-soft);
+  min-width: 0;
+}
+.stat:last-child { border-right: 0; }
+.stat .k {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.stat .v {
+  font-family: var(--font-num);
+  font-size: 19px;
+  font-weight: 500;
+  margin-top: 4px;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.stat .v.green { color: var(--green); }
+.stat.highlight {
+  background: rgba(70, 185, 92, 0.09);
+  box-shadow: inset 2px 0 0 var(--green);
+}
+
+/* ---------- 比赛卡：记分卡纸片 ---------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 10px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 15px 13px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+  position: relative;
+  overflow: hidden;
+  animation: cardIn 0.3s ease both;
+}
+@keyframes cardIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card { animation: none; }
+  .btn, .card, .tab { transition: none; }
+}
+
+/* 左缘状态色条：整张卡的身份 */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.2s ease;
+}
+/* 信号卡靠绿边 + 绿条识别，不整块染色（底色和普通卡同明度才不脏） */
+.card.signal::before { background: var(--green); }
+.card.signal { border-color: #2a4a34; }
+.card:hover { border-color: #3d4756; background: var(--panel-2); }
+.card.signal:hover { border-color: #35703f; background: #182019; }
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11.5px;
+  margin-bottom: 9px;
+  gap: 8px;
+}
+.card-top span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status {
+  padding: 1px 8px;
+  border-radius: 2px;
+  background: #141922;
+  border: 1px solid var(--line);
+  font-family: var(--font-num);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.status.live {
+  color: var(--amber);
+  border-color: #5a4318;
+  background: #211a0e;
+  font-weight: 600;
+}
+.status.final { color: var(--muted); }
+
+.matchup {
+  font-family: var(--font-cond);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.matchup .at { color: var(--muted); font-weight: 400; margin: 0 5px; }
+
+/* 分数：主队绿 / 客队红（中文比分习惯） */
+.score {
+  color: var(--green);
+  font-family: var(--font-num);
+  font-weight: 600;
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.score.live-score { color: var(--red); }
+.score.live-score::before { content: "●"; animation: blink 1.2s infinite; margin-right: 4px; }
+@keyframes blink { 50% { opacity: 0.25; } }
+.score.live-score { font-size: 19px; }
+
+/* 唯一记忆点：纸白记分卡 —— 最终比分像一张裁下来的记分纸 */
+.score.final-score {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 11px;
+  border-radius: 2px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--paper-ink);
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.022) 0 1px, transparent 1px 3px),
+    var(--paper);
+  letter-spacing: 0.06em;
+  vertical-align: 2px;
+}
+.score.final-score::before { content: none; }
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.meta b { color: var(--text-dim); font-weight: 600; }
+
+.edge-badge {
+  margin-top: 11px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  justify-content: space-between;
+  gap: 10px;
+  background: #14211a;
+  border: 1px solid #2a4a34;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 12.5px;
+}
+.edge-badge .label { color: #c3e6cd; flex: 1 1 auto; min-width: 0; }
+.edge-badge .ev {
+  color: var(--green);
+  font-family: var(--font-num);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.edge-badge.muted { background: #14181f; border-color: var(--line); color: var(--muted); }
+.edge-badge.muted .ev { color: var(--muted); font-weight: 400; }
+
+/* ---------- 可下注（唯一高饱和绿，用于真正要行动的东西） ---------- */
+
+.card.bettable {
+  border-color: #2f8a48;
+  box-shadow: inset 0 0 0 1px rgba(70, 185, 92, 0.22);
+}
+.card.bettable::before { width: 3px; background: var(--green); }
+
+.bettable-strip {
+  margin: -14px -15px 10px;
+  padding: 4px 15px;
+  background: #1d5c31;
+  color: #eafbee;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.edge-badge.bettable {
+  background: #14261a;
+  border-color: #2f8a48;
+  box-shadow: inset 0 0 0 1px rgba(70, 185, 92, 0.2);
+}
+.edge-badge.bettable .ev { color: #7ee89a; font-size: 14px; }
+.edge-badge .chip-bettable {
+  flex: none;
+  background: var(--green);
+  color: #06180c;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 2px;
+}
+
+/* ---------- 今日可下注面板：账本行 ---------- */
+
+#bettable-panel { margin: 0 0 18px; }
+.bp-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 7px; flex-wrap: wrap; }
+.bp-title { font-weight: 700; font-size: 13px; color: var(--green); }
+.bp-count {
+  background: var(--green);
+  color: #06180c;
+  border-radius: 2px;
+  padding: 1px 7px;
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.bp-hint { color: var(--muted); font-size: 11.5px; }
+.bp-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--panel);
+}
+.bp-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 74px 96px 66px auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid transparent;
+  padding: 9px 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.bp-row:last-child { border-bottom: 0; }
+.bp-row:hover { background: #14211a; border-left-color: var(--green); }
+.bp-row .btn { justify-self: end; white-space: nowrap; }
+.bp-match { font-weight: 700; }
+.bp-pick { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-price {
+  font-family: var(--font-num);
+  font-weight: 600;
+  color: #d9ffe7;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bp-book { color: var(--muted); font-size: 11px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-ev {
+  color: var(--green);
+  font-family: var(--font-num);
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bp-empty {
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.bettable-banner {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(70, 185, 92, 0.1);
+  border: 1px solid #2a4a34;
+  color: #c3e6cd;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+tr.row-bettable td { background: rgba(70, 185, 92, 0.09); }
+tr.row-bettable td:first-child { font-weight: 700; color: #c3e6cd; }
+/* 收益页「真实 vs 模拟」对比表：主行加粗、明细行缩进变灰 */
+tr.main-row td { font-weight: 650; }
+tr.sub td { color: var(--muted); font-size: 11.5px; }
+
+.bets-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.bets-toolbar .hint { color: var(--muted); font-size: 11.5px; }
+
+@media (max-width: 560px) {
+  .bp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; }
+  .bp-match { flex: 1 1 100%; }
+  .bp-pick { flex: 1 1 100%; }
+  .bp-price { margin-left: auto; }
+  .bp-book, .bp-hint { display: none; }
+}
+
+.notice {
+  margin-top: 28px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.8;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+}
+
+/* ---------- 标签页容器 ---------- */
+
+#tab-live, #tab-post, #tab-bets, #tab-research { animation: cardIn 0.22s ease both; }
+
+/* ---------- 赛时 ---------- */
+
+.live-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 13px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #333c4a;
+  display: inline-block;
+  transition: background 0.2s ease;
+}
+.live-dot.on {
+  background: var(--red);
+  box-shadow: 0 0 8px rgba(224, 87, 79, 0.8);
+  animation: pulse 1.2s infinite;
+}
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+/* 进行中：琥珀左缘 + 暖边框（不用整块底色） */
+.card.live-card {
+  border-color: #4a3a15;
+}
+.card.live-card::before { background: var(--amber); }
+.live-score { font-size: 19px; }
+
+.wp-wrap { display: flex; align-items: center; gap: 8px; margin-top: 11px; }
+.wp-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #222834;
+  display: flex;
+}
+.wp-bar .wp-home {
+  background: linear-gradient(90deg, #2a7d38, #46b95c);
+  height: 100%;
+  transition: width 0.4s ease;
+}
+.wp-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-size: 11px;
+  margin: 4px 0 0 46px;
+  font-variant-numeric: tabular-nums;
+}
+.wp-src { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.mom { font-size: 12px; margin-left: 2px; }
+.mom.up { color: var(--green); }
+.mom.down { color: var(--red); }
+
+/* 滚球盘口（赛时卡片） */
+.live-market {
+  margin-top: 11px;
+  border: 1px solid #4a3a15;
+  background: #1b1710;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px 9px;
+}
+.lm-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.lm-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--amber);
+}
+.lm-src {
+  font-family: var(--font-num);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.lm-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.lm-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.lm-k { color: var(--muted); }
+.lm-line {
+  font-family: var(--font-num);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.lm-px {
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.lm-btns { display: inline-flex; gap: 4px; }
+.lm-bet {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid rgba(232, 163, 61, 0.35);
+  border-radius: 2px;
+  background: rgba(232, 163, 61, 0.08);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+.lm-bet b {
+  font-family: var(--font-num);
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.lm-bet:hover { border-color: var(--amber); background: rgba(232, 163, 61, 0.18); color: var(--text); }
+
+/* 滚球记一笔：浮动面板 */
+.lm-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 76px;
+  transform: translateX(-50%);
+  z-index: 70;
+  width: min(420px, calc(100vw - 24px));
+  background: var(--bg-soft);
+  border: 1px solid #5a4318;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 12px 14px 13px;
+}
+.lm-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 9px;
+}
+.lm-panel-head b { color: var(--amber); font-size: 13px; }
+.lm-panel-head span { color: var(--text-dim); font-size: 12px; }
+.lm-panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lm-panel-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.lm-panel-grid input { width: 100%; }
+.lm-panel-meta {
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.lm-panel-meta b { font-family: var(--font-num); color: var(--text); }
+.lm-panel-meta b.pos { color: var(--green); }
+.lm-panel-meta b.neg { color: var(--red); }
+.lm-panel-actions { display: flex; gap: 8px; margin-top: 11px; }
+.lm-panel-note {
+  margin-top: 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.lm-meta-tip { color: var(--blue); }
+.live-market.lm-muted { border-color: var(--line); background: #171a20; }
+.live-market.lm-muted .lm-title { color: var(--muted); }
+.lm-badge {
+  margin-left: auto;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  border: 1px solid rgba(232, 163, 61, 0.4);
+  color: var(--amber);
+  background: rgba(232, 163, 61, 0.1);
+  white-space: nowrap;
+}
+.lm-badge.warn { border-color: #6b4a15; background: #241a0c; }
+.lm-note {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.lm-px { font-variant-numeric: tabular-nums; }
+
+.plays {
+  margin-top: 9px;
+  display: grid;
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.play {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: #151a22;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+}
+.play .pc { color: var(--muted); margin-right: 6px; font-family: var(--font-num); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ---------- 赛后复盘 ---------- */
+
+.post-card { border-color: #3a4150; }
+.post-card::before { background: var(--paper); }
+.post-card:hover { border-color: #4c5566; }
+
+.post-block {
+  margin-top: 10px;
+  padding: 9px 10px;
+  background: #14181f;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.post-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+/* 用线而不是 emoji 标记 */
+.post-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+.post-block .meta { font-size: 12px; color: var(--muted); margin: 3px 0; }
+.post-sig-title {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 8px 0 4px;
+}
+.bet-chip.sig { border-color: rgba(75, 143, 214, 0.45); }
+
+.post-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+/* ---------- 弹窗 ---------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.78);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  z-index: 50;
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(840px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: var(--bg-soft);
+  border: 1px solid #333c4a;
+  border-radius: var(--radius);
+  padding: 22px;
+  position: relative;
+  box-shadow: var(--shadow-2);
+  animation: cardIn 0.2s ease both;
+}
+.close {
+  position: sticky;
+  top: 0;
+  float: right;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: #141922;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.close:hover { color: var(--text); border-color: #3d4756; }
+
+.modal h2 { margin: 0 40px 4px 0; font-size: 20px; font-weight: 700; }
+.modal .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; }
+
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin: 14px 0 18px;
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.model-cell { background: var(--panel); padding: 10px 11px; }
+.model-cell .k { color: var(--muted); font-size: 11px; }
+.model-cell .v {
+  font-family: var(--font-num);
+  font-size: 17px;
+  font-weight: 500;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+h3 {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 22px 0 9px;
+  font-weight: 700;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td {
+  text-align: left;
+  padding: 8px 7px;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+}
+tbody tr { transition: background 0.12s ease; }
+tbody tr:hover { background: rgba(42, 49, 61, 0.3); }
+tr:last-child td { border-bottom: none; }
+td.pos { color: var(--green); font-weight: 600; }
+td.neg { color: var(--muted); }
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.table-wrap table { min-width: 620px; }
+.table-wrap th:first-child, .table-wrap td:first-child { padding-left: 12px; }
+.table-wrap th:last-child, .table-wrap td:last-child { padding-right: 12px; }
+
+/* 收益页：真实 / 模拟 两组统计卡 */
+#bets-stats.split { display: block; }
+.stats-group { margin-bottom: 14px; }
+.stats-group:last-child { margin-bottom: 18px; }
+.stats-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-bottom: 7px;
+}
+.stats-head::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--green);
+}
+.stats-head.sim::before { background: var(--blue); }
+.stats-group .stats { margin-bottom: 0; }
+
+/* 收益页台账：真实 / 模拟 分区 */
+.ledger-section {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.ledger-section:first-child { margin-top: 0; }
+.ledger-count {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.ledger-count b { font-family: var(--font-num); }
+.ledger-hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+/* 盘口快照分组小标题 */
+#modal-body h4 {
+  margin: 14px 0 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-dim);
+}
+#modal-body h4:first-of-type { margin-top: 4px; }
+#modal-body .odds-table + h4 { margin-top: 14px; }
+
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 2px;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.pill.signal {
+  color: #b9f6ce;
+  border-color: #2a4a34;
+  background: #14211a;
+  font-weight: 600;
+}
+.pill-live {
+  color: var(--amber);
+  border-color: #5a4318;
+  background: #211a0e;
+  font-weight: 600;
+}
+.pill-backfill {
+  color: var(--blue);
+  border-color: #2c4a6b;
+  background: #121b26;
+  font-weight: 600;
+}
+
+.inj-list { display: grid; gap: 6px; }
+.inj {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12.5px;
+}
+.inj .s { color: var(--amber); }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+.form-grid label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+.form-grid input, .form-grid select { width: 100%; padding: 8px 9px; }
+.form-grid .btn { width: 100%; }
+
+.warn {
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border: 1px solid #5a4318;
+  background: #1f1a10;
+  color: #f3d9a0;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%) translateY(16px);
+  background: #14211a;
+  color: #d8ffe6;
+  border: 1px solid #2a4a34;
+  border-radius: var(--radius-sm);
+  padding: 10px 18px;
+  font-size: 13px;
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: 0.25s ease;
+  z-index: 80;
+  max-width: min(90vw, 480px);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.empty {
+  grid-column: 1 / -1;
+  padding: 36px 18px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: #12161d;
+}
+
+/* ---------- 研究图表 ---------- */
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.chart-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px 12px;
+  overflow: hidden;
+}
+.chart-card h2 {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-dim);
+}
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.chart-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  font-weight: 500;
+}
+.chart-toggle button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.chart-toggle button + button { border-left: 1px solid var(--line); }
+.chart-toggle button:hover { color: var(--text-dim); }
+.chart-toggle button.on {
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  color: var(--green);
+}
+.chart-card canvas { display: block; }
+.chart-note {
+  margin: 8px 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.chart-note:empty { display: none; }
+
+/* ---------- 收益页 ---------- */
+
+#bets-stats { margin-bottom: 16px; }
+#bets-markets, #bets-ledger { margin-top: 4px; }
+
+/* ---------- 静态模式（GitHub Pages） ----------
+   盘口/伤停的手工修改仍隐藏（需要后端与模型重算）；
+   纸面注单改为浏览器 localStorage，可正常「记一笔」。 */
+
+body.static-mode [data-save-impact],
+body.static-mode [data-apply-impact],
+body.static-mode #m-submit,
+body.static-mode .form-grid {
+  display: none !important;
+}
+
+body.static-mode .bets-scope::after {
+  content: "本机浏览器记录 · 不同步";
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 900px) {
+  .charts { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .wrap { padding: 0 12px 56px; }
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    margin: 0 -12px 0;
+    padding: 16px 12px 12px;
+    gap: 12px;
+  }
+  .controls { width: 100%; }
+  .controls input { flex: 1; }
+  .tabs {
+    gap: 16px;
+    margin: 0 -12px 18px;
+    padding: 0 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; padding: 10px 1px 8px; }
+  .grid { grid-template-columns: 1fr; }
+  .model-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-grid { grid-template-columns: repeat(2, 1fr); }
+  .modal { padding: 0; align-items: end; }
+  .modal-card { max-height: 93vh; border-radius: var(--radius) var(--radius) 0 0; padding: 18px 14px; }
+  .stat { flex: 1 1 40%; min-width: 0; border-bottom: 1px solid var(--line-soft); }
+  .live-labels { margin-left: 0; }
+  .stats { border-radius: var(--radius); }
+  /* 窄屏：赛时标题栏只留「刷新数据」按钮，说明文字会挤 */
+  .live-hint { display: none; }
+  .live-header { flex-wrap: wrap; gap: 6px 8px; }
+}
+
+/* 注单台账：比赛名做成可点击链接（跳到赛时/看板并高亮该场） */
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px dashed var(--muted);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.linklike:hover { color: var(--green); border-color: var(--green); }
+
+/* 跳转后的目标卡片高亮（2 秒） */
+.card.flash {
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px rgba(70, 185, 92, 0.4);
+}
+
+/* 赛前卡片底部操作（手动记一笔） */
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.card-actions .btn { font-size: 11.5px; padding: 3px 10px; }
+
+/* 赛时看板：每节得分（客 : 主） */
+.qs-row {
+  display: flex;
+  gap: 1px;
+  margin: 8px 0 2px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  background: var(--line-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.qs-col {
+  min-width: 52px;
+  padding: 4px 6px;
+  background: #12161d;
+  border-right: 1px solid var(--line-soft);
+  text-align: center;
+}
+.qs-col:last-child { border-right: 0; }
+.qs-col .k { font-size: 10px; color: var(--muted); }
+.qs-col .v {
+  font-family: var(--font-num);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.qs-col.total { background: #14211a; }
+.q-sep { color: var(--muted); margin: 0 2px; }
+
+/* 赛时卡片：有未结算注单的标注 */
+.card.has-bet { border-color: #4a3a15; }.bet-tag {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: rgba(232, 163, 61, 0.12);
+  border: 1px solid rgba(232, 163, 61, 0.45);
+  color: var(--amber);
+  white-space: nowrap;
+}
+.bet-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 2px; }
+.bet-chip {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  background: rgba(232, 163, 61, 0.07);
+  border: 1px solid rgba(232, 163, 61, 0.28);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+/* 注单单据的结果标注 */
+.bet-result { font-weight: 700; margin-left: 4px; }
+.bet-result.pos { color: var(--green); }
+.bet-result.neg { color: var(--red); }
