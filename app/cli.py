@@ -464,7 +464,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _ensure_std_streams() -> None:
+    """把缺失的标准输出接上黑洞。
+
+    以 DETACHED_PROCESS / pythonw 启动时 sys.stdout / sys.stderr 可能是 None：
+    print() 会抛 AttributeError，uvicorn 初始化日志也会直接失败，
+    表现为「服务启动几秒就消失且没有崩溃日志」。
+    """
+    import os
+
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
+
 def main(argv: list[str] | None = None) -> None:
+    _ensure_std_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)

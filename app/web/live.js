@@ -266,14 +266,22 @@ async function refreshLiveData() {
   try {
     await detectMode();
     if (window.APP_MODE === "static") {
-      // 静态模式没有后端：只能重新拉 ESPN 实时比分，盘口等下一次静态快照（≤30 分钟）
+      // 静态模式没有后端：重新拉快照 + ESPN 实时比分。快照发布频率取决于
+      // GitHub Actions 定时任务（实测被限流到约 1 小时一轮），不是实时盘口。
+      let channel = "unavailable";
       try {
-        await refreshStaticPayload?.();
+        channel = (await refreshStaticPayload?.({ auto: false })) || "unavailable";
       } catch (_) {
         /* 快照通道不可用时仍然刷新实时比分 */
       }
+      lastStaticPoll = Date.now();
       await loadLive(true);
-      toast("已刷新比分（手机静态模式的滚球盘口每 30 分钟随快照更新）");
+      const age = staticAgoText();
+      toast(
+        channel === "unavailable"
+          ? "比分已刷新；盘口快照暂时取不到（检查网络或坚果云配置）"
+          : `比分已刷新 · ${age || "盘口快照未知"}`
+      );
       return;
     }
     const stats = await api(`/api/live/refresh?date=${encodeURIComponent(state.date)}`, {
@@ -632,6 +640,21 @@ function liveCard(game) {
 
 let liveToken = 0;
 let lastLiveGames = [];  // 最近一次渲染的赛时数据（滚球记一笔要用完整对象）
+let lastStaticPoll = 0;  // 上次自动拉静态快照的时间（毫秒），限流用
+
+// 静态快照多久算「旧」：GitHub Actions 定时任务会被限流（实测约 1 小时一轮），
+// 这里只做提示，不假装数据是实时的。
+const SNAPSHOT_OLD_MINUTES = 20;
+const STATIC_POLL_MS = 60000;
+
+function staticAgoText() {
+  if (window.APP_MODE !== "static") return "";
+  const mins = window.staticSnapshotAgeMinutes?.();
+  if (mins == null) return "";
+  if (mins < 1) return "盘口快照 刚刚";
+  const rounded = Math.round(mins);
+  return `盘口快照 ${rounded} 分钟前${rounded >= SNAPSHOT_OLD_MINUTES ? "（GitHub 定时任务延迟）" : ""}`;
+}
 
 async function loadLive(force = false) {
   if (!liveActive && !force) return;
@@ -642,10 +665,23 @@ async function loadLive(force = false) {
   try {
     await detectMode();
     const requestedDate = state.date;
-    const data =
-      window.APP_MODE === "static"
-        ? await espnLive(requestedDate)
-        : await api(`/api/live?date=${encodeURIComponent(requestedDate)}`);
+    let data;
+    if (window.APP_MODE === "static") {
+      // 自动跟进新发布的静态快照：不点「刷新」也能在一分钟内看到新盘口。
+      // 条件请求（ETag）→ 没更新时是 304，几乎不耗流量。
+      const now = Date.now();
+      if (now - lastStaticPoll >= STATIC_POLL_MS) {
+        lastStaticPoll = now;
+        try {
+          await window.refreshStaticPayload?.({ auto: true });
+        } catch (_) {
+          /* 快照通道失败不影响下面拉实时比分 */
+        }
+      }
+      data = await espnLive(requestedDate);
+    } else {
+      data = await api(`/api/live?date=${encodeURIComponent(requestedDate)}`);
+    }
     if (myToken !== liveToken) return; // 过期响应，丢弃
     const box = document.getElementById("live-games");
     const inPlay = data.games.filter((g) => g.state === "in").length;
@@ -655,7 +691,11 @@ async function loadLive(force = false) {
     } else {
       box.innerHTML = data.games.map(liveCard).join("");
     }
-    status.textContent = `更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · ${inPlay} 场进行中 / 共 ${data.count} 场`;
+    const snapshot = staticAgoText();
+    status.textContent =
+      `更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` +
+      ` · ${inPlay} 场进行中 / 共 ${data.count} 场` +
+      (snapshot ? ` · 比分实时（ESPN）· ${snapshot}` : "");
   } catch (error) {
     if (myToken === liveToken) status.textContent = `加载失败：${error.message}`;
   } finally {

@@ -41,3 +41,7 @@ site/
 mobile/screen*.png
 mobile/build.log
 deploy/*.png
+
+# 坚果云同步冲突副本（Nutstore 生成的附属文件，不属于仓库内容）
+*-冲突-*_Win10*
+**/*-冲突-*_Win10*

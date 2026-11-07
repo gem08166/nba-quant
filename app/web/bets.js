@@ -19,8 +19,8 @@ function syncProfitModeButtons() {
 }
 
 function renderProfitChart() {
-  const canvas = document.getElementById("chart-profit");
-  if (!canvas) return;
+  const host = document.getElementById("chart-profit");
+  if (!host) return;
   const data = betsChartData;
   const mode = profitMode();
   const normalized = mode === "unit";
@@ -28,15 +28,21 @@ function renderProfitChart() {
   const mine = curves.mine || [];
   const sim = curves.sim || [];
   const unit = normalized ? "u" : "";
+  const fmt = (arr) => {
+    const last = arr.length ? arr[arr.length - 1].cum_profit : null;
+    if (last == null) return "—";
+    return `${last >= 0 ? "+" : ""}${Number(last).toFixed(2)}${unit}`;
+  };
   const note = document.getElementById("profit-mode-note");
   if (note) {
-    note.textContent = normalized
+    const base = normalized
       ? "归一化：每笔盈亏 ÷ 注额，按每注 1 单位累计，排除注额大小的影响。"
       : "金额：按实际注额累计的盈亏。";
+    note.textContent = `${base} 最新：真实 ${fmt(mine)} · 模拟 ${fmt(sim)}`;
   }
 
   if (mine.length || sim.length) {
-    window.drawMultiLineChart?.(canvas, [
+    window.drawMultiLineChart?.(host, [
       {
         label: "真实",
         color: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#46b95c",
@@ -52,21 +58,17 @@ function renderProfitChart() {
   }
 
   if (!normalized && data?.curve && data.curve.length) {
-    window.drawLineChart?.(
-      canvas,
-      data.curve.map((p) => p.date.slice(2)),
-      data.curve.map((p) => p.cum_profit),
-      { unit }
-    );
+    window.drawMultiLineChart?.(host, [
+      {
+        label: "累计",
+        color: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#46b95c",
+        points: data.curve.map((p) => ({ date: p.date, value: p.cum_profit })),
+      },
+    ], { unit });
     return;
   }
 
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#79828f";
-  ctx.font = '12px "Plex Mono", ui-monospace, monospace';
-  ctx.textAlign = "center";
-  ctx.fillText("暂无已结算注单：结算后这里会出现累计收益曲线", canvas.width / 2, 120);
+  host.innerHTML = '<p class="chart-empty">暂无已结算注单：结算后这里会出现累计收益曲线</p>';
 }
 
 const marketLabel = (market) =>
@@ -680,4 +682,12 @@ document.getElementById("profit-mode")?.addEventListener("click", (event) => {
   localStorage.setItem("nbaq:profit-mode", btn.dataset.profitMode);
   syncProfitModeButtons();
   renderProfitChart();
+});
+
+// 窗口/横竖屏变化：SVG 按容器宽度重画，避免拉伸变形
+let profitResizeTimer = null;
+window.addEventListener("resize", () => {
+  if (!betsChartData) return;
+  clearTimeout(profitResizeTimer);
+  profitResizeTimer = setTimeout(renderProfitChart, 150);
 });

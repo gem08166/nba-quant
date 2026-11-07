@@ -80,31 +80,48 @@ async function detectMode() {
   return "api";
 }
 
-// 刷新数据通道（静态模式点「刷新」时调用；有新快照才更新，避免无谓重渲染）
-async function refreshStaticPayload() {
+// 快照单调性：绝不用更旧的快照覆盖更新的（坚果云/Pages/APK 三通道版本可能不同）
+function adoptPayload(parsed, source) {
+  if (!parsed || !parsed.generated_at) return false;
+  const old = window.STATIC_PAYLOAD?.generated_at;
+  if (old && String(parsed.generated_at) < String(old)) return false;
+  window.STATIC_PAYLOAD = parsed;
+  window.STATIC_SOURCE = source;
+  return true;
+}
+
+// 刷新数据通道（静态模式）。
+//   auto=true：赛时页 60s 自动轮询走 Pages 的条件请求（If-None-Match），
+//              304 时几乎零流量；不碰坚果云（Full GET 300KB 太重）。
+//   auto=false：手动「刷新」按钮，坚果云优先（最新），再回落 Pages。
+let STATIC_ETAG = "";
+async function refreshStaticPayload({ auto = false } = {}) {
   if (window.APP_MODE !== "static") return "api";
-  if (window.DAV?.davEnabled()) {
+  if (!auto && window.DAV?.davEnabled()) {
     try {
       const remote = await window.DAV.davGetText("nbaq/static.json");
       if (remote) {
         const parsed = JSON.parse(remote);
-        const old = window.STATIC_PAYLOAD?.generated_at;
-        window.STATIC_PAYLOAD = parsed;
-        window.STATIC_SOURCE = "webdav";
-        return parsed.generated_at === old ? "webdav-same" : "webdav-updated";
+        const same = parsed.generated_at === window.STATIC_PAYLOAD?.generated_at;
+        const adopted = adoptPayload(parsed, "webdav");
+        return same ? "webdav-same" : adopted ? "webdav-updated" : "webdav-stale";
       }
     } catch (_) {
       /* 坚果云不可达 → 回落 Pages */
     }
   }
   try {
-    const resp = await fetch("data/static.json", { cache: "no-store" });
+    const headers = {};
+    if (auto && STATIC_ETAG) headers["If-None-Match"] = STATIC_ETAG;
+    const resp = await fetch("data/static.json", { cache: "no-store", headers });
+    if (resp.status === 304) return "pages-same";
     if (resp.ok) {
+      const etag = resp.headers.get("etag");
+      if (etag) STATIC_ETAG = etag;
       const parsed = await resp.json();
-      const old = window.STATIC_PAYLOAD?.generated_at;
-      window.STATIC_PAYLOAD = parsed;
-      window.STATIC_SOURCE = "pages";
-      return parsed.generated_at === old ? "pages-same" : "pages-updated";
+      const same = parsed.generated_at === window.STATIC_PAYLOAD?.generated_at;
+      const adopted = adoptPayload(parsed, "pages");
+      return same ? "pages-same" : adopted ? "pages-updated" : "pages-stale";
     }
   } catch (_) {
     /* ignore */
@@ -112,6 +129,16 @@ async function refreshStaticPayload() {
   return "unavailable";
 }
 window.refreshStaticPayload = refreshStaticPayload;
+
+// 当前快照距今多少分钟（赛时页要如实告诉用户「盘口快照多旧」）
+function staticSnapshotAgeMinutes() {
+  const gen = window.STATIC_PAYLOAD?.generated_at;
+  if (!gen) return null;
+  const t = new Date(gen).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, (Date.now() - t) / 60000);
+}
+window.staticSnapshotAgeMinutes = staticSnapshotAgeMinutes;
 
 // ---------- 静态模式的 API 映射 ----------
 

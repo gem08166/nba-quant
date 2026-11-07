@@ -791,3 +791,26 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **手动刷新本机台账**：`python -m app.cli bets-sync --pull-only`（绝不回推）。
 - **校验**：本地 21 条 = 云端 21 条，result/profit 零不一致；`/api/bets/analysis` 显示 已结算 21 / 盈亏 −5.36（真实 10 条 −4.05，模拟 11 条 −1.31）。
 - **测试**：新增 `tests/test_betssync_pull_only.py`（只拉不推/只读合并 inbox/不 MOVE/不建目录；正常模式仍会 MOVE + 推），`test_betssync.py` 增加单调更新用例。**117 passed**。
+
+### 10.46 2026-11-07 赛时数据时效：自动跟进快照 + 如实标注快照年龄
+
+- **问题**：`gem08166.github.io/nba-quant` 赛时页更新慢。根因不是页面，是**发布频率**：
+  GitHub 对公开仓库的 `schedule` 有节流，`*/30` 实测被压到 **约 60 分钟一轮**（03:15 / 02:15 / 18:42 / 17:41…）。
+  赛时页面只在打开时读一次静态快照，之后 30s 轮询只重拉 ESPN 比分 → 盘口可能一小时不动，还显示「更新于刚刚」。
+- **前端（`static.js` / `live.js`）**：
+  - 赛时页每 **60s** 自动跟进快照：走 Pages **条件请求**（`If-None-Match`，304 几乎零流量），不再要求手动点「刷新」；
+  - `adoptPayload()` 单调采纳：坚果云 / Pages / APK 三通道版本可能不同，**绝不用更旧的快照覆盖更新的**；
+  - 手动「刷新」仍坚果云优先（最新），再回落 Pages；
+  - 状态栏如实显示：`比分实时（ESPN）· 盘口快照 N 分钟前`，超过 20 分钟追加「（GitHub 定时任务延迟）」；
+  - 无快照时给出明确文案，不再假装实时。
+  - 注意：比分/分节比分/胜率曲线本来就走 ESPN 实时接口（约 1s），慢的只有滚球盘口快照。
+- **CI**：`odds-refresh.yml` 的 cron 从 `*/30` 改 `*/10`（每次 60-80s，公开仓库不占额度；Odds API 仍有 `NBAQ_ODDSAPI_MIN_HOURS=20h` 闸门，节奏加快不会多耗）。
+  GitHub 仍可能压到 20-60 分钟；要做到 5-10 分钟必须用**外部定时器**调 `workflow_dispatch`：
+  ```bash
+  curl -X POST -H "Authorization: Bearer <PAT>" \
+    -H "Accept: application/vnd.github+json" \
+    https://api.github.com/repos/gem08166/nba-quant/actions/workflows/odds-refresh.yml/dispatches \
+    -d '{"ref":"main"}'
+  ```
+  PAT 只需 `actions:write`，放到 cron-job.org / UptimeRobot 之类的免费定时器里即可（10 分钟一次）。
+- **静态快照年龄来源**：`static.json.generated_at`（UTC），前端按本地时间算差值。

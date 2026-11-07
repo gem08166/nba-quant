@@ -160,11 +160,18 @@ function drawLineChart(canvas, labels, series, { min, max, unit = "" } = {}) {
 }
 
 // 多序列累计曲线（真实 vs 模拟）：日期取并集，缺失日沿用上一个累计值
-function drawMultiLineChart(canvas, seriesList, { unit = "" } = {}) {
-  const { ctx, width, height } = setupCanvas(canvas);
-  const pad = { l: 54, r: 14, t: 26, b: 34 };
+// 多序列累计曲线（真实 vs 模拟）：用 SVG 渲染，不用 canvas。
+// 有的手机浏览器/WebView 会禁用或替换 canvas（表现为整块白屏 + 破图像占位），
+// SVG 在所有手机浏览器都能画，而且高 DPI 下更清晰。
+function drawMultiLineChart(host, seriesList, { unit = "" } = {}) {
+  if (!host) return;
   const list = (seriesList || []).filter((s) => s && s.points && s.points.length);
-  if (!list.length) return;
+  const width = Math.max(280, Math.round(host.clientWidth || 640));
+  const height = Math.round(host.clientHeight || Number(host.dataset.height) || 240);
+  if (!list.length) {
+    host.innerHTML = '<p class="chart-empty">暂无已结算注单：结算后这里会出现累计收益曲线</p>';
+    return;
+  }
 
   const dates = Array.from(new Set(list.flatMap((s) => s.points.map((p) => p.date)))).sort();
   const aligned = list.map((s) => {
@@ -190,74 +197,78 @@ function drawMultiLineChart(canvas, seriesList, { unit = "" } = {}) {
   const padV = (hi - lo) * 0.12 || 1;
   const yMin = lo - padV;
   const yMax = hi + padV;
-  const y = yScale(height, pad, yMin, yMax);
-  drawFrame(ctx, width, height, pad);
-
-  ctx.font = '11px "Plex Mono", ui-monospace, monospace';
-  ctx.fillStyle = COLORS.muted;
-  ctx.textAlign = "right";
+  const pad = { l: 54, r: 14, t: 26, b: 34 };
+  const plotW = width - pad.l - pad.r;
+  const plotH = height - pad.t - pad.b;
+  const y = (v) => pad.t + (1 - (v - yMin) / (yMax - yMin)) * plotH;
   const decimals = hi - lo < 10 ? 2 : 1;
+  const esc = (s) =>
+    String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const parts = [
+    `<svg viewBox="0 0 ${width} ${height}" width="100%" height="100%" role="img" aria-label="累计收益曲线">`,
+  ];
+
+  // Y 轴刻度 + 网格
   for (let i = 0; i <= 4; i++) {
     const v = yMin + ((yMax - yMin) * i) / 4;
-    ctx.fillText(`${v.toFixed(decimals)}${unit}`, pad.l - 6, y(v) + 4);
+    const yy = y(v).toFixed(1);
     if (i > 0) {
-      ctx.strokeStyle = COLORS.grid;
-      ctx.beginPath();
-      ctx.moveTo(pad.l, y(v));
-      ctx.lineTo(width - pad.r, y(v));
-      ctx.stroke();
+      parts.push(
+        `<line x1="${pad.l}" y1="${yy}" x2="${width - pad.r}" y2="${yy}" stroke="${COLORS.grid}" stroke-width="1"/>`
+      );
     }
+    parts.push(
+      `<text x="${pad.l - 6}" y="${(y(v) + 4).toFixed(1)}" fill="${COLORS.muted}" font-size="11" font-family="ui-monospace, monospace" text-anchor="end">${v.toFixed(decimals)}${unit}</text>`
+    );
   }
 
+  // 0 轴虚线
   if (yMin < 0 && yMax > 0) {
-    ctx.strokeStyle = "rgba(232, 163, 61, 0.45)";
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(pad.l, y(0));
-    ctx.lineTo(width - pad.r, y(0));
-    ctx.stroke();
-    ctx.setLineDash([]);
+    parts.push(
+      `<line x1="${pad.l}" y1="${y(0).toFixed(1)}" x2="${width - pad.r}" y2="${y(0).toFixed(1)}" stroke="rgba(232,163,61,0.45)" stroke-width="1" stroke-dasharray="4 4"/>`
+    );
   }
 
+  // 曲线 + 点
   const n = dates.length;
-  const slot = (width - pad.l - pad.r) / Math.max(n - 1, 1);
+  const slot = plotW / Math.max(n - 1, 1);
   aligned.forEach((s) => {
-    ctx.strokeStyle = s.color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    s.values.forEach((v, i) => {
-      const cx = pad.l + slot * i;
-      if (i === 0) ctx.moveTo(cx, y(v));
-      else ctx.lineTo(cx, y(v));
-    });
-    ctx.stroke();
-    ctx.fillStyle = s.color;
+    const pts = s.values
+      .map((v, i) => `${(pad.l + slot * i).toFixed(1)},${y(v).toFixed(1)}`)
+      .join(" ");
+    parts.push(
+      `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
+    );
     s.values.forEach((v, i) => {
       if (n > 24 && i % 2 === 1) return;
-      ctx.beginPath();
-      ctx.arc(pad.l + slot * i, y(v), 2.5, 0, Math.PI * 2);
-      ctx.fill();
+      parts.push(
+        `<circle cx="${(pad.l + slot * i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.5" fill="${s.color}"/>`
+      );
     });
   });
 
   // 图例
   let lx = pad.l;
-  ctx.font = "11px sans-serif";
-  ctx.textAlign = "left";
   aligned.forEach((s) => {
-    ctx.fillStyle = s.color;
-    ctx.fillRect(lx, pad.t - 15, 10, 3);
-    ctx.fillStyle = COLORS.muted;
-    ctx.fillText(s.label, lx + 14, pad.t - 10);
-    lx += 14 + ctx.measureText(s.label).width + 18;
+    const text = esc(s.label);
+    parts.push(`<rect x="${lx}" y="${pad.t - 15}" width="10" height="3" fill="${s.color}"/>`);
+    parts.push(
+      `<text x="${lx + 14}" y="${pad.t - 9}" fill="${COLORS.muted}" font-size="11" font-family="sans-serif">${text}</text>`
+    );
+    lx += 14 + text.length * 11 + 14;
   });
 
-  ctx.fillStyle = COLORS.muted;
-  ctx.textAlign = "center";
+  // X 轴日期
   dates.forEach((d, i) => {
     if (dates.length > 9 && i % 2 === 1) return;
-    ctx.fillText(d.slice(2), pad.l + slot * i, height - pad.b + 16);
+    parts.push(
+      `<text x="${(pad.l + slot * i).toFixed(1)}" y="${height - pad.b + 16}" fill="${COLORS.muted}" font-size="11" font-family="ui-monospace, monospace" text-anchor="middle">${esc(String(d).slice(2))}</text>`
+    );
   });
+
+  parts.push("</svg>");
+  host.innerHTML = parts.join("");
 }
 window.drawMultiLineChart = drawMultiLineChart;
 
