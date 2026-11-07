@@ -329,6 +329,19 @@ class BetIn(BaseModel):
     note: str | None = None
 
 
+class BetPatch(BaseModel):
+    """手工修订注单：市场/方向/盘口/赔率/注额/备注；已结算的还能改结果与盈亏。"""
+
+    market: Literal["spread", "total", "moneyline"] | None = None
+    side: Literal["home", "away", "over", "under"] | None = None
+    line: float | None = None
+    price: float | None = Field(default=None, gt=1.0)
+    stake: float | None = Field(default=None, gt=0)
+    note: str | None = None
+    result: Literal["open", "won", "lost", "push"] | None = None
+    profit: float | None = None
+
+
 @router.post("/bets")
 def add_bet(body: BetIn, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     game = conn.execute("SELECT id FROM games WHERE id=?", (body.game_id,)).fetchone()
@@ -377,6 +390,90 @@ async def import_bets(request: Request, conn: sqlite3.Connection = Depends(get_c
     ):
         raise HTTPException(status_code=400, detail="no valid bets found")
     return result
+
+
+@router.patch("/bets/{bet_id}")
+def edit_bet(bet_id: int, body: BetPatch, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """编辑注单。
+
+    - 未结算：可改 market/side/line/price/stake/note（market 与 side 联动校验）；
+    - 已结算：只允许改 result/profit/note（比赛已经打完，盘口/赔率的改动会破坏结算口径）；
+    - result 改回 open 或在已结算注单上改 result 时，清掉 closing/CLV（那是结算时写入的）。
+    """
+    row = conn.execute("SELECT * FROM bets WHERE id=?", (bet_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="bet not found")
+    bet = dict(row)
+    settled = bet["result"] != "open"
+    updates: dict = {}
+
+    if body.market is not None:
+        if settled:
+            raise HTTPException(status_code=400, detail="settled bet: market cannot change")
+        updates["market"] = body.market
+    if body.side is not None:
+        if settled:
+            raise HTTPException(status_code=400, detail="settled bet: side cannot change")
+        updates["side"] = body.side
+    if body.line is not None:
+        if settled:
+            raise HTTPException(status_code=400, detail="settled bet: line cannot change")
+        updates["line"] = body.line
+    if body.price is not None:
+        if settled:
+            raise HTTPException(status_code=400, detail="settled bet: price cannot change")
+        updates["price"] = body.price
+    if body.stake is not None:
+        updates["stake"] = body.stake
+    if body.note is not None:
+        updates["note"] = body.note
+
+    if body.result is not None:
+        updates["result"] = body.result
+    if body.profit is not None:
+        updates["profit"] = body.profit
+
+    market = updates.get("market", bet["market"])
+    side = updates.get("side", bet["side"])
+    valid_sides = {"spread": ("home", "away"), "total": ("over", "under"), "moneyline": ("home", "away")}
+    if side not in valid_sides.get(market, ()):
+        raise HTTPException(status_code=400, detail=f"side {side} invalid for {market}")
+    if market != "moneyline" and updates.get("line", bet["line"]) is None:
+        raise HTTPException(status_code=400, detail=f"{market} requires a line")
+
+    # 结果变化时：open → 结算（补盈亏）、结算 → open（清盈亏与收盘）
+    new_result = updates.get("result", bet["result"])
+    if "result" in updates and updates["result"] != bet["result"]:
+        if updates["result"] == "open":
+            updates["profit"] = None
+            updates["closing_line"] = None
+            updates["closing_price"] = None
+            updates["clv"] = None
+            updates["clv_line"] = None
+        elif body.profit is None and bet["result"] == "open":
+            # 手动标记结果但没给盈亏：按注额×赔率算一个
+            stake = updates.get("stake", bet["stake"]) or 0.0
+            price = updates.get("price", bet["price"]) or 1.0
+            updates["profit"] = (
+                stake * (price - 1.0) if new_result == "won" else -stake if new_result == "lost" else 0.0
+            )
+    if updates.get("stake") is not None and bet["result"] != "open" and body.profit is None:
+        # 已结算注单改注额：盈亏按新注额重算（保持正负号语义）
+        stake = updates["stake"]
+        old_stake = bet["stake"] or 0.0
+        old_profit = bet["profit"] or 0.0
+        scale = stake / old_stake if old_stake else 0.0
+        updates["profit"] = round(old_profit * scale, 2)
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="nothing to update")
+    assignments = ", ".join(f"{name}=?" for name in updates)
+    conn.execute(
+        f"UPDATE bets SET {assignments} WHERE id=?",
+        list(updates.values()) + [bet_id],
+    )
+    conn.commit()
+    return {"ok": True, "id": bet_id, "updated": updates}
 
 
 @router.get("/bets/summary")

@@ -299,7 +299,7 @@ function renderLedger(bets) {
         <span class="ledger-count">${rows.length} 条（结算 ${settled.length}）${money}</span>
       </h3>
       ${hint ? `<p class="ledger-hint">${hint}</p>` : ""}
-      ${rows.length ? ledgerTable(rows) : `<div class="inj" style="color:var(--muted)">暂无</div>`}
+      ${rows.length ? ledgerByDate(rows) : `<div class="inj" style="color:var(--muted)">暂无</div>`}
     `;
   };
 
@@ -312,14 +312,44 @@ function renderLedger(bets) {
     );
 }
 
+// 按比赛日分组渲染（日期倒序，组内按记录时间倒序）；没有日期的归到「未知日期」
+function ledgerByDate(bets) {
+  const groups = new Map();
+  for (const bet of bets) {
+    const day = bet.slate_date || "未知日期";
+    if (!groups.has(day)) groups.set(day, []);
+    groups.get(day).push(bet);
+  }
+  const days = Array.from(groups.keys()).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  return days
+    .map((day) => {
+      const rows = groups
+        .get(day)
+        .slice()
+        .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+      const settled = rows.filter((b) => b.result && b.result !== "open");
+      const profit = settled.reduce((s, b) => s + Number(b.profit || 0), 0);
+      const sub = settled.length
+        ? `${settled.length}/${rows.length} · ${profit >= 0 ? "+" : ""}${profit.toFixed(2)}`
+        : `${rows.length} 条`;
+      return `
+        <div class="ledger-day">
+          <div class="ledger-day-head">
+            <span class="ledger-day-date">${esc(day)}</span>
+            <span class="ledger-day-sub">${esc(sub)}</span>
+          </div>
+          ${ledgerTable(rows)}
+        </div>`;
+    })
+    .join("");
+}
+
 function ledgerTable(bets) {
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>比赛日</th><th>比赛</th><th>来源</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th></tr></thead>
+      <thead><tr><th>比赛</th><th>来源</th><th>市场</th><th>方向</th><th>盘口</th><th>赔率</th><th>注</th><th>模型 EV</th><th>结果</th><th>盈亏</th><th>CLV</th><th>线移动</th><th></th></tr></thead>
       <tbody>
         ${bets
-          .slice()
-          .reverse()
           .map((bet) => {
             const line =
               bet.line == null ? "—" : bet.market === "spread" ? fmtSpread(bet.line) : fmtTotal(bet.line);
@@ -330,8 +360,8 @@ function ledgerTable(bets) {
               bet.result === "open" || bet.profit == null
                 ? "—"
                 : `<span class="${bet.profit >= 0 ? "pos" : "neg"}">${bet.profit >= 0 ? "+" : ""}${bet.profit.toFixed(2)}</span>`;
+            const editable = String(bet.source || "") === "local" || Number.isFinite(Number(bet.id));
             return `<tr>
-              <td>${esc(bet.slate_date || "—")}</td>
               <td><button class="linklike" data-goto-game="${esc(bet.game_id)}"
                 data-goto-date="${esc(bet.slate_date || "")}"
                 data-goto-status="${esc(bet.game_status || "")}"
@@ -347,6 +377,13 @@ function ledgerTable(bets) {
               <td>${profit}</td>
               <td class="${bet.clv != null && bet.clv >= 0 ? "pos" : "neg"}">${clv}</td>
               <td class="${bet.clv_line != null && bet.clv_line >= 0 ? "pos" : "neg"}">${clvLine}</td>
+              <td>${
+                editable
+                  ? `<button class="linklike bet-edit" data-edit-id="${esc(bet.id ?? bet.ref ?? "")}"
+                    data-edit-ref="${esc(bet.ref || "")}" data-edit-source="${esc(bet.source || "")}"
+                    title="编辑或删除这条注单">编辑</button>`
+                  : ""
+              }</td>
             </tr>`;
           })
           .join("")}
@@ -508,6 +545,190 @@ async function openCustomBetPanel() {
       await loadBets();
     } catch (error) {
       toast(`记录失败：${error.message}`);
+    }
+  });
+}
+
+// ---- 注单编辑：改盘口/赔率/注额/结果，或删除误记 ----
+// 身份：本地（localStorage）注单用 id；服务端注单用 ref（srv-<id>）。
+// 本地直接改；服务端走 PATCH/DELETE /api/bets/{id}（ref 里的数字就是 id）。
+
+function betNumericId(bet) {
+  // API 行的主键 id（数字）优先；ref 的 srv-<n> 只是身份别名——手机合并来的
+  // 注单 ref 数字 ≠ 行 id（如 ref=srv-53 / id=37），不能拿它当主键。
+  if (bet.id != null && String(bet.id).trim() !== "" && !String(bet.id).startsWith("local-")) {
+    const n = Number(bet.id);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function isLocalBet(bet) {
+  return String(bet.source || "") === "local" || String(bet.id || "").startsWith("local-");
+}
+
+async function apiEditBet(idNum, patch) {
+  return api(`/api/bets/${idNum}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+async function apiDeleteBet(idNum) {
+  return api(`/api/bets/${idNum}`, { method: "DELETE" });
+}
+
+// 静态模式：本地注单就地改；服务端注单只读（下一轮快照会被覆盖，改了也会被冲掉）
+function lbEditBet(id, patch) {
+  const list = window.LB.read();
+  const bet = list.find((b) => String(b.id) === String(id));
+  if (!bet) return false;
+  Object.assign(bet, patch);
+  try {
+    localStorage.setItem("nbaq:bets:v1", JSON.stringify(list));
+  } catch (_) {
+    return false;
+  }
+  return true;
+}
+
+function openBetEditPanel(bet) {
+  document.getElementById("bet-edit-panel")?.remove();
+  const local = isLocalBet(bet);
+  const settled = bet.result && bet.result !== "open";
+  const idNum = betNumericId(bet);
+  const MZ = { spread: "让分", total: "大小分", moneyline: "胜负" };
+  const SIDE_ZH = { home: "主", away: "客", over: "大", under: "小" };
+  const RESULT_ZH = { open: "未结算", won: "胜", lost: "负", push: "走" };
+
+  const panel = document.createElement("div");
+  panel.className = "lm-panel";
+  panel.id = "bet-edit-panel";
+  panel.innerHTML = `
+    <div class="lm-panel-head">
+      <b>编辑注单</b>
+      <span>${esc(bet.matchup_zh || bet.matchup || "")} · ${local ? "本机记录" : idNum != null ? `服务端 #${idNum}` : esc(bet.ref || "")}</span>
+    </div>
+    ${!local && idNum == null ? `<div class="lm-panel-note">这条注单没有可定位的 ID（可能是旧导出），只能看不能改。</div>` : ""}
+    <div class="lm-panel-grid" style="grid-template-columns:1fr 1fr;margin-top:8px">
+      <label>市场<select id="be-market" ${settled && !local ? "disabled" : ""}>
+        ${["spread", "total", "moneyline"]
+          .map((m) => `<option value="${m}" ${bet.market === m ? "selected" : ""}>${MZ[m]}</option>`)
+          .join("")}
+      </select></label>
+      <label>方向<select id="be-side" ${settled && !local ? "disabled" : ""}></select></label>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px">
+      <label>盘口<input id="be-line" type="number" step="0.5" value="${bet.line ?? ""}" ${settled && !local ? "disabled" : ""}></label>
+      <label>赔率<input id="be-price" type="number" step="0.01" min="1.01" value="${Number(bet.price).toFixed(2)}" ${settled && !local ? "disabled" : ""}></label>
+      <label>注额<input id="be-stake" type="number" step="0.5" min="0.5" value="${Number(bet.stake).toFixed(2)}"></label>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:1fr 1fr;margin-top:8px">
+      <label>结果<select id="be-result">
+        ${["open", "won", "lost", "push"]
+          .map((r) => `<option value="${r}" ${(bet.result || "open") === r ? "selected" : ""}>${RESULT_ZH[r]}</option>`)
+          .join("")}
+      </select></label>
+      <label>盈亏<input id="be-profit" type="number" step="0.01" value="${bet.profit ?? ""}" placeholder="留空=按注额×赔率算"></label>
+    </div>
+    <div class="lm-panel-grid" style="grid-template-columns:1fr;margin-top:8px">
+      <label>备注<input id="be-note" type="text" value="${esc(bet.note || "")}"></label>
+    </div>
+    ${!local && settled ? `<div class="lm-panel-note">已结算的服务端注单只能改结果/盈亏/注额/备注——盘口与赔率改动会破坏结算口径。</div>` : ""}
+    <div class="lm-panel-actions">
+      <button class="btn small primary" id="be-save">保存</button>
+      ${!local && settled ? "" : `<button class="btn small" id="be-delete">删除</button>`}
+      <button class="btn small" id="be-cancel">取消</button>
+    </div>
+    <div class="lm-panel-note">改回「未结算」会清掉收盘线/CLV（那是结算时写入的）。删除仅限未结算注单。</div>`;
+  document.body.appendChild(panel);
+
+  const els = {
+    market: panel.querySelector("#be-market"),
+    side: panel.querySelector("#be-side"),
+    line: panel.querySelector("#be-line"),
+    price: panel.querySelector("#be-price"),
+    stake: panel.querySelector("#be-stake"),
+    result: panel.querySelector("#be-result"),
+    profit: panel.querySelector("#be-profit"),
+    note: panel.querySelector("#be-note"),
+  };
+  const SIDES = { spread: ["home", "away"], total: ["over", "under"], moneyline: ["home", "away"] };
+  const SIDE_TEXT = { home: "主", away: "客", over: "大", under: "小" };
+  const fillSides = () => {
+    const m = els.market.value;
+    els.side.innerHTML = SIDES[m].map((s) => `<option value="${s}">${SIDE_TEXT[s]}</option>`).join("");
+    if (SIDES[m].includes(bet.side)) els.side.value = bet.side;
+  };
+  fillSides();
+  els.market.addEventListener("change", fillSides);
+  els.market.disabled = settled && !local;
+  els.side.disabled = settled && !local;
+  els.line.disabled = settled && !local;
+  els.price.disabled = settled && !local;
+
+  const collectPatch = () => {
+    const patch = {};
+    if (!settled || local) {
+      patch.market = els.market.value;
+      patch.side = els.side.value;
+      patch.line = els.market.value === "moneyline" ? null : Number(els.line.value);
+      patch.price = Number(els.price.value);
+      if (patch.market !== "moneyline" && !Number.isFinite(patch.line)) {
+        toast("请输入盘口");
+        return null;
+      }
+      if (!Number.isFinite(patch.price) || patch.price <= 1) {
+        toast("赔率必须大于 1");
+        return null;
+      }
+    }
+    patch.stake = Number(els.stake.value);
+    if (!Number.isFinite(patch.stake) || patch.stake <= 0) {
+      toast("注额无效");
+      return null;
+    }
+    patch.result = els.result.value;
+    patch.note = els.note.value.trim() || null;
+    if (els.profit.value.trim() !== "" && Number.isFinite(Number(els.profit.value))) {
+      patch.profit = Number(els.profit.value);
+    } else if ((bet.result || "open") === "open" && els.result.value !== "open") {
+      patch.profit = null; // 让后端按注额×赔率算
+    }
+    return patch;
+  };
+
+  panel.querySelector("#be-cancel").addEventListener("click", () => panel.remove());
+  panel.querySelector("#be-delete")?.addEventListener("click", async () => {
+    if (!confirm("删除这条注单？删除后无法恢复。")) return;
+    try {
+      if (local) {
+        window.LB.remove(bet.id);
+      } else if (idNum != null) {
+        await apiDeleteBet(idNum);
+      } else {
+        return toast("这条注单没有 ID，无法删除");
+      }
+      panel.remove();
+      toast("已删除");
+      await loadBets();
+    } catch (error) {
+      toast(`删除失败：${error.message}`);
+    }
+  });
+  panel.querySelector("#be-save").addEventListener("click", async () => {
+    const patch = collectPatch();
+    if (!patch) return;
+    try {
+      if (local) {
+        if (!lbEditBet(bet.id, patch)) return toast("保存失败（localStorage 不可写？）");
+      } else if (idNum != null) {
+        await apiEditBet(idNum, patch);
+      } else {
+        return toast("这条注单没有 ID，无法编辑");
+      }
+      panel.remove();
+      toast("已保存");
+      await loadBets();
+    } catch (error) {
+      toast(`保存失败：${error.message}`);
     }
   });
 }
@@ -679,7 +900,23 @@ function ensureBetsAutoRefresh() {
 }
 
 // 点击台账里的比赛名 → 跳到赛时页（进行中）或赛前看板对应日期并高亮该场
+// 点击「编辑」→ 打开编辑面板（本地注单改 localStorage，服务端注单走 PATCH）
 document.getElementById("bets-ledger").addEventListener("click", (event) => {
+  const edit = event.target.closest("[data-edit-id]");
+  if (edit) {
+    const id = edit.dataset.editId;
+    const source = edit.dataset.editSource;
+    const all = (betsChartData?.bets || []).concat(
+      (betsChartData?._localBets || [])
+    );
+    const bet =
+      all.find((b) => String(b.id) === String(id) && String(b.source || "") === String(source)) ||
+      all.find((b) => String(b.ref || "") === String(edit.dataset.editRef)) ||
+      all.find((b) => String(b.id) === String(id));
+    if (!bet) return toast("找不到这条注单，刷新后重试");
+    openBetEditPanel(bet);
+    return;
+  }
   const button = event.target.closest("[data-goto-game]");
   if (!button) return;
   window.jumpToGame?.(

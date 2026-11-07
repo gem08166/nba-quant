@@ -877,3 +877,25 @@ README.md              # 用户文档（含第 0 节验证结论）
   每轮检查「有注单但 games 缺行」的比赛日并补 ingest。现有 pending-day 扫描只看已入库
   比赛（JOIN games），盖不住这种缺行情况。CI 的 `--once` 也会走这一兜底。
 - **测试**：`tests/test_watch_missing_slate.py`；**142 passed**。
+
+### 10.50 2026-11-07 台账按比赛日分组 + 注单编辑
+
+- **台账分组**：`renderLedger` → `ledgerByDate()`——真实/模拟两大节内按比赛日分组
+  （日期倒序，组内按记录时间倒序），组头显示日期 + `结算数/条数 · 盈亏小计`；
+  没有日期的归「未知日期」。表格去掉重复的比赛日列。
+- **注单编辑**：每行末尾「编辑」按钮 → 浮动面板（与记一笔同款交互）：
+  - 未结算：可改 市场/方向/盘口/赔率/注额/备注/结果（market-side 联动校验）；
+  - 已结算：只允许 结果/盈亏/注额/备注（盘口/赔率锁定，保护结算口径）；
+  - 手动标记结果没给盈亏时按 注额×赔率 自动算；改注额按比例重算已结算盈亏；
+  - 改回「未结算」清掉 closing/CLV；删除仅限未结算；
+  - 身份：API 行用主键 `id`（`ref` 的 `srv-<n>` 只是别名——手机合并来的注单
+    ref 数字 ≠ 行 id，不能当主键）；静态模式本地注单直接改 localStorage，
+    服务端注单静态只读（等快照覆盖）。
+- **API**：`PATCH /api/bets/{id}`（`BetPatch`，服务端字段级校验 + 单调保护）；
+  `DELETE` 已有（仅 open）。
+- **修复**：编辑面板在「已结算服务端注单」上崩掉（be-delete 按钮不渲染时
+  `addEventListener` 直接 TypeError，save/cancel 也没挂上）→ `?.addEventListener`。
+- **测试**：`tests/test_bet_edit_api.py` 9 用例（临时库 + `dependency_overrides`，
+  不碰真实 DB）。**151 passed**。
+- **端到端**：本地 serve 验证 分组渲染 / 面板打开 / stake 2.0→3.0（profit 2.85 自动
+  重算）→ 保存 → DB 落库 → 再改回。

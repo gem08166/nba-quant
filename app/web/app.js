@@ -64,10 +64,26 @@ async function api(path, options = {}) {
       return window.LB?.exportPayload?.() || { schema: "nbaq.bets/1", bets: [] };
     }
     if (options.method && options.method !== "GET") {
-      // 静态模式：纸面注单可写（本机 localStorage）；盘口/伤停等仍只读
+      // 静态模式：纸面注单可写（本机 localStorage）；盘口/伤停等仍只读。
+      // PATCH / DELETE 用于注单编辑（仅本地注单；服务端注单等下一轮快照覆盖）
       if (window.LB && /^\/api\/bets(\/|$)/.test(path)) {
+        const editId = /^\/api\/bets\/(\d+)$/.exec(path);
         if (path === "/api/bets/import" && options.method === "POST") {
           return window.LB.importRows(JSON.parse(options.body || "{}"));
+        }
+        if (editId && options.method === "PATCH") {
+          const patch = JSON.parse(options.body || "{}");
+          const id = editId[1];
+          const local = window.LB.read().find((b) => String(b.id) === String(id));
+          if (!local) {
+            throw new Error("静态模式下服务端注单为只读（等下一轮快照更新）");
+          }
+          window.LB.remove(id);
+          return window.LB.add({ ...local, ...patch, id: local.id, ref: local.ref });
+        }
+        if (editId && options.method === "DELETE") {
+          window.LB.remove(editId[1]);
+          return { ok: true };
         }
         if (options.method === "POST") return window.LB.add(JSON.parse(options.body || "{}"));
         if (options.method === "DELETE") {
