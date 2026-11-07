@@ -5,14 +5,14 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import db, i18n
 from .config import DATA_DIR, SIGNAL_MAX_AGE_HOURS
 from .dates import current_slate_date
 from .ingest.service import insert_odds
-from .jobs import live
+from .jobs import betssync, live
 from .jobs.predict import latest_odds, latest_prediction, predict_date
 from .jobs.settle import bet_kind, bet_source, summarize
 from .models import rapm
@@ -354,6 +354,29 @@ def add_bet(body: BetIn, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     )
     conn.commit()
     return {"id": int(cur.lastrowid)}
+
+
+@router.get("/bets/export")
+def export_bets(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """可再导入的台账（手机 / PC 共用同一份格式）。"""
+    return betssync.export_payload(conn)
+
+
+@router.post("/bets/import")
+async def import_bets(request: Request, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """合并一份导出的台账：按 ref + 自然键去重，重复的跳过/单调合并。"""
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    result = betssync.import_rows(conn, payload)
+    if (
+        not result.get("added")
+        and not result.get("updated")
+        and not result.get("duplicates")
+    ):
+        raise HTTPException(status_code=400, detail="no valid bets found")
+    return result
 
 
 @router.get("/bets/summary")

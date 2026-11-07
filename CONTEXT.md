@@ -836,3 +836,31 @@ README.md              # 用户文档（含第 0 节验证结论）
   `nbaq/live.json` 的 `generated_at` 与本机采样同步；`export_static` 打印 `live overlay merged: 2 game(s)`。
 - **顺带修复**：分离进程（`scripts/launch_detached.py`）启动 `serve/watch` 时 `sys.stdout=None` 导致秒退——
   `app/cli.py::_ensure_std_streams()` 兜底到 devnull，`tests/test_cli_streams.py` 回归。
+
+### 10.48 2026-11-07 注单导出/导入：同一注单只落一次
+
+- **目标**：手机导出的 JSON、电脑导出的 JSON、台账 JSON 互相导入时，重复注单绝不产生第二条。
+- **身份判定（两级）**：
+  1. `ref`（数字 id 归一成 `srv-<id>`，与 `bets_payload` 一致；手机本地注单补 `ref=id`）；
+  2. 自然键 `natural_key()` = `game_id | market | side | line(3位小数) | placed_at(UTC秒)`。
+     换了 ref、毫秒 vs 时区写法、`-2.5` 字符串 vs 浮点，都认得出是同一条。
+- **合并规则（单调，绝不降级）**：
+  - open ← 已结算：覆盖 result/profit 并补收盘线/CLV；
+  - 已结算 ← 已结算（结果相同）：只补空缺的 closing/clv/profit；
+  - 已结算 ← open：跳过；
+  - 同一批文件里的重复行、无效行：分别计入 `duplicates`/`invalid`。
+- **入口**：
+  - API：`GET /api/bets/export`（`{schema:"nbaq.bets/1", exported_at, count, bets}`）、
+    `POST /api/bets/import`（接受裸数组 / `{bets:[…]}` / `{rows:[…]}`）；
+  - CLI：`bets-export --out PATH`、`bets-import --file PATH [--dry-run]`；
+  - 前端：收益页「导出台账 / 导入台账」在**两种模式都可用**（API 模式走后端，
+    静态模式走 localStorage `LB.importRows`），导入后 toast 明确显示
+    「新增 X · 合并 Y · 跳过重复 Z」。
+- **导出包容错**：`bets_payload` 的 games/teams JOIN 改 LEFT JOIN——服务端还没 ingest
+  那场比赛时注单也导得出（matchup 回退为 game_id），不再整批丢失。
+- **测试**：`tests/test_betssync_dedupe.py` 9 个用例（同文件幂等/自然键跨 ref/单调升级/
+  已结算补 CLV/批内去重/无效行/包装对象/round-trip/未 ingest 比赛），
+  `test_betssync.py` 断言更新；pyproject 显式 ignore 坚果云「冲突」副本。
+  **140 passed**。
+- **冒烟**：`bets-export`（30 条）→ `bets-import` × 2 全部 `added=0, duplicates=30`；
+  `POST /api/bets/import` 同样幂等。

@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 from .. import db
 from ..config import DATA_DIR, ROOT
@@ -23,11 +24,78 @@ STATE_PATH = DATA_DIR / "webdav_state.json"
 
 
 def _ref(row: dict) -> str:
-    ref = row.get("ref") or row.get("id")
+    """注单的稳定身份。
+
+    优先级：显式 ref → 数字 id（服务端）→ natural key 兜底。
+    数字 id 统一成 `srv-<id>`，与 `bets_payload()` 合成出来的 ref 一致，
+    这样「原始 bets 表导出」和「台账 JSON」会落到同一个身份上。
+    """
+    ref = row.get("ref")
     if ref:
-        return str(ref)
+        return str(ref).strip()
+    bid = row.get("id")
+    if bid is not None and str(bid).strip():
+        s = str(bid).strip()
+        return f"srv-{s}" if s.isdigit() else s
     raw = f"{row.get('game_id')}|{row.get('market')}|{row.get('side')}|{row.get('line')}|{row.get('placed_at')}"
     return "gen-" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _num(value) -> float | None:
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _norm_time(value) -> str:
+    """把 placed_at 归一化到 UTC 秒，避免毫秒/时区写法不同导致重复导入。"""
+    if not value:
+        return ""
+    text = str(value).strip()
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def natural_key(row: dict) -> tuple:
+    """同一注单的自然键：跨设备/跨 ref 也能认出来。
+
+    line 四舍五入到 3 位（0.0 / -0.0 / 1e-9 之类的浮点噪声），
+    placed_at 归一到 UTC 秒（手机是 .000Z，服务端是 +00:00）。
+    """
+    return (
+        str(row.get("game_id") or ""),
+        str(row.get("market") or "").lower(),
+        str(row.get("side") or "").lower(),
+        _num(row.get("line")),
+        _norm_time(row.get("placed_at")),
+    )
+
+
+def _find_existing(conn: sqlite3.Connection, row: dict, ref: str):
+    """先按 ref，再按自然键（同场/同市场/同方向/同线/同时间）。"""
+    hit = conn.execute("SELECT * FROM bets WHERE ref=?", (ref,)).fetchone()
+    if hit:
+        return hit
+    key = natural_key(row)
+    if not key[0] or not key[1] or not key[2]:
+        return None
+    for cand in conn.execute(
+        """
+        SELECT * FROM bets
+        WHERE game_id=? AND lower(market)=lower(?) AND lower(side)=lower(?)
+        """,
+        (key[0], key[1], key[2]),
+    ):
+        if natural_key(dict(cand)) == key:
+            return cand
+    return None
+
 
 
 def bets_payload(conn: sqlite3.Connection) -> list[dict]:
@@ -36,9 +104,9 @@ def bets_payload(conn: sqlite3.Connection) -> list[dict]:
         """
         SELECT b.*, g.slate_date, aa.abbrev AS away_abbrev, ha.abbrev AS home_abbrev
         FROM bets b
-        JOIN games g ON g.id = b.game_id
-        JOIN teams aa ON aa.id = g.away_id
-        JOIN teams ha ON ha.id = g.home_id
+        LEFT JOIN games g ON g.id = b.game_id
+        LEFT JOIN teams aa ON aa.id = g.away_id
+        LEFT JOIN teams ha ON ha.id = g.home_id
         ORDER BY b.id
         """
     ).fetchall()
@@ -46,7 +114,11 @@ def bets_payload(conn: sqlite3.Connection) -> list[dict]:
     for row in rows:
         item = dict(row)
         item["ref"] = row["ref"] or f"srv-{row['id']}"
-        item["matchup"] = f"{row['away_abbrev']}@{row['home_abbrev']}"
+        if row["away_abbrev"] and row["home_abbrev"]:
+            item["matchup"] = f"{row['away_abbrev']}@{row['home_abbrev']}"
+        else:
+            # 服务端还没 ingest 这场比赛：保留注单，别让导出把它吞掉
+            item["matchup"] = str(row["game_id"])
         payload.append(item)
     return payload
 
@@ -60,58 +132,84 @@ def normalize_refs(conn: sqlite3.Connection) -> int:
 
 
 def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
-    """把 PWA 形状的注单合并进 bets 表（按 ref 去重，自然键二次兜底）。
+    """把 PWA 形状的注单合并进 bets 表（幂等：同一注单只落一次）。
 
-    对已存在的注单做**单调更新**：云端已结算（won/lost/push）的结果可以覆盖
-    本地的 open，并补上收盘线/CLV；反过来（已结算 → open）绝不覆盖。
-    这样本机只读模式也能跟上 CI 的结算进度。
+    身份判定：
+      1. `ref` / `id`（同一份导出重复导入 → 直接命中）；
+      2. 自然键 `natural_key()`（换了 ref、毫秒/时区写法不同、浮点线噪声）。
+    合并规则（单调）：
+      - 已存在的 open 注单 ← 云端已结算（won/lost/push）可覆盖，并补收盘线/CLV；
+      - 双方都已结算且结果相同 → 只补空的收盘线/CLV/profit；
+      - 已结算 ← open（任何情况都不降级）；
+      - 其余重复 → 跳过。
     """
-    added = skipped = updated = 0
+    added = updated = duplicates = invalid = 0
+    seen: set[tuple] = set()
     for row in rows or []:
         if not isinstance(row, dict) or not row.get("game_id") or not row.get("market") or not row.get("side"):
-            skipped += 1
+            invalid += 1
             continue
         try:
             ref = _ref(row)
         except Exception:  # noqa: BLE001 - 单条坏数据不影响整批
-            skipped += 1
+            invalid += 1
             continue
-        exists = conn.execute("SELECT 1 FROM bets WHERE ref=?", (ref,)).fetchone()
-        if not exists:
-            # 自然键兜底：同场同市场同方向同线同时间的注单视为同一条
-            # （防止 ref 规则不一致时产生重复）
-            exists = conn.execute(
-                """
-                SELECT 1 FROM bets WHERE game_id=? AND market=? AND side=?
-                  AND line IS ? AND COALESCE(placed_at,'')=COALESCE(?,'')
-                """,
-                (row.get("game_id"), row.get("market"), row.get("side"), row.get("line"), row.get("placed_at")),
-            ).fetchone()
-        if exists:
-            # 单调更新：只允许「云端已结算」补齐本地 open 的注单
+        key = natural_key(row)
+        if key in seen:  # 同一批文件里的重复行
+            duplicates += 1
+            continue
+        seen.add(key)
+
+        existing = _find_existing(conn, row, ref)
+        if existing is not None:
+            current = dict(existing)
             incoming = row.get("result")
+            cur_result = current.get("result") or "open"
             if incoming in ("won", "lost", "push"):
-                cur = conn.execute(
-                    """
-                    UPDATE bets SET result=?, profit=?,
-                        closing_line=COALESCE(closing_line, ?),
-                        closing_price=COALESCE(closing_price, ?),
-                        clv=COALESCE(clv, ?),
-                        clv_line=COALESCE(clv_line, ?)
-                    WHERE ref=? AND (result IS NULL OR result='open')
-                    """,
-                    (
-                        incoming,
-                        row.get("profit"),
-                        row.get("closing_line"),
-                        row.get("closing_price"),
-                        row.get("clv"),
-                        row.get("clv_line"),
-                        ref,
-                    ),
-                )
-                updated += cur.rowcount
-            skipped += 1
+                if cur_result == "open":
+                    cur = conn.execute(
+                        """
+                        UPDATE bets SET result=?, profit=?,
+                            closing_line=COALESCE(closing_line, ?),
+                            closing_price=COALESCE(closing_price, ?),
+                            clv=COALESCE(clv, ?),
+                            clv_line=COALESCE(clv_line, ?)
+                        WHERE id=?
+                        """,
+                        (
+                            incoming,
+                            row.get("profit"),
+                            row.get("closing_line"),
+                            row.get("closing_price"),
+                            row.get("clv"),
+                            row.get("clv_line"),
+                            current["id"],
+                        ),
+                    )
+                    if cur.rowcount:
+                        updated += 1
+                    else:
+                        duplicates += 1
+                elif cur_result == incoming:
+                    # 两边都已结算：只补空缺的收盘信息，不改结果
+                    fills = [
+                        (name, row.get(name))
+                        for name in ("closing_line", "closing_price", "clv", "clv_line", "profit")
+                        if row.get(name) is not None and current.get(name) is None
+                    ]
+                    if fills:
+                        assignments = ", ".join(f"{name}=?" for name, _ in fills)
+                        conn.execute(
+                            f"UPDATE bets SET {assignments} WHERE id=?",
+                            [value for _, value in fills] + [current["id"]],
+                        )
+                        updated += 1
+                    else:
+                        duplicates += 1
+                else:
+                    duplicates += 1
+            else:
+                duplicates += 1
             continue
         conn.execute(
             """
@@ -130,7 +228,7 @@ def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
                 row.get("model_prob"),
                 row.get("ev"),
                 row.get("placed_at"),
-                row.get("result", "open"),
+                row.get("result") or "open",
                 row.get("profit"),
                 row.get("closing_line"),
                 row.get("closing_price"),
@@ -142,7 +240,36 @@ def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
         )
         added += 1
     conn.commit()
-    return {"added": added, "skipped": skipped, "updated": updated}
+    return {
+        "added": added,
+        "updated": updated,
+        "skipped": duplicates + invalid,
+        "duplicates": duplicates,
+        "invalid": invalid,
+    }
+
+
+def import_rows(conn: sqlite3.Connection, payload) -> dict:
+    """接受多种导出形状：裸数组 / {bets:[...]} / {rows:[...]}。"""
+    rows = payload
+    if isinstance(payload, dict):
+        rows = payload.get("bets")
+        if rows is None:
+            rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return {"added": 0, "updated": 0, "skipped": 1, "duplicates": 0, "invalid": 1}
+    return merge_rows(conn, rows)
+
+
+def export_payload(conn: sqlite3.Connection) -> dict:
+    """可再导入的台账（带 schema 版本，手机/PC 共用）。"""
+    bets = bets_payload(conn)
+    return {
+        "schema": "nbaq.bets/1",
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "count": len(bets),
+        "bets": bets,
+    }
 
 
 def _state() -> dict:

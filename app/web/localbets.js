@@ -41,6 +41,8 @@ function lbAdd(row) {
     clv_line: null,
     ...row,
   };
+  // ref 是跨设备/跨导出的稳定身份：没有就用自己的 id
+  bet.ref = String(bet.ref || bet.id);
   list.push(bet);
   lbWrite(list);
   return bet;
@@ -249,26 +251,140 @@ function lbAnalysis() {
   };
 }
 
-function lbImport(rows) {
-  const list = lbRead();
-  const byId = new Map(list.map((bet) => [String(bet.id), bet]));
-  let added = 0;
-  for (const row of rows || []) {
-    if (!row || !row.id) continue;
-    const key = String(row.id);
-    const current = byId.get(key);
-    if (!current) {
-      list.push({ ...row, source: "local" });
-      byId.set(key, row);
-      added += 1;
-    } else if (current.result === "open" && row.result && row.result !== "open") {
-      // 同一注单：以已结算版本为准（云端结算结果覆盖本地未结算）
-      Object.assign(current, row);
-      added += 1;
-    }
+// ---------- 导入/导出：同一注单只落一次 ----------
+// 身份优先级：ref → id → 自然键（同场/同市场/同方向/同线/同下注时间）。
+// 自然键要归一化：毫秒/时区写法、浮点线（-0.0 / 1e-9）都不能造成"看起来不同"。
+
+function lbRef(row) {
+  const ref = row && (row.ref != null ? row.ref : row.id);
+  return ref == null ? "" : String(ref).trim();
+}
+
+function lbNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : null;
+}
+
+function lbTime(value) {
+  if (!value) return "";
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 19) : String(value).trim();
+}
+
+function lbNaturalKey(row) {
+  return [
+    String(row.game_id || ""),
+    String(row.market || "").toLowerCase(),
+    String(row.side || "").toLowerCase(),
+    lbNum(row.line),
+    lbTime(row.placed_at),
+  ].join("|");
+}
+
+function lbNormalizeRow(row) {
+  if (!row || typeof row !== "object") return null;
+  if (!row.game_id || !row.market || !row.side) return null;
+  const natural = lbNaturalKey(row);
+  const ref = lbRef(row) || natural;
+  const id = row.id != null && String(row.id).trim() ? row.id : ref;
+  return { ...row, id, ref };
+}
+
+// 接受裸数组 / {bets:[...]} / {rows:[...]}
+function lbImport(payload) {
+  let rows = payload;
+  if (payload && !Array.isArray(payload) && typeof payload === "object") {
+    rows = payload.bets || payload.rows || [];
   }
+  const list = lbRead();
+  const byRef = new Map();
+  const byNatural = new Map();
+  const index = (bet) => {
+    const ref = lbRef(bet);
+    if (ref) byRef.set(ref, bet);
+    byNatural.set(lbNaturalKey(bet), bet);
+  };
+  list.forEach(index);
+
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  let invalid = 0;
+  const batch = new Set();
+
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    const row = lbNormalizeRow(raw);
+    if (!row) {
+      invalid += 1;
+      continue;
+    }
+    const natural = lbNaturalKey(row);
+    if (batch.has(natural)) {
+      skipped += 1; // 同一个文件里重复
+      continue;
+    }
+    batch.add(natural);
+
+    const current = (row.ref && byRef.get(row.ref)) || byNatural.get(natural);
+    if (!current) {
+      const bet = { ...row, source: row.source || "local" };
+      list.push(bet);
+      index(bet);
+      added += 1;
+      continue;
+    }
+
+    const curOpen = !current.result || current.result === "open";
+    const incoming = row.result;
+    const incSettled = incoming && incoming !== "open";
+    if (curOpen && incSettled) {
+      // 同一注单：以已结算版本为准（云端结算覆盖本地未结算）
+      Object.assign(current, { ...row, id: current.id, ref: current.ref || row.ref });
+      index(current);
+      updated += 1;
+      continue;
+    }
+    if (!curOpen && incSettled && current.result === incoming) {
+      // 都已结算：只补空缺的收盘线 / CLV / 盈亏，不改结果
+      let filled = false;
+      for (const key of ["closing_line", "closing_price", "clv", "clv_line", "profit"]) {
+        if (current[key] == null && row[key] != null) {
+          current[key] = row[key];
+          filled = true;
+        }
+      }
+      if (filled) {
+        index(current);
+        updated += 1;
+      } else {
+        skipped += 1;
+      }
+      continue;
+    }
+    skipped += 1; // 已结算 ← open：不降级；其余视为重复
+  }
+
   lbWrite(list);
-  return { added, total: list.length };
+  return { added, updated, skipped, invalid, total: list.length };
+}
+
+// 导出前补齐 ref（老数据没有 ref），保证以后重复导入能稳定命中
+function lbExportPayload() {
+  const list = lbRead().map((bet) => {
+    const ref = lbRef(bet) || lbNaturalKey(bet);
+    return { ...bet, ref, id: bet.id != null ? bet.id : ref };
+  });
+  lbWrite(list);
+  return {
+    schema: "nbaq.bets/1",
+    exported_at: new Date().toISOString(),
+    count: list.length,
+    bets: list,
+  };
+}
+
+function lbExportJSON() {
+  return JSON.stringify(lbExportPayload(), null, 1);
 }
 
 window.LB = {
@@ -282,6 +398,8 @@ window.LB = {
   source: lbSource,
   analysis: lbAnalysis,
   importRows: lbImport,
+  exportPayload: lbExportPayload,
+  exportJSON: lbExportJSON,
   davSync: lbDavSync,
 };
 

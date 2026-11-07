@@ -512,46 +512,67 @@ async function openCustomBetPanel() {
   });
 }
 
+function downloadJSON(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function renderBetsToolbar() {
   const box = document.getElementById("bets-toolbar");
   if (!box) return;
   const staticMode = window.APP_MODE === "static";
   const apk = window.DAV?.isApk();
+  const hint = staticMode
+    ? apk
+      ? "坚果云自动同步已启用 · 导入按注单去重，重复的跳过"
+      : "导入按注单去重（同一注单只落一次）；手机导出后可用文件或坚果云 inbox 汇入"
+    : "导入按注单去重：ref + 同场/同市场/同方向/同线/同下注时间，重复的跳过";
   box.innerHTML = `
     <div class="bets-toolbar">
       <button class="btn small primary" id="bets-custom" title="任选比赛、市场、盘口、赔率，手动记一条">＋ 自定义记一笔</button>
-      ${
-        staticMode
-          ? `<button class="btn small" id="bets-export">导出台账</button>
-      <button class="btn small" id="bets-import">导入台账</button>
+      <button class="btn small" id="bets-export" title="导出可再导入的 JSON；重复导入不会产生重复注单">导出台账</button>
+      <button class="btn small" id="bets-import" title="导入台账：按注单身份去重，重复的跳过或单调合并">导入台账</button>
       ${apk ? `<button class="btn small" id="bets-dav-sync">立即同步</button>
       <button class="btn small" id="bets-dav-settings">同步设置</button>` : ""}
       <input type="file" id="bets-import-file" accept=".json,application/json" hidden>
-      ${apk ? `<span class="hint">坚果云自动同步已启用</span>` : `<span class="hint">手机：导出 → 坚果云 app 上传到 nbaq/inbox/；PC 端 30 分钟内自动合并</span>`}`
-          : `<span class="hint">自定义记一笔：任选比赛、市场、盘口、赔率（不依赖信号）</span>`
-      }
+      <span class="hint">${hint}</span>
     </div>`;
   document.getElementById("bets-custom").addEventListener("click", openCustomBetPanel);
 
-  if (!staticMode) return;
-  document.getElementById("bets-export").addEventListener("click", () => {
-    const rows = window.LB.read();
-    const blob = new Blob([JSON.stringify(rows, null, 1)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `nbaq-bets-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  document.getElementById("bets-export").addEventListener("click", async () => {
+    try {
+      const payload = staticMode ? window.LB.exportPayload() : await api("/api/bets/export");
+      const count = payload.count ?? (payload.bets || []).length;
+      downloadJSON(payload, `nbaq-bets-${new Date().toISOString().slice(0, 10)}.json`);
+      toast(`已导出 ${count} 条注单`);
+    } catch (error) {
+      toast(`导出失败：${error.message}`);
+    }
   });
+
   const fileInput = document.getElementById("bets-import-file");
   document.getElementById("bets-import").addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", async () => {
     const file = fileInput.files?.[0];
     if (!file) return;
     try {
-      const rows = JSON.parse(await file.text());
-      const result = window.LB.importRows(rows);
-      toast(`导入完成：新增/更新 ${result.added} 条，共 ${result.total} 条`);
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const result = staticMode
+        ? window.LB.importRows(payload)
+        : await api("/api/bets/import", { method: "POST", body: text });
+      const parts = [
+        `新增 ${result.added || 0}`,
+        `合并 ${result.updated || 0}`,
+        `跳过重复 ${result.skipped ?? result.duplicates ?? 0}`,
+      ];
+      if (result.invalid) parts.push(`无效 ${result.invalid}`);
+      if (result.total != null) parts.push(`现有 ${result.total}`);
+      toast(`导入完成：${parts.join(" · ")}`);
       await loadBets();
     } catch (error) {
       toast(`导入失败：${error.message}`);

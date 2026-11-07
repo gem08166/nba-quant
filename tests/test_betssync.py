@@ -42,9 +42,12 @@ def _row(ref_id: str, result: str = "open") -> dict:
 def test_merge_dedups_by_ref():
     conn = _conn()
     first = betssync.merge_rows(conn, [_row("local-abc"), _row("local-abc")])
-    assert first == {"added": 1, "skipped": 1, "updated": 0}
+    assert first["added"] == 1
+    assert first["duplicates"] == 1
+    assert first["skipped"] == 1
     again = betssync.merge_rows(conn, [_row("local-abc")])
     assert again["added"] == 0
+    assert again["duplicates"] == 1
     assert conn.execute("SELECT COUNT(*) n FROM bets").fetchone()["n"] == 1
 
 

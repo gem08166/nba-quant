@@ -60,9 +60,15 @@ function matchupZh(matchup) {
 async function api(path, options = {}) {
   await detectMode();
   if (window.APP_MODE === "static") {
+    if (path === "/api/bets/export") {
+      return window.LB?.exportPayload?.() || { schema: "nbaq.bets/1", bets: [] };
+    }
     if (options.method && options.method !== "GET") {
       // 静态模式：纸面注单可写（本机 localStorage）；盘口/伤停等仍只读
       if (window.LB && /^\/api\/bets(\/|$)/.test(path)) {
+        if (path === "/api/bets/import" && options.method === "POST") {
+          return window.LB.importRows(JSON.parse(options.body || "{}"));
+        }
         if (options.method === "POST") return window.LB.add(JSON.parse(options.body || "{}"));
         if (options.method === "DELETE") {
           window.LB.remove(path.split("/").pop());

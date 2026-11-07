@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from datetime import date, timedelta
@@ -296,6 +297,39 @@ def cmd_bets_sync(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_bets_export(args: argparse.Namespace) -> None:
+    from .jobs import betssync
+
+    conn = db.connect()
+    try:
+        payload = betssync.export_payload(conn)
+    finally:
+        conn.close()
+    out = Path(args.out or f"data/bets-export-{date.today().isoformat()}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"exported {payload['count']} bet(s) -> {out}")
+
+
+def cmd_bets_import(args: argparse.Namespace) -> None:
+    from .jobs import betssync
+
+    path = Path(args.file)
+    if not path.exists():
+        raise SystemExit(f"file not found: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if args.dry_run:
+        rows = payload.get("bets") if isinstance(payload, dict) else payload
+        print(f"dry-run: {len(rows or [])} row(s) in {path}")
+        return
+    conn = db.connect()
+    try:
+        stats = betssync.import_rows(conn, payload)
+    finally:
+        conn.close()
+    print(json.dumps(stats, ensure_ascii=False))
+
+
 def cmd_notify_test(_: argparse.Namespace) -> None:
     enabled = notify.providers_enabled()
     if not enabled:
@@ -453,6 +487,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="only pull the cloud ledger (PC dashboard mode; never pushes)",
     )
     bs.set_defaults(func=cmd_bets_sync)
+
+    be = sub.add_parser("bets-export", help="export the ledger as a re-importable JSON file")
+    be.add_argument("--out", default=None, help="output path (default data/bets-export-YYYY-MM-DD.json)")
+    be.set_defaults(func=cmd_bets_export)
+
+    bi = sub.add_parser("bets-import", help="merge a ledger JSON file (idempotent: dups are skipped)")
+    bi.add_argument("--file", required=True)
+    bi.add_argument("--dry-run", action="store_true", help="only count rows")
+    bi.set_defaults(func=cmd_bets_import)
 
     serve = sub.add_parser("serve", help="run the web app")
     serve.add_argument("--host", default="0.0.0.0")
