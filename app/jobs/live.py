@@ -17,6 +17,7 @@ scoring projection, but sigma keeps shrinking via played_seconds).
 import json
 import sqlite3
 import time
+from collections import Counter
 from datetime import datetime, timezone
 
 import httpx
@@ -85,6 +86,9 @@ def merge_signal_versions(rows) -> list[dict]:
                     "n_seen": 1,
                     "bettable_ever": bool(edge.get("bettable")),
                     "gated_ever": bool(edge.get("gated")),
+                    "reasons": Counter(),
+                    "n_bettable": 0,
+                    "schema_old": False,
                 }
             else:
                 group["ev_max"] = max(group["ev_max"], ev)
@@ -97,8 +101,44 @@ def merge_signal_versions(rows) -> list[dict]:
                 group["gated_ever"] = group["gated_ever"] or bool(edge.get("gated"))
                 if created_at:
                     group["last_seen"] = created_at
+            # 阀门口径（复盘页标注用）：
+            g = groups[key]
+            if "bettable" in edge:
+                if edge["bettable"]:
+                    g["n_bettable"] += 1
+                elif edge.get("bettable_note"):
+                    g["reasons"][edge["bettable_note"][:46]] += 1
+            else:
+                g["schema_old"] = True  # 11-04 闸门上线前的旧预测，无法判定
+    # 复盘页标注：这组信号在当时到底能不能下（以及不能下的原因）
+    for g in groups.values():
+        g["bettable_label"] = _bettable_label(g)
     signals = sorted(groups.values(), key=lambda g: g["ev_max"], reverse=True)
     return signals[:10]  # 上限防极端（正常每场 <5 条）
+
+
+def _bettable_label(g: dict) -> str:
+    """复盘标注：可下注 / 旧数据(无闸门) / 观察·<原因>。"""
+    if g.get("bettable_ever"):
+        return "可下注"
+    reasons = g.get("reasons") or Counter()
+    if g.get("schema_old") and not reasons:
+        return "旧数据(无闸门)"
+    if reasons:
+        top = reasons.most_common(1)[0][0]
+        if "软书" in top:
+            book = top.split("聚合源")[-1].split("（")[0].strip()
+            return f"观察·软书{book}"
+        if "书源数" in top:
+            try:
+                n = top.split("书源数")[1].split("<")[0].strip()
+                return f"观察·仅{n}家书源"
+            except IndexError:
+                return "观察"
+        return "观察"
+    if g.get("gated_ever"):
+        return "观察·分歧"
+    return "观察"
 
 
 def signal_history(

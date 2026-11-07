@@ -1023,6 +1023,16 @@ td.neg { color: var(--muted); }
 }
 .bet-edit { color: var(--muted); font-size: 12px; }
 .bet-edit:hover { color: var(--text); }
+
+/* 复盘信号标注：可下注（绿）/ 观察·原因（灰黄） */
+.sig-bettable {
+  color: var(--green, #46b95c);
+  font-weight: 650;
+}
+.sig-watch {
+  color: var(--muted);
+  font-weight: 500;
+}
 .be-profit-auto {
   margin-top: 4px;
   font-size: 11px;

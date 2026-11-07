@@ -192,15 +192,20 @@ function postCard(game) {
               : "";
           const price = s.price_best != null ? ` @${fmtPrice(s.price_best)}` : "";
           const ev = `EV ${s.ev_max >= 0 ? "+" : ""}${Math.round(s.ev_max * 100)}%`;
-          const flag = s.bettable_ever ? "可下注" : s.gated_ever ? "观察" : "";
+          const flag = s.bettable_label || (s.bettable_ever ? "可下注" : s.gated_ever ? "观察" : "");
+          const flagCls = s.bettable_ever ? "sig-bettable" : "sig-watch";
           let res = "";
           if (s.result) {
             const zh = SIG_RESULT_ZH[s.result] || s.result;
             const cls = s.result === "won" ? "pos" : s.result === "lost" ? "neg" : "";
             res = ` <span class="bet-result ${cls}">${esc(zh)}</span>`;
           }
-          const title = `出现 ${s.n_seen} 次 · ${s.book || ""} · 首见 ${hm(s.first_seen)} · 最近 ${hm(s.last_seen)}`;
-          return `<span class="bet-chip sig" title="${esc(title)}">${esc(market)} ${esc(side)}${esc(line)}${esc(price)} ${esc(ev)}${flag ? ` · ${esc(flag)}` : ""}${res}</span>`;
+          const title = `出现 ${s.n_seen} 次 · ${s.book || ""} · 首见 ${hm(s.first_seen)} · 最近 ${hm(s.last_seen)}${
+            s.n_bettable != null ? ` · 其中 ${s.n_bettable} 个版本通过阀门` : ""
+          }`;
+          return `<span class="bet-chip sig" title="${esc(title)}">${esc(market)} ${esc(side)}${esc(line)}${esc(price)} ${esc(ev)}${
+            flag ? ` · <span class="${flagCls}">${esc(flag)}</span>` : ""
+          }${res}</span>`;
         })
         .join("")}</div>`
     : "";
