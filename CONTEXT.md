@@ -759,3 +759,21 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **本机处理**：停掉本地 `watch` + `watch_guard`（避免第三个数据源重复推送/抢额度）；`serve` 保留用于本机查看；`data/odds_api_state.json`、`data/hoops_state.json` 变为未跟踪的运行时文件并保留。
 - **注意**：本机 `data/nba.db` 不会自动更新；要最新数据用 `cmd /c "git show origin/data:nba.db > data\nba.db"`（先备份）。`site/` 需要本地静态站时跑 `python -m scripts.export_static --out site`。
 - **修复（11-07 09:4x）**：`refresh.yml` 里还留着旧步骤 `Commit static site + API state`（`git add site data/odds_api_state.json data/hoops_state.json`）。`site/` 与两个 state 文件现在都被 `.gitignore` 忽略，`git add` 直接报错 → 后续 `Persist database to data branch` 被跳过。表现：`refresh-and-deploy` 每天 02:00/08:00 UTC 失败、`data` 分支停在旧快照，但 30 分钟的 `odds-refresh` 仍成功（Pages 数据还在）。已删除该步骤，发布只走 Pages artifact。
+
+### 10.44 2026-11-07 本机开启「静默采样」
+
+- **目的**：CI 每 30 分钟（实际 50~80 分钟）一个滚球样本，太稀；本机只做采样，不当发布者。
+- **`.env` 改法**（备份在 `data/backup/.env.bak-20261107`）：
+  ```ini
+  NBAQ_ODDS_API_KEY=
+  HOOPS_API_KEY=
+  NBAQ_NTFY_TOPIC=
+  NBAQ_WEBDAV_USER=
+  NBAQ_WEBDAV_PASS=
+  NBAQ_WATCH_INTERVAL=900
+  NBAQ_WATCH_LIVE_INTERVAL=120
+  ```
+- **效果**：无比赛 15 分钟一轮；检测到进行中自动切 **120s**。只写本地 `live_odds` / `live_wp`，不推送、不覆盖坚果云、不耗 Odds API / HoopsAPI。
+- **实测**：启动即 `notify=off`，7 场进行中 → `live detected → interval 120s`；01:54 与 01:57 两批快照，间隔约 2.5 分钟；日志出现「未配置 NBAQ_ODDS_API_KEY，跳过」「hoops skipped: 429」。
+- **代价**：本机预测的共识书源更少（没有 Odds API），Edge/EV 会与 Pages 不一致；数据不会进 `data` 分支。
+- **停止**：`powershell -File scripts\watch-ctl.ps1 stop`（未启 watch_guard，不会自动复活）。
