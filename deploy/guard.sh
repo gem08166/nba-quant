@@ -109,7 +109,8 @@ while true; do
   # 4) 每天一次的日报（当天没发过，且已过设定小时）
   if [[ "${NBAQ_DIGEST:-1}" != "0" ]]; then
     TODAY=$(date '+%F')
-    if [[ $(date '+%H') -ge $DIGEST_HOUR ]]; then
+    HOUR=$(date '+%H'); HOUR=$((10#$HOUR))
+    if [[ $HOUR -ge $DIGEST_HOUR ]]; then
       if [[ "$(cat "$DIGEST_MARK" 2>/dev/null)" != "$TODAY" ]]; then
         daily_digest
         echo "$TODAY" > "$DIGEST_MARK"
