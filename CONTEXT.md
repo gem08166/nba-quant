@@ -758,3 +758,4 @@ README.md              # 用户文档（含第 0 节验证结论）
   - The Odds API 额度闸门在 state 文件缺失时回退读 `odds_snapshots` 时间（CI 每次只还原 nba.db）。
 - **本机处理**：停掉本地 `watch` + `watch_guard`（避免第三个数据源重复推送/抢额度）；`serve` 保留用于本机查看；`data/odds_api_state.json`、`data/hoops_state.json` 变为未跟踪的运行时文件并保留。
 - **注意**：本机 `data/nba.db` 不会自动更新；要最新数据用 `cmd /c "git show origin/data:nba.db > data\nba.db"`（先备份）。`site/` 需要本地静态站时跑 `python -m scripts.export_static --out site`。
+- **修复（11-07 09:4x）**：`refresh.yml` 里还留着旧步骤 `Commit static site + API state`（`git add site data/odds_api_state.json data/hoops_state.json`）。`site/` 与两个 state 文件现在都被 `.gitignore` 忽略，`git add` 直接报错 → 后续 `Persist database to data branch` 被跳过。表现：`refresh-and-deploy` 每天 02:00/08:00 UTC 失败、`data` 分支停在旧快照，但 30 分钟的 `odds-refresh` 仍成功（Pages 数据还在）。已删除该步骤，发布只走 Pages artifact。

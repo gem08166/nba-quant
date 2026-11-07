@@ -128,17 +128,10 @@ jobs:
         with:
           path: site
 
-      - name: Commit static site + API state
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          git config user.name "nba-quant-bot"
-          git config user.email "nba-quant@users.noreply.github.com"
-          # 只提交静态站和抓取状态；数据库走 data 分支，避免主仓膨胀
-          git add site data/odds_api_state.json data/hoops_state.json
-          git commit -m "auto refresh: ${{ steps.slate.outputs.slate }} [skip ci]" || echo "nothing to commit"
-          git push
+      # 静态站不再回提交 main：2026-11-07 起 site/ 与抓取状态都进了 .gitignore，
+      # 发布只走 Pages artifact（下面 deploy job）→ gh-pages。
+      # 旧步骤 `git add site data/odds_api_state.json ...` 会因 ignored path 直接失败，
+      # 导致后面的 data 分支快照整步被跳过（2026-11-07 01:22Z 的失败即此）。
 
       # 数据库以单 commit 快照推到 data 分支（每次 force，历史不增长）。
       - name: Persist database to data branch
