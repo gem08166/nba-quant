@@ -74,6 +74,11 @@ jobs:
         id: slate
         run: echo "slate=$(python -c 'from app.dates import current_slate_date; print(current_slate_date())')" >> "$GITHUB_OUTPUT"
 
+      # 合并云端台账 + 应用删除墓碑（用户清空/删除的注单不能在导出时复活）。
+      # pull_only：只拉不推，避免每天两次的 full run 覆盖云端台账。
+      - name: Merge cloud ledger + apply deletions
+        run: python -m app.cli bets-sync --pull-only || true
+
       # 先抓齐所有盘口（ESPN + 第二书源），再训练/预测：
       # 旧顺序在抓第二书源之前 predict，导致共识只能看到 ESPN 一家。
       - name: Ingest games + odds
