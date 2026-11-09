@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .. import db
 from ..config import DATA_DIR, ROOT
@@ -93,6 +93,58 @@ def _find_existing(conn: sqlite3.Connection, row: dict, ref: str):
         (key[0], key[1], key[2]),
     ):
         if natural_key(dict(cand)) == key:
+            return cand
+    return _find_similar_real(conn, row)
+
+
+def _parse_ts(value):
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _is_sim(bet: dict) -> bool:
+    note = bet.get("note") or ""
+    return "回填" in note or "模拟" in note
+
+
+def _find_similar_real(conn: sqlite3.Connection, row: dict):
+    """真实注单的「同一笔」兜底：同盘口 + 赔率差 ≤0.02 + 下注时间差 ≤12h。
+
+    手机和 PC 可能各记一次（ref 不同、时间差几分钟），按精确时间匹配不到，
+    台账就会出现两条重复。模拟/回填注单不参与这个匹配。
+    """
+    if _is_sim(row):
+        return None
+    when = _parse_ts(row.get("placed_at"))
+    price = _num(row.get("price"))
+    if when is None or price is None:
+        return None
+    for cand in conn.execute(
+        """
+        SELECT * FROM bets
+        WHERE game_id=? AND lower(market)=lower(?) AND lower(side)=lower(?)
+          AND line IS ?
+        """,
+        (
+            str(row.get("game_id")),
+            str(row.get("market") or "").lower(),
+            str(row.get("side") or "").lower(),
+            row.get("line"),
+        ),
+    ):
+        current = dict(cand)
+        if _is_sim(current):
+            continue
+        other_when = _parse_ts(current.get("placed_at"))
+        other_price = _num(current.get("price"))
+        if other_when is None or other_price is None:
+            continue
+        if abs(other_price - price) <= 0.02 + 1e-9 and abs(other_when - when) <= timedelta(hours=12):
             return cand
     return None
 
