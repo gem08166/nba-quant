@@ -89,7 +89,8 @@ def _select_signals(rows, strict: bool, bettable_only: bool = False):
 
 def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None = None,
              dry_run: bool = False, strict: bool = True, replace: bool = False,
-             bettable_only: bool = False, sim_only: bool = False) -> dict:
+             bettable_only: bool = False, sim_only: bool = False,
+             tombstones: set[str] | None = None) -> dict:
     rows = conn.execute(
         """
         SELECT p.game_id, p.created_at, p.details, g.slate_date, g.tipoff,
@@ -115,6 +116,21 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         replaced = conn.execute("DELETE FROM bets WHERE note LIKE '回填%'").rowcount or 0
         conn.commit()
 
+    # 墓碑：被用户清空/删除的模拟信号不要再自动补回来
+    if sim_only and tombstones is None:
+        try:
+            from app.jobs import betssync
+
+            tombstones = betssync.load_deletions()
+        except Exception:  # noqa: BLE001
+            tombstones = set()
+    tombstones = tombstones or set()
+    sim_ref = None
+    if sim_only:
+        from app.jobs.simulate import sim_ref as _sim_ref
+
+        sim_ref = _sim_ref
+
     # 已存在的注单（避免重复回填）。sim_only：只把模拟注单当已有，
     # 真实注单不挡模拟样本（否则「跟着信号下过」的信号会从模拟统计里消失）。
     if sim_only:
@@ -136,6 +152,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
     inserted = 0
     skipped_dupe = 0
     skipped_no_price = 0
+    skipped_tombstone = 0
     stats = {"won": 0, "lost": 0, "push": 0}
     stake_sum = 0.0
     profit_sum = 0.0
@@ -159,6 +176,13 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
             skipped_no_price += 1
             continue
         line = entry["line"] if entry else edge.get("line")
+
+        ref = None
+        if sim_only and sim_ref is not None:
+            ref = sim_ref(row["game_id"], edge["market"], edge["side"], line)
+            if ref in tombstones:
+                skipped_tombstone += 1
+                continue
 
         result = settle_edge(edge["market"], edge["side"], line, row["home_score"], row["away_score"])
         if result == "won":
@@ -202,8 +226,8 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
             cur = conn.execute(
                 """
                 INSERT INTO bets(game_id, market, side, line, price, stake,
-                                model_prob, ev, clv, placed_at, note, result, profit)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                model_prob, ev, clv, placed_at, note, result, profit, ref)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["game_id"],
@@ -219,10 +243,12 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
                     note,
                     result,
                     round(profit, 4),
+                    ref,
                 ),
             )
-            # 回填注单也要有稳定 ref（否则云端合回时只能靠自然键，且唯一索引留空）
-            conn.execute("UPDATE bets SET ref = 'srv-' || id WHERE id = ?", (cur.lastrowid,))
+            # 非模拟口径的回填：补一个稳定 ref（否则云端合回只能靠自然键，唯一索引留空）
+            if ref is None:
+                conn.execute("UPDATE bets SET ref = 'srv-' || id WHERE id = ?", (cur.lastrowid,))
             existing.add(key)
     if not dry_run:
         conn.commit()
@@ -231,6 +257,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         "inserted": inserted,
         "skipped_dupe": skipped_dupe,
         "skipped_no_price": skipped_no_price,
+        "skipped_tombstone": skipped_tombstone,
         "replaced": replaced,
         "wins": stats.get("won", 0),
         "losses": stats.get("lost", 0),
