@@ -373,6 +373,13 @@ def cmd_bets_clear(args: argparse.Namespace) -> None:
         else:
             cur = conn.execute("DELETE FROM bets")
         conn.commit()
+        try:
+            refs = [str(r["ref"] or f"srv-{r['id']}") for r in rows]
+            tombstoned = betssync.record_deletions(refs)
+            if tombstoned:
+                print(f"删除墓碑已同步（{len(refs)} 条）")
+        except Exception as exc:  # noqa: BLE001
+            print(f"墓碑同步失败（本地删除已生效）：{exc}")
         print(f"已清空 {cur.rowcount} 条")
     finally:
         conn.close()

@@ -303,6 +303,59 @@ def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
+# ---------- 删除墓碑：跨设备传播「这条注单被删了」 ----------
+# 没有墓碑时：本机清空 → 云端台账仍有 → 下一次同步又合并回来（实测发生过）。
+# 有墓碑时：任何设备（本机 / CI）同步时都会先删掉墓碑里的 ref，再合并台账。
+
+def load_deletions() -> set[str]:
+    try:
+        raw = webdav.get_text(webdav.DELETED)
+    except Exception:  # noqa: BLE001 - 墓碑读不到不影响同步
+        return set()
+    if not raw:
+        return set()
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return set()
+    refs = payload.get("refs") if isinstance(payload, dict) else payload
+    return {str(r) for r in (refs or []) if r}
+
+
+def record_deletions(refs: list[str]) -> int:
+    """把被删注单的 ref 追加到云端墓碑（幂等、去重、上限 1000 条）。"""
+    wanted = {str(r) for r in refs if r}
+    if not wanted:
+        return 0
+    merged = sorted(load_deletions() | wanted)[-1000:]
+    body = json.dumps(
+        {
+            "schema": "nbaq.bets.deleted/1",
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "refs": merged,
+        },
+        ensure_ascii=False,
+        indent=1,
+    )
+    return len(merged) if webdav.put_text(webdav.DELETED, body) else 0
+
+
+def apply_deletions(conn: sqlite3.Connection, refs: set[str]) -> int:
+    """删除墓碑里的注单（墓碑是「用户主动删除」的事实，优先于台账合并）。"""
+    if not refs:
+        return 0
+    placeholders = ",".join("?" for _ in refs)
+    rows = conn.execute(
+        f"SELECT id FROM bets WHERE ref IN ({placeholders})",
+        list(refs),
+    ).fetchall()
+    if not rows:
+        return 0
+    conn.execute(f"DELETE FROM bets WHERE ref IN ({placeholders})", list(refs))
+    conn.commit()
+    return len(rows)
+
+
 def run(
     conn: sqlite3.Connection,
     force_push: bool = False,
@@ -327,10 +380,12 @@ def run(
         "ledger_merged": 0,
         "ledger_updated": 0,
         "pushed": False,
+        "deleted": 0,
     }
 
     # 先给历史注单补 ref（服务端创建的 = srv-<id>），否则云端合回会重复
     stats["refs_normalized"] = normalize_refs(conn)
+    deletions = load_deletions()
 
     # 1) inbox：手机导出的片段
     #    pull_only：只读合并，绝不 MOVE（MOVE 会把文件从 inbox 拿走，CI 就永远
@@ -367,6 +422,10 @@ def run(
                 stats["ledger_updated"] = result.get("updated", 0)
         except (json.JSONDecodeError, TypeError) as exc:
             stats["ledger_error"] = str(exc)[:120]
+
+    # 2.5) 删除墓碑最后生效：先合并（inbox/台账）再删，保证手机重新导出的
+    #      已删注单也不会复活；删除后再推台账，云端也不会再带回来。
+    stats["deleted"] = apply_deletions(conn, deletions)
 
     # 3) 本地全量台账 → 云端（内容没变就跳过，省坚果云请求配额）
     if pull_only:

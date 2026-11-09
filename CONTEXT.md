@@ -1013,3 +1013,19 @@ README.md              # 用户文档（含第 0 节验证结论）
   替代非法的 `ignore` 配置项（警告消失）；删除 17 处未使用 import；`predict.py` 去掉 BOM；
   把死配置 `BETTABLE_PRICE_OUTLIER` 接入 `_robust_pair_stats(tol=...)`（默认值不变）。
 - **结果**：**165 passed**（1 个仅 starlette 弃用警告），compileall 通过。
+
+### 10.57 2026-11-09 删除墓碑：清空/删除必须跨设备生效
+
+- **问题（维护时实测）**：本机清空回填注单后，`bets-sync` 的 pull 阶段又把云端台账里的
+  旧注单**合并回来**（日志 `ledger_merged: 10`）。即「清空」只对本地生效，CI/其他设备
+  一同步就复活；CI 的 data 分支 DB 也还会把它们导出到 Pages。
+- **方案：删除墓碑 `nbaq/deleted.json`**（`{schema, updated_at, refs[]}`，上限 1000）：
+  - `betssync.record_deletions(refs)`：并集写入（API 清空/单条删除、CLI 清空都调用）；
+  - `betssync.apply_deletions(conn, refs)`：**合并之后**统一删除（inbox/台账先合并，
+    墓碑最后生效，手机重新导出的已删注单也不会复活）；
+  - 本机 `pull_only` 与 CI 的 `watch --once` 都会应用墓碑 → CI DB 同步删除、
+    静态导出/数据分支不再带回。
+- **验证**：清空 12 条回填 → 墓碑 12 条 → 重新回填 1 条可下注 → 本地/云端 20 条（1 条模拟）；
+  再触发 CI 后 Pages 也是 20 条、旧「回填 赛前信号」全部消失。
+- **测试**：`tests/test_betssync_tombstones.py` 3 例（按 ref 删除幂等 / run 先合并后删 /
+  墓碑并集与持久化）。

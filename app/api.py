@@ -528,6 +528,10 @@ def delete_bet(bet_id: int, force: bool = False, conn: sqlite3.Connection = Depe
         )
     conn.execute("DELETE FROM bets WHERE id=?", (bet_id,))
     conn.commit()
+    try:
+        betssync.record_deletions([str(row["ref"] or f"srv-{bet_id}")])
+    except Exception:  # noqa: BLE001 - 坚果云不可用时仍以本地删除为准
+        pass
     return {"ok": True, "id": bet_id, "deleted_ref": row["ref"]}
 
 
@@ -555,6 +559,7 @@ def clear_bets(body: ClearBetsIn, conn: sqlite3.Connection = Depends(get_conn)) 
         rows = conn.execute("SELECT * FROM bets WHERE note LIKE '回填%'").fetchall()
     else:
         rows = conn.execute("SELECT * FROM bets").fetchall()
+    refs = [str(r["ref"] or f"srv-{r['id']}") for r in rows]
 
     # 清空先备份（本机留档，防止手滑）
     if rows:
@@ -580,7 +585,20 @@ def clear_bets(body: ClearBetsIn, conn: sqlite3.Connection = Depends(get_conn)) 
     else:
         cur = conn.execute("DELETE FROM bets")
     conn.commit()
-    return {"ok": True, "deleted": cur.rowcount, "backed_up": len(rows)}
+
+    # 写删除墓碑：否则云端台账/其他设备下一轮会把它们合并回来
+    tombstoned = 0
+    try:
+        tombstoned = betssync.record_deletions(refs)
+    except Exception:  # noqa: BLE001 - 坚果云不可用时仍以本地清空为准
+        pass
+
+    return {
+        "ok": True,
+        "deleted": cur.rowcount,
+        "backed_up": len(rows),
+        "tombstoned": tombstoned,
+    }
 
 
 @router.get("/bets/analysis")

@@ -21,6 +21,8 @@ INBOX = f"{FOLDER}/inbox"
 DONE = f"{INBOX}/done"
 STATIC = f"{FOLDER}/static.json"
 LIVE = f"{FOLDER}/live.json"
+# 删除墓碑：跨设备同步「哪些注单被用户删掉了」，否则云端台账会把它们合并回来
+DELETED = f"{FOLDER}/deleted.json"
 SNAP_INBOX = f"{FOLDER}/snapshots/inbox"
 SNAP_DONE = f"{SNAP_INBOX}/done"
 
