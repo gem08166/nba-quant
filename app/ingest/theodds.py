@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from ..config import DATA_DIR, REQUEST_TIMEOUT, THE_ODDS_API_KEY, THE_ODDS_API_MIN_HOURS
+from ..config import DATA_DIR, REQUEST_TIMEOUT, THE_ODDS_API_KEYS, THE_ODDS_API_MIN_HOURS
 
 API_BASE = "https://api.the-odds-api.com/v4"
 SPORT_NBA = "basketball_nba"
@@ -90,31 +90,46 @@ def fetch_nba_odds(force: bool = False) -> tuple[list[dict], str]:
     events: [{id, commence_time, home, away, bookmakers: [{title, markets...}]}]
     额度不足/间隔不足时返回 ([], reason)。
     """
-    if not THE_ODDS_API_KEY:
+    if not THE_ODDS_API_KEYS:
         return [], "未配置 NBAQ_ODDS_API_KEY，跳过"
     if not force:
         ok, reason = _remaining_quota_ok()
         if not ok:
             return [], reason
 
+    state = _load_state()
+    key_idx = int(state.get("key_idx") or 0) % len(THE_ODDS_API_KEYS)
+    events = None
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
-        resp = client.get(
-            f"{API_BASE}/sports/{SPORT_NBA}/odds/",
-            params={
-                "apiKey": THE_ODDS_API_KEY,
-                "regions": REGION,
-                "markets": MARKETS,
-                "oddsFormat": "decimal",
-            },
-        )
-        remaining = resp.headers.get("x-requests-remaining")
-        used = resp.headers.get("x-requests-used")
-        if resp.status_code == 429:
-            _save_state({**_load_state(), "last_fetch_ts": time.time()})
-            return [], f"额度用尽（429），remaining={remaining}"
-        resp.raise_for_status()
-        events = resp.json()
+        for attempt in range(len(THE_ODDS_API_KEYS)):
+            key = THE_ODDS_API_KEYS[(key_idx + attempt) % len(THE_ODDS_API_KEYS)]
+            resp = client.get(
+                f"{API_BASE}/sports/{SPORT_NBA}/odds/",
+                params={
+                    "apiKey": key,
+                    "regions": REGION,
+                    "markets": MARKETS,
+                    "oddsFormat": "decimal",
+                },
+            )
+            remaining = resp.headers.get("x-requests-remaining")
+            used = resp.headers.get("x-requests-used")
+            if resp.status_code == 429 and attempt < len(THE_ODDS_API_KEYS) - 1:
+                # 当前 key 额度尽 → 记录并轮换到下一个 key 重试
+                _save_state({**_load_state(), "key_idx": (key_idx + attempt + 1) % len(THE_ODDS_API_KEYS)})
+                continue
+            if resp.status_code == 429:
+                _save_state({**_load_state(), "last_fetch_ts": time.time()})
+                return [], f"全部 key 额度用尽（429），remaining={remaining}"
+            resp.raise_for_status()
+            events = resp.json()
+            key_idx = (key_idx + attempt) % len(THE_ODDS_API_KEYS)
+            _save_state({**_load_state(), "key_idx": key_idx})
+            break
+    if events is None:
+        return [], "未获取到盘口数据"
 
+    # 用最新磁盘状态做基线，避免覆盖掉轮换循环里写入的 key_idx
     state = _load_state()
     state.update(
         {

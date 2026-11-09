@@ -84,10 +84,14 @@ LOCAL_PUBLISH_LIVE = os.getenv("NBAQ_LOCAL_PUBLISH_LIVE", "0") == "1"
 # GitHub 对 schedule 限流到约 1 小时，dispatch 不受限；只在本机开着时生效。
 CI_TRIGGER_MINUTES = float(os.getenv("NBAQ_CI_TRIGGER_MINUTES", "0"))
 
-# The Odds API（多书源共识，按量计费省着用）
-THE_ODDS_API_KEY = os.getenv("NBAQ_ODDS_API_KEY", "")
-# 两次拉取的最小间隔（小时）：默认 20h = 每天最多 1 次（3 markets × 1 region = 3 credits）
-THE_ODDS_API_MIN_HOURS = float(os.getenv("NBAQ_ODDSAPI_MIN_HOURS", "20"))
+# The Odds API（多书源共识）。支持多 key 轮换：逗号分隔，按序消耗，
+# 某个 key 429/额度尽自动切下一个（fetch_nba_odds 内处理）。
+_raw_keys = os.getenv("NBAQ_ODDS_API_KEY", "")
+THE_ODDS_API_KEYS = [k.strip() for k in _raw_keys.split(",") if k.strip()]
+THE_ODDS_API_KEY = THE_ODDS_API_KEYS[0] if THE_ODDS_API_KEYS else ""
+# 两次拉取的最小间隔（小时）：默认 4h（多 key 轮换后额度充足，
+# 3 markets × 1 region = 3 credits/次；4h = 6 次/天/key ≈ 每月 540/Key）
+THE_ODDS_API_MIN_HOURS = float(os.getenv("NBAQ_ODDSAPI_MIN_HOURS", "4"))
 
 # HoopsAPI（多书盘口 + 完赛收盘归档，含 Pinnacle）
 HOOPS_API_KEY = os.getenv("HOOPS_API_KEY", "")
