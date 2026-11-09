@@ -7,6 +7,7 @@ import httpx
 
 from .. import db
 from ..config import NTFY_SERVER, NTFY_TOPIC, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from ..i18n import team_zh
 from .predict import latest_prediction
 
 MARKET_LABEL = {"spread": "让分", "total": "大小分", "moneyline": "胜负"}
@@ -93,13 +94,13 @@ def format_signal(game: dict, edge: dict) -> str:
     if edge["market"] == "total":
         side = "大分" if edge["side"] == "over" else "小分"
     else:
-        side = game["home_abbrev"] if edge["side"] == "home" else game["away_abbrev"]
+        side = team_zh(game["home_abbrev"]) if edge["side"] == "home" else team_zh(game["away_abbrev"])
     line = ""
     if edge["market"] != "moneyline" and edge.get("line") is not None:
         value = float(edge["line"])
         line = f" {value:+.1f}"
     return (
-        f"✅ 可下注 · {game['away_abbrev']} @ {game['home_abbrev']}\n"
+        f"✅ 可下注 · {team_zh(game['away_abbrev'])} @ {team_zh(game['home_abbrev'])}\n"
         f"{market} {side}{line} @ {edge['price']:.2f}"
         + (f"（{edge['book']}）" if edge.get("book") else "")
         + f"\n模型 {edge['model_prob']:.1%} vs 公允 {edge['fair_prob']:.1%}"

@@ -49,6 +49,23 @@ def player_zh(name: str | None) -> str:
     return mapping().get(slugify(name), "")
 
 
+_TEAM_ZH = {
+    "ATL": "老鹰", "BKN": "篮网", "BOS": "凯尔特人", "CHA": "黄蜂", "CHI": "公牛",
+    "CLE": "骑士", "DAL": "独行侠", "DEN": "掘金", "DET": "活塞", "GS": "勇士",
+    "HOU": "火箭", "IND": "步行者", "LAC": "快船", "LAL": "湖人", "MEM": "灰熊",
+    "MIA": "热火", "MIL": "雄鹿", "MIN": "森林狼", "NO": "鹈鹕", "NY": "尼克斯",
+    "OKC": "雷霆", "ORL": "魔术", "PHI": "76人", "PHX": "太阳", "POR": "开拓者",
+    "SA": "马刺", "SAC": "国王", "TOR": "猛龙", "UTAH": "爵士", "WSH": "奇才",
+}
+
+
+def team_zh(abbrev: str | None) -> str:
+    """球队缩写 → 中文短名（如 OKC → 雷霆）；未知缩写原样返回。"""
+    if not abbrev:
+        return ""
+    return _TEAM_ZH.get(abbrev.upper(), abbrev)
+
+
 def with_zh(row: dict, key: str = "player") -> dict:
     """给一行数据补上 `<key>_zh`（原地修改并返回，方便列表推导）。"""
     row[f"{key}_zh"] = player_zh(row.get(key))
