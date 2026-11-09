@@ -2,15 +2,22 @@
 // 数据源：/api/backtest（月度指标+逐场行）、/api/rapm、/api/trends。
 // 风格与看板一致（记分台冷调石墨）。仅在用户切到"研究图表"时加载。
 
-const COLORS = {
-  text: "#dfe3ea",
-  muted: "#79828f",
-  grid: "#222730",
-  green: "#46b95c",
-  red: "#e0574f",
-  blue: "#4b8fd6",
-  amber: "#e8a33d",
-};
+// 图表颜色运行时读取主题 CSS 变量——主题切换后重绘自动跟随。
+function chartColors() {
+  const s = getComputedStyle(document.documentElement);
+  const v = (name, fallback) => s.getPropertyValue(name).trim() || fallback;
+  return {
+    text: v("--text", "#dfe3ea"),
+    muted: v("--muted", "#8a94a3"),
+    grid: v("--line-soft", "#222730"),
+    green: v("--green", "#46b95c"),
+    red: v("--red", "#e0574f"),
+    blue: v("--blue", "#4b8fd6"),
+    amber: v("--amber", "#e8a33d"),
+  };
+}
+const COLORS = chartColors();
+window.__refreshChartColors = () => Object.assign(COLORS, chartColors());
 
 let researchLoaded = false;
 
@@ -59,7 +66,7 @@ function drawBars(canvas, labels, values, { line = null, lineColor = COLORS.blue
     const v = yMin + ((yMax - yMin) * i) / 4;
     ctx.fillText(v.toFixed(Math.abs(v) < 10 ? 1 : 0) + unit, pad.l - 6, y(v) + 4);
     if (i > 0) {
-      ctx.strokeStyle = "#222730";
+      ctx.strokeStyle = COLORS.grid;
       ctx.beginPath();
       ctx.moveTo(pad.l, y(v));
       ctx.lineTo(width - pad.r, y(v));
@@ -125,7 +132,7 @@ function drawLineChart(canvas, labels, series, { min, max, unit = "" } = {}) {
     const v = yMin + ((yMax - yMin) * i) / 4;
     ctx.fillText(v.toFixed(0) + unit, pad.l - 6, y(v) + 4);
     if (i > 0) {
-      ctx.strokeStyle = "#222730";
+      ctx.strokeStyle = COLORS.grid;
       ctx.beginPath();
       ctx.moveTo(pad.l, y(v));
       ctx.lineTo(width - pad.r, y(v));

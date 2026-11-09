@@ -8,6 +8,13 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="static/styles.css">
+  <script>
+    /* FOUC 防护：渲染前应用已保存的主题（白昼报表 / 记分台） */
+    try {
+      if (localStorage.getItem("nbaq:theme") === "day")
+        document.documentElement.setAttribute("data-theme", "day");
+    } catch (_) {}
+  </script>
   <title>NBA Quant · 赛前</title>
 </head>
 <body>
@@ -27,6 +34,10 @@
       </div>
       <div class="controls">
         <input type="date" id="date" aria-label="比赛日期">
+        <button class="btn" id="theme-toggle" type="button" aria-label="切换主题"
+          title="切换 浅色（白昼报表）/ 深色（记分台）主题">
+          <span id="theme-icon" aria-hidden="true"></span>
+        </button>
         <button class="btn" id="snapshot" hidden title="把当前盘口快照推到坚果云，供 PC 合并入库">抓快照</button>
         <button class="btn primary" id="refresh">刷新</button>
       </div>
@@ -170,6 +181,7 @@
 
   <script src="static/static.js"></script>
   <script src="static/dav.js"></script>
+  <script src="static/theme.js"></script>
   <script src="static/localbets.js"></script>
   <script src="static/collector.js"></script>
   <script src="static/app.js"></script>
