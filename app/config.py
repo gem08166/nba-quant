@@ -94,6 +94,8 @@ THE_ODDS_API_KEY = THE_ODDS_API_KEYS[0] if THE_ODDS_API_KEYS else ""
 THE_ODDS_API_MIN_HOURS = float(os.getenv("NBAQ_ODDSAPI_MIN_HOURS", "4"))
 # 收盘捕捉窗口：未来 N 小时内有开赛 → 豁免 Odds API 间隔闸门（精确捕捉收盘前赔率）
 ODDS_CLOSE_WINDOW_HOURS = float(os.getenv("NBAQ_ODDS_CLOSE_WINDOW_HOURS", "2"))
+# 收盘窗口内的最小拉取间隔：15 分钟一轮（窗口 2h ≈ 8 个收盘时点，额度可控）
+ODDS_CLOSE_FETCH_MIN_HOURS = float(os.getenv("NBAQ_ODDS_CLOSE_FETCH_MIN_HOURS", "0.25"))
 
 # HoopsAPI（多书盘口 + 完赛收盘归档，含 Pinnacle）
 HOOPS_API_KEY = os.getenv("HOOPS_API_KEY", "")

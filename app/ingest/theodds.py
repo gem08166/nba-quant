@@ -22,6 +22,7 @@ from ..config import (
     ODDS_CLOSE_WINDOW_HOURS,
     REQUEST_TIMEOUT,
     THE_ODDS_API_KEYS,
+    ODDS_CLOSE_FETCH_MIN_HOURS,
     THE_ODDS_API_MIN_HOURS,
 )
 
@@ -113,7 +114,13 @@ def _remaining_quota_ok() -> tuple[bool, str]:
         return True, "首次拉取"
     if hrs < THE_ODDS_API_MIN_HOURS:
         if _near_closing_window():
-            return True, f"收盘窗口内豁免间隔（{hrs:.1f}h < {THE_ODDS_API_MIN_HOURS}h）"
+            # 收盘窗口：豁免 4h 长间隔，但保持 15 分钟最小节奏（省额度且够密）
+            if hrs < ODDS_CLOSE_FETCH_MIN_HOURS:
+                return False, (
+                    f"收盘窗口内 {hrs * 60:.0f}min < {ODDS_CLOSE_FETCH_MIN_HOURS * 60:.0f}min"
+                    "（15 分钟一轮）"
+                )
+            return True, f"收盘窗口内拉取（{hrs * 60:.0f}min ≥ {ODDS_CLOSE_FETCH_MIN_HOURS * 60:.0f}min）"
         return False, f"距上次拉取 {hrs:.1f}h < {THE_ODDS_API_MIN_HOURS}h（省额度，跳过）"
     return True, f"距上次拉取 {hrs:.1f}h"
 
