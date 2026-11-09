@@ -443,7 +443,7 @@ async function openCustomBetPanel() {
     <div class="lm-panel-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px">
       <label>盘口<input id="cb-line" type="number" step="0.5"></label>
       <label>赔率<input id="cb-price" type="number" step="0.01" min="1.01" value="1.91"></label>
-      <label>注额<input id="cb-stake" type="number" step="0.5" min="0.5" value="1"></label>
+      <label>注额<input id="cb-stake" type="number" step="0.5" min="0.5" value="2"></label>
     </div>
     <div class="lm-panel-meta" id="cb-meta"></div>
     <div class="lm-panel-actions">

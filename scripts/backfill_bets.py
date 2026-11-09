@@ -15,7 +15,7 @@
 收益页会单独分组，不会污染真实记录的统计。
 
 用法：
-    python -m scripts.backfill_bets [--stake 1] [--start 2026-10-20] [--end 2026-11-06] [--dry-run]
+    python -m scripts.backfill_bets [--stake 2] [--start 2026-10-20] [--end 2026-11-06] [--dry-run]
 """
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def _select_signals(rows, strict: bool, bettable_only: bool = False):
     return items
 
 
-def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None = None,
+def backfill(conn, stake: float = 2.0, start: str | None = None, end: str | None = None,
              dry_run: bool = False, strict: bool = True, replace: bool = False,
              bettable_only: bool = False, sim_only: bool = False,
              tombstones: set[str] | None = None) -> dict:
@@ -274,7 +274,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="回填历史赛前信号为纸面注单")
-    parser.add_argument("--stake", type=float, default=1.0, help="每条注额（默认 1）")
+    parser.add_argument("--stake", type=float, default=2.0, help="每条注额（默认 2）")
     parser.add_argument("--start", default=None, help="起始比赛日 YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="结束比赛日 YYYY-MM-DD")
     parser.add_argument("--dry-run", action="store_true", help="只统计不写库")

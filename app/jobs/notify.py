@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -72,6 +72,22 @@ def send(title: str, text: str) -> bool:
     return sent
 
 
+BEIJING_TZ = timezone(timedelta(hours=8))  # 中国无夏令时，固定 UTC+8（避免 Windows 缺 tzdata）
+
+
+def _fmt_beijing(value, fmt: str = "%m-%d %H:%M") -> str:
+    """把 ISO 时间转成北京时间字符串（推送文案统一用北京时间）。"""
+    if not value:
+        return "时间待定"
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BEIJING_TZ).strftime(fmt)
+
+
 def format_signal(game: dict, edge: dict) -> str:
     market = MARKET_LABEL.get(edge["market"], edge["market"])
     if edge["market"] == "total":
@@ -88,7 +104,7 @@ def format_signal(game: dict, edge: dict) -> str:
         + (f"（{edge['book']}）" if edge.get("book") else "")
         + f"\n模型 {edge['model_prob']:.1%} vs 公允 {edge['fair_prob']:.1%}"
         f" · Edge {edge['edge']:+.1%} · EV {edge['ev']:+.1%}\n"
-        f"1/4凯利 {edge['stake_pct']:.1%} · 开赛 {game.get('tipoff', '')}"
+        f"1/4凯利 {edge['stake_pct']:.1%} · 开赛 {_fmt_beijing(game.get('tipoff'))}（北京时间）"
     )
 
 

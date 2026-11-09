@@ -68,7 +68,7 @@ def test_ensure_sim_bets_creates_open_bet_once(monkeypatch):
     assert row["profit"] is None
     assert row["ref"] == simulate.sim_ref("g1", "spread", "home", -2.5)
     assert row["note"].startswith("模拟 可下注")
-    assert row["stake"] == 1.0
+    assert row["stake"] == 2.0
 
     # 第二轮不重复
     again = simulate.ensure_sim_bets(conn, "2099-01-01")

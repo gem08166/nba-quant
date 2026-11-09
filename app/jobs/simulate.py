@@ -29,7 +29,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def ensure_sim_bets(conn: sqlite3.Connection, slate_date: str, stake: float = 1.0) -> dict:
+def ensure_sim_bets(conn: sqlite3.Connection, slate_date: str, stake: float = 2.0) -> dict:
     """赛前先填：把当前 slate 里通过阀门的信号记为未结算模拟注单。
 
     只处理未开赛的比赛（与推送同口径）；已开赛/已完赛的交给 backfill_finished。
@@ -82,7 +82,7 @@ def ensure_sim_bets(conn: sqlite3.Connection, slate_date: str, stake: float = 1.
     return {"created": created, "skipped": skipped, "signals": len(items)}
 
 
-def backfill_finished(conn: sqlite3.Connection, days: int = 3, stake: float = 1.0) -> dict:
+def backfill_finished(conn: sqlite3.Connection, days: int = 3, stake: float = 2.0) -> dict:
     """赛后兜底：最近 N 天已完赛比赛里，漏记的可下注信号补成已结算模拟注单。"""
     from scripts.backfill_bets import backfill
 

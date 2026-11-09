@@ -81,7 +81,12 @@ const MARKET_ZH = { spread: "让分", total: "大小", moneyline: "胜负" };
 function hm(iso) {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    // 北京时间（不跟随设备时区）
+    return new Date(iso).toLocaleTimeString("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch (_) {
     return "";
   }
@@ -476,7 +481,7 @@ function openLmBetPanel(game, data) {
       <span>${esc(game.matchup_zh || game.matchup)} · ${esc(marketZh)} ${esc(data.lmLabel)}${esc(lineText)}</span>
     </div>
     <div class="lm-panel-grid" style="grid-template-columns:repeat(${editableLine ? 3 : 2},1fr)">
-      <label>注额<input id="lm-stake" type="number" step="0.5" min="0.5" value="1"></label>
+      <label>注额<input id="lm-stake" type="number" step="0.5" min="0.5" value="2"></label>
       ${editableLine ? `<label>盘口<input id="lm-line" type="number" step="0.5" value="${line ?? ""}"></label>` : ""}
       <label>赔率<input id="lm-price" type="number" step="0.01" min="1.01" value="${price.toFixed(2)}"></label>
     </div>
@@ -726,7 +731,7 @@ async function loadLive(force = false) {
     const snapshot = staticAgoText();
     const overlay = overlayAgoText();
     status.textContent =
-      `更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` +
+      `更新于 ${new Date().toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", second: "2-digit" })}` +
       ` · ${inPlay} 场进行中 / 共 ${data.count} 场` +
       (snapshot ? ` · 比分实时（ESPN）· ${snapshot}` : "") +
       (overlay ? ` · ${overlay}` : "");
@@ -824,7 +829,7 @@ async function loadPost(force = false) {
         ),
       ].join("");
     }
-    status.textContent = `${esc(data.date)} · ${done.length} 场已结束 · 更新于 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    status.textContent = `${esc(data.date)} · ${done.length} 场已结束 · 更新于 ${new Date().toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" })}`;
   } catch (error) {
     if (myToken === postToken) status.textContent = `加载失败：${error.message}`;
   } finally {

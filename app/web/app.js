@@ -132,25 +132,40 @@ const fmtSignedPct = (value) =>
 const fmtPrice = (value) =>
   value === null || value === undefined ? "—" : Number(value).toFixed(2);
 
+// 所有墙上时间统一按北京时间显示（不跟随设备时区）
+const BJT_TZ = "Asia/Shanghai";
+
 function fmtTime(iso) {
   if (!iso) return "TBD";
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("zh-CN", {
+    timeZone: BJT_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function fmtDayTime(iso) {
   if (!iso) return "时间待定";
   const d = new Date(iso);
-  const day = d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
-  const week = d.toLocaleDateString("zh-CN", { weekday: "short" });
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const day = d.toLocaleDateString("zh-CN", { timeZone: BJT_TZ, month: "2-digit", day: "2-digit" });
+  const week = d.toLocaleDateString("zh-CN", { timeZone: BJT_TZ, weekday: "short" });
+  const time = d.toLocaleTimeString("zh-CN", {
+    timeZone: BJT_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   return `${day} ${week} ${time}`;
 }
 
 function fmtSignalTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  const day = d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const day = d.toLocaleDateString("zh-CN", { timeZone: BJT_TZ, month: "2-digit", day: "2-digit" });
+  const time = d.toLocaleTimeString("zh-CN", {
+    timeZone: BJT_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   return `${day} ${time}`;
 }
 
@@ -413,7 +428,7 @@ function openManualBetPanel(game) {
     <div class="lm-panel-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px">
       <label>盘口<input id="mb-line" type="number" step="0.5"></label>
       <label>赔率<input id="mb-price" type="number" step="0.01" min="1.01" value="1.91"></label>
-      <label>注额<input id="mb-stake" type="number" step="0.5" min="0.5" value="1"></label>
+      <label>注额<input id="mb-stake" type="number" step="0.5" min="0.5" value="2"></label>
     </div>
     <div class="lm-panel-meta" id="mb-meta"></div>
     <div class="lm-panel-actions">
@@ -535,7 +550,7 @@ async function load({ repredict = false, silent = false } = {}) {
         button.disabled = false;
         if (!silent) {
           button.textContent = "刷新";
-          toast("数据已是最新（" + (window.STATIC_PAYLOAD?.generated_at || "").replace("T", " ").slice(0, 16) + "）");
+          toast(`数据已是最新（${fmtSignalTime(window.STATIC_PAYLOAD?.generated_at)} 北京时间）`);
         }
         return;
       }
@@ -1048,7 +1063,7 @@ function placeBet(index) {
            style="width:70px;padding:4px 6px" title="盘口（可改成你实际看到的）">`;
   cell.innerHTML = `
     <span style="display:inline-flex;gap:4px;align-items:center;white-space:nowrap">
-      <input type="number" step="0.5" min="0.5" value="1" data-stake="${index}"
+      <input type="number" step="0.5" min="0.5" value="2" data-stake="${index}"
         style="width:56px;padding:4px 6px" title="注额（单位），建议仓位 ${(edge.stake_pct * 100).toFixed(1)}%">
       ${lineInput}
       <input type="number" step="0.01" min="1.01" value="${Number(edge.price).toFixed(2)}" data-bet-price="${index}"

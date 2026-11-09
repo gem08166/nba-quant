@@ -1057,3 +1057,22 @@ README.md              # 用户文档（含第 0 节验证结论）
   （3 胜 1 负，+2.66u），台账 20 → 24 条（真实 19 + 模拟 5）；重复执行 `inserted=0`。
 - **测试**：`tests/test_simulate.py` 6 例（先填幂等/墓碑保护/ref 稳定/分类/
   兜底稳定 ref/兜底墓碑）。**175 passed**。
+
+### 10.59 2026-11-09 默认注额统一为 2
+
+- 前端：自定义记一笔（`cb-stake`）、滚球记一笔（`lm-stake`）、信号「记一笔」
+  （`mb-stake`）与信号行内注额输入（`data-stake`）默认值 `1 → 2`。
+- 后端：`simulate.ensure_sim_bets(stake=2.0)`、`simulate.backfill_finished(stake=2.0)`、
+  `scripts/backfill_bets.backfill(stake=2.0)` 与 CLI `--stake` 默认值 `1 → 2`。
+- 已存在的模拟注单保持原注额（不改写历史）；新产生的模拟/真实注单默认 2u。
+
+### 10.60 2026-11-09 时间统一北京时间
+
+- **前端**：`fmtTime` / `fmtDayTime` / `fmtSignalTime`（app.js）、`hm()` 与状态栏「更新于」
+  （live.js）全部显式 `timeZone: "Asia/Shanghai"`——不再跟随设备时区；
+  「数据已是最新」提示也改成北京时间。
+- **推送**：`notify._fmt_beijing()`（固定 UTC+8，避免 Windows 缺 tzdata），
+  `format_signal` 的开赛时间改为 `11-10 11:30（北京时间）`，不再是原始 `...T03:30:00Z`。
+- **保持不变**：比赛日（`slate_date`）仍是 NBA 的 ET 赛程日，作为筛选/分组键不改；
+  页面上所有**具体时刻**（开赛、预测、信号、更新时间）均为北京时间。
+- **测试**：`tests/test_notify_time.py` 3 例（UTC→BJT/空值/推送文案）。**178 passed**。
