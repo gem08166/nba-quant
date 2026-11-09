@@ -1,6 +1,16 @@
 const $ = (sel) => document.querySelector(sel);
 const state = { date: isoToday(), games: [], detail: null };
 
+// 日期口径：用户/选择器里的日期 = 北京日期（用户视角）。
+// 数据库/ESPN 的 slate_date = 美国东部比赛日。NBA 比赛都在 ET 下午～深夜进行，
+// 对应北京次日凌晨～上午，因此“北京日期 D 的全部比赛”的 ET 比赛日恒为 D−1。
+function bjToSlate(bjDate) {
+  const d = new Date(bjDate + "T12:00:00+08:00");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+
 function isoToday() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
@@ -555,7 +565,7 @@ async function load({ repredict = false, silent = false } = {}) {
         return;
       }
     }
-    const data = await api(`/api/games?date=${encodeURIComponent(state.date)}`);
+    const data = await api(`/api/games?date=${encodeURIComponent(bjToSlate(state.date))}`);
     // 静态模式下后端只导出某一个比赛日：以 payload 的日期为准，
     // 否则赛时页会去拉一个不在导出范围内的日期（显示 0 场/英文兜底）。
     if (data.date && data.date !== state.date) {
@@ -587,7 +597,7 @@ async function load({ repredict = false, silent = false } = {}) {
     renderGames(data.games, betsByGame);
     // APK：看板打开时顺手抓一份快照（ESPN 免费 + 可选 Odds API），失败静默
     if (window.DAV?.davEnabled() && window.SnapCollector) {
-      window.SnapCollector.collectAndPush(state.date).catch(() => {});
+      window.SnapCollector.collectAndPush(bjToSlate(state.date)).catch(() => {});
       $("#snapshot").hidden = false;
     } else {
       $("#snapshot").hidden = true;

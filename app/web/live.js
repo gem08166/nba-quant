@@ -858,7 +858,15 @@ async function jumpToLastFinished() {
     // 静态模式：静态导出里已带 history（最近 N 个完赛日），
     // 直接用它的日期定位——不必逐个日期去请求 ESPN（手机上一来一回很慢）
     if (window.APP_MODE === "static") {
-      const hist = window.STATIC_PAYLOAD?.history || {};
+      const histEt = window.STATIC_PAYLOAD?.history || {};
+      // history 键是 ET 比赛日；换算成北京日期键（值结构不变），
+      // 使跳转/比较与 state.date（北京日期）同一口径。
+      const hist = {};
+      for (const et of Object.keys(histEt)) {
+        const d = new Date(et + "T12:00:00Z");
+        d.setUTCDate(d.getUTCDate() + 1);
+        hist[d.toISOString().slice(0, 10)] = histEt[et];
+      }
       const days = Object.keys(hist).sort().reverse(); // 最近优先
       if (!days.length) {
         toast("静态数据里还没有已结束的比赛");
