@@ -202,6 +202,7 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     settle_pending: list[str] = []  # 还有未结算注单的历史比赛日
     was_live = False
     last_ci_trigger = 0.0
+    last_sim_backfill = 0.0
     while True:
         slate = current_slate_date()
         if slate != last_slate:
@@ -458,6 +459,30 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 sent = notify.send_new_signals(conn, items)
                 if sent:
                     print(f"[watch] pushed {sent} bettable signal(s)")
+
+                # 赛前先填模拟注单：出现可下注信号就立刻记 1u（result=open），
+                # 比赛结束后由 settle 正常结算 —— 不做「知道结果再回填」。
+                try:
+                    from . import simulate
+
+                    sim_stats = simulate.ensure_sim_bets(conn, slate)
+                    if sim_stats["created"]:
+                        print(f"[watch] sim filled: {sim_stats}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] sim fill failed: {exc}")
+
+                # 赛后兜底：最近 3 天已完赛但漏记的可下注信号补成已结算模拟注单
+                # （CI 停摆/本机关机期间的缺口）。半小时跑一次足够。
+                if time.time() - last_sim_backfill >= 1800:
+                    last_sim_backfill = time.time()
+                    try:
+                        from . import simulate
+
+                        bf = simulate.backfill_finished(conn, days=3)
+                        if bf.get("inserted"):
+                            print(f"[watch] sim backfill: {bf}")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[watch] sim backfill failed: {exc}")
             except Exception as exc:  # noqa: BLE001
                 print(f"[watch] predict/notify failed: {exc}")
                 loop_failed = True

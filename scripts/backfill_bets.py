@@ -89,7 +89,7 @@ def _select_signals(rows, strict: bool, bettable_only: bool = False):
 
 def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None = None,
              dry_run: bool = False, strict: bool = True, replace: bool = False,
-             bettable_only: bool = False) -> dict:
+             bettable_only: bool = False, sim_only: bool = False) -> dict:
     rows = conn.execute(
         """
         SELECT p.game_id, p.created_at, p.details, g.slate_date, g.tipoff,
@@ -115,11 +115,21 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         replaced = conn.execute("DELETE FROM bets WHERE note LIKE '回填%'").rowcount or 0
         conn.commit()
 
-    # 已存在的注单（避免重复回填）
-    existing = {
-        (str(r["game_id"]), r["market"], r["side"], r["line"])
-        for r in conn.execute("SELECT game_id, market, side, line FROM bets")
-    }
+    # 已存在的注单（避免重复回填）。sim_only：只把模拟注单当已有，
+    # 真实注单不挡模拟样本（否则「跟着信号下过」的信号会从模拟统计里消失）。
+    if sim_only:
+        existing = {
+            (str(r["game_id"]), r["market"], r["side"], r["line"])
+            for r in conn.execute(
+                "SELECT game_id, market, side, line FROM bets "
+                "WHERE note LIKE '回填%' OR note LIKE '模拟%'"
+            )
+        }
+    else:
+        existing = {
+            (str(r["game_id"]), r["market"], r["side"], r["line"])
+            for r in conn.execute("SELECT game_id, market, side, line FROM bets")
+        }
 
     items = _select_signals(rows, strict, bettable_only=bettable_only)
 
@@ -173,7 +183,13 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
             f"EV {ev:+.1%} · {slate}" if isinstance(ev, (int, float)) else
             f"回填 赛前信号 · {edge.get('book') or '—'} · {slate}"
         )
-        if bettable_only:
+        if sim_only:
+            note = (
+                f"模拟 可下注 · {edge.get('book') or '—'} · EV {ev:+.1%} · {slate}"
+                if isinstance(ev, (int, float))
+                else f"模拟 可下注 · {edge.get('book') or '—'} · {slate}"
+            )
+        elif bettable_only:
             note = f"回填 可下注 · {edge.get('book') or '—'} · EV {ev:+.1%} · {slate}" \
                 if isinstance(ev, (int, float)) else f"回填 可下注 · {edge.get('book') or '—'} · {slate}"
 
@@ -225,6 +241,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         "dry_run": dry_run,
         "strict": strict,
         "bettable_only": bettable_only,
+        "sim_only": sim_only,
     }
 
 

@@ -1035,3 +1035,22 @@ README.md              # 用户文档（含第 0 节验证结论）
   （返回 `blocked` 计数）——旧版手机把已删注单重新推到云端也复活不了。
 - **测试**：`tests/test_betssync_tombstones.py` 4 例（按 ref 删除幂等 / 合并阶段拦截 /
   run 先合并后删 / 墓碑并集与持久化）。
+
+### 10.58 2026-11-09 模拟注单自动化：赛前先填 + 赛后兜底
+
+- **需求**：每场比赛结束后都要有模拟单；更好的做法是赛前先填（不做事后回填，
+  避免后视偏差）。
+- **`app/jobs/simulate.py`**：
+  - `ensure_sim_bets(conn, slate)`：**赛前先填**——`collect_signal_items(bettable_only=True)`
+    里每条可下注信号立刻记 1u 模拟注单（当时报价、`result=open`），比赛结束后由
+    `settle` 正常结算；ref = `sim-<game|market|side|line 的 md5>`，CI 与本机各自先填
+    也只会落一条；墓碑里的 ref 不再生成（用户清空后不会自动长回来）。
+  - `backfill_finished(conn, days=3)`：**赛后兜底**——最近 3 天已完赛但漏记的可下注
+    信号补成已结算模拟单（覆盖 CI 停摆/本机关机）。
+  - 备注统一以「模拟」开头；`settle.bet_kind` 与前端 `lbKind` 都把它归到模拟组。
+- **回填口径修正**：`backfill(sim_only=True)` 只把「回填/模拟」注单当作已存在——
+  真实注单不再挡住模拟样本（否则跟着信号下过的比赛会从模拟统计里消失）。
+- **watch**：predict 后先填、settle 后兜底（兜底 30 分钟一次）。
+- **实测**：本地先填今日 0 条（今天 0 个可下注信号）；7 天兜底补 4 条
+  （3 胜 1 负，+2.66u），台账 20 → 24 条（真实 19 + 模拟 5）。
+- **测试**：`tests/test_simulate.py` 4 例（先填幂等/墓碑保护/ref 稳定/分类）。**173 passed**。

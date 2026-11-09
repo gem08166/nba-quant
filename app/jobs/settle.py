@@ -192,20 +192,22 @@ def capture_closing(
 
 LIVE_NOTE_TAG = "滚球"
 BACKFILL_NOTE_TAG = "回填"
+SIM_NOTE_TAG = "模拟"
 
 
 def bet_kind(bet: dict) -> str:
-    """区分注单来源：赛前信号 / 滚球 / 历史回填。
+    """区分注单来源：赛前信号 / 滚球 / 历史回填（含自动模拟）。
 
     - 滚球：赛时面板「记一笔」下的，备注含「滚球」
     - 回填：`scripts/backfill_bets.py` 用历史信号补的，备注以「回填」开头
+    - 模拟：`app/jobs/simulate.py` 赛前自动先填的可下注信号（备注以「模拟」开头）
     - 赛前：其余（真实跟信号记的）
-    回填是回顾性数据，必须和真实决策分开统计。
+    回填/模拟都是信号跟踪样本，必须和真实决策分开统计。
     """
     note = bet.get("note") or ""
     if LIVE_NOTE_TAG in note:
         return "live"
-    if BACKFILL_NOTE_TAG in note:
+    if BACKFILL_NOTE_TAG in note or SIM_NOTE_TAG in note:
         return "backfill"
     return "pregame"
 

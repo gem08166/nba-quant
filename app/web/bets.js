@@ -265,7 +265,7 @@ function ledgerKind(bet) {
   if (bet.kind) return bet.kind;
   const note = String(bet.note || "");
   if (note.includes("滚球")) return "live";
-  if (note.includes("回填")) return "backfill";
+  if (note.includes("回填") || note.includes("模拟")) return "backfill";
   return "pregame";
 }
 

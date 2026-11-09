@@ -109,10 +109,10 @@ function lbSettle(games) {
 }
 
 function lbKind(bet) {
-  // 与后端 settle.bet_kind 同口径：滚球 / 回填 / 赛前
+  // 与后端 settle.bet_kind 同口径：滚球 / 回填·模拟 / 赛前
   const note = String((bet && bet.note) || "");
   if (note.includes("滚球")) return "live";
-  if (note.includes("回填")) return "backfill";
+  if (note.includes("回填") || note.includes("模拟")) return "backfill";
   return "pregame";
 }
 
