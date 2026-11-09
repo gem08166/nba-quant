@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from .ratings import _d, _ridge_solve, load_finals
+from .ratings import _d, _ridge_solve
 
 # Free-data constraints shape this model:
 # - ESPN play-by-play gives substitution events + running score, enough to

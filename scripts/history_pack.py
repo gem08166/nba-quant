@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections import defaultdict
 
 from app.jobs.live import merge_signal_versions, settle_edge
 from app import i18n

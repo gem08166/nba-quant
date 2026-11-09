@@ -990,3 +990,26 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **验证**：`tests/test_bets_clear_api.py` 4 用例（确认文本/仅回填/全部/备份落盘）；
   端到端实测清空回填组（11 条备份落盘、统计卡归零）→ 重新 `--bettable-only` 回填
   1 条 → 台账推云。**164 passed**。
+
+### 10.56 2026-11-09 代码维护检查（修 6 个问题）
+
+- **健康快照**：serve/watch 正常；slate 11-02…11-09 全部入库（11-09 8 场）；31 条注单
+  全部结算；`data` 分支快照 09:00Z、Pages 09:00Z；DB 29MB、日志 0.1MB、备份 7×24MB。
+- **① 缺 slate 兜底从未真正生效**：`_repair_missing_slates` 调 `ingest(conn, day)`，
+  但 `service.ingest_date(slate_date)` 只吃日期字符串 → 每次都抛异常并被 except 吞掉。
+  改为 `ingest(day)`，测试补上签名断言。
+- **② 缺 slate 日期推断偏一天**：原来 `substr(placed_at,1,10)`（UTC），凌晨 00:00–05:00Z
+  的注单会指向后一天。改用 `date(placed_at,'-5 hours')` 近似 ET。
+- **③ 本机盘口覆盖层每轮白打 ESPN**：`live_overlay` 走 `live_board`（每场 summary + sleep）。
+  改为只查 `games` + `live_market_snapshot`，零网络请求。
+- **④ ref 冲突会让同步崩**：`bets.id` 是普通 rowid，删除后复用，历史 `srv-53` 可能已属于
+  id=37；`normalize_refs` 撞 UNIQUE 直接抛错。改为两遍：正常补 `srv-<id>`，冲突行退
+  `srv-<id>-x`；补测试。回填脚本插入后也补 ref（之前留 NULL）。
+- **⑤ 日志无轮转 + Tee 脆弱**：`watch.log` 只增不减（README 声称会滚动但代码没有）；
+  Tee 在文件打不开时直接崩（曾因坚果云锁定 read-only 导致 watch 起不来）。
+  新增 `_rotate_log`（5MB → .1/.2/.3），Tee 打不开时降级为只写 stdout。
+- **⑥ 清理**：删除 56 个坚果云「冲突」副本（`app/web` 里的会被 export 带进发布目录）；
+  `export_static` 加 `ignore_patterns("*冲突*")`；pytest 用 `conftest.collect_ignore_glob`
+  替代非法的 `ignore` 配置项（警告消失）；删除 17 处未使用 import；`predict.py` 去掉 BOM；
+  把死配置 `BETTABLE_PRICE_OUTLIER` 接入 `_robust_pair_stats(tol=...)`（默认值不变）。
+- **结果**：**165 passed**（1 个仅 starlette 弃用警告），compileall 通过。

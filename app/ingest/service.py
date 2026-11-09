@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from .. import db
 from ..config import REQUEST_SLEEP

@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 import httpx
 
 from ..config import ESPN_BASE, REQUEST_SLEEP, REQUEST_TIMEOUT, USER_AGENT
-from ..models import ratings
 from ..pricing.devig import cover_prob, moneyline_prob, over_prob
 from .predict import latest_prediction
 from .signal_backtest import settle_edge
@@ -518,13 +517,21 @@ def live_overlay(conn: sqlite3.Connection, slate_date: str) -> dict:
     只含进行中比赛的 live_market（约 1-2KB），不含预测/台账。手机静态模式
     拿到后按 game_id 覆盖到 CI 的静态快照上：预测量仍以 github.io 为准，
     只有盘口换成本机 2 分钟级的新数据。
+
+    只读数据库（不调 ESPN）：watch 每轮都会调它，不能为此增加网络请求。
     """
-    board = live_board(conn, slate_date)
-    markets = {
-        str(g["game_id"]): g["live_market"]
-        for g in board.get("games") or []
-        if g.get("live_market")
-    }
+    rows = conn.execute(
+        """
+        SELECT id FROM games
+        WHERE slate_date=? AND status IN ('STATUS_IN_PROGRESS','STATUS_HALFTIME')
+        """,
+        (slate_date,),
+    ).fetchall()
+    markets = {}
+    for row in rows:
+        market = live_market_snapshot(conn, row["id"])
+        if market:
+            markets[str(row["id"])] = market
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "date": slate_date,

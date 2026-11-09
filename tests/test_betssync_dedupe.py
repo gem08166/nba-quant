@@ -166,3 +166,22 @@ def test_export_keeps_bets_without_ingested_game():
     assert payload["count"] == 1
     assert payload["bets"][0]["game_id"] == "unknown-game"
     assert payload["bets"][0]["matchup"] == "unknown-game"
+
+
+def test_normalize_refs_falls_back_when_srv_ref_is_taken():
+    """rowid 复用会让 `srv-<id>` 被历史行占用（实测 srv-53 属于 id=37）。
+
+    冲突行必须退到 `srv-<id>-x`，不能让整轮同步因为 UNIQUE 崩掉。
+    """
+    conn = _conn()
+    conn.execute("INSERT INTO bets(id, game_id, market, side, ref) VALUES (37,'g1','spread','home','srv-53')")
+    conn.execute("INSERT INTO bets(id, game_id, market, side, ref) VALUES (53,'g1','total','over',NULL)")
+    conn.commit()
+
+    changed = betssync.normalize_refs(conn)
+
+    assert changed == 1
+    refs = {r["id"]: r["ref"] for r in conn.execute("SELECT id, ref FROM bets")}
+    assert refs[37] == "srv-53"      # 原有引用不动
+    assert refs[53] == "srv-53-x"    # 冲突行退让，仍然唯一
+    assert betssync.normalize_refs(conn) == 0  # 幂等

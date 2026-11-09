@@ -223,7 +223,8 @@ def main() -> None:
         static_dir = site_root / "static"
         if static_dir.exists():
             shutil.rmtree(static_dir)
-        shutil.copytree(web_src, static_dir)
+        # 坚果云同步可能在本机生成「冲突」副本，别把它们带进发布目录
+        shutil.copytree(web_src, static_dir, ignore=shutil.ignore_patterns("*冲突*"))
         for name in ("index.html", "manifest.webmanifest", "sw.js"):
             if (web_src / name).exists():
                 shutil.copy2(web_src / name, site_root / name)

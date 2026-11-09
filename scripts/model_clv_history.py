@@ -17,13 +17,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections import defaultdict
 from datetime import datetime, timezone
 
 import numpy as np
 
 from app import db
-from app.config import DATA_DIR, MARKET_BLEND, SIGMA_MARGIN_FLOOR, SIGMA_TOTAL_FLOOR
+from app.config import DATA_DIR, MARKET_BLEND
 from app.jobs.signal_backtest import settle_edge
 from app.models import ratings
 from app.pricing.devig import cover_prob, fair_two_way, moneyline_prob, over_prob

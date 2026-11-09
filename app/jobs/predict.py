@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -174,7 +174,7 @@ def _mode(values: list[float]) -> float | None:
     return tied[mid] if len(tied) % 2 else (tied[mid - 1] + tied[mid]) / 2
 
 
-def _robust_pair_stats(entries: list[dict], tol: float = 0.08):
+def _robust_pair_stats(entries: list[dict], tol: float = BETTABLE_PRICE_OUTLIER):
     """鲁棒聚合：各书源去水公允概率，剔除与中位数偏差 > tol 的离群书源
     （防单源字段颠倒/坏数据污染共识，实测 hao-tiyu ML 反向案例），
     再取平均；价格为过滤后书源中的最优价，并记录其真实来源书名。"""

@@ -22,10 +22,15 @@ class Tee:
 
     pythonw（隐藏窗口常驻）下 sys.stdout / sys.stderr 是 None，
     所以两处写入都要判空——否则一启动就 AttributeError。
+    日志文件打不开（被占用/只读/坚果云锁）时降级为只写 stdout，
+    不能让常驻进程在启动阶段直接崩掉。
     """
 
     def __init__(self, path) -> None:
-        self.file = open(path, "a", encoding="utf-8")
+        try:
+            self.file = open(path, "a", encoding="utf-8")
+        except OSError:
+            self.file = None
         self.stdout = sys.stdout
 
     def write(self, text: str) -> None:
@@ -34,6 +39,8 @@ class Tee:
                 self.stdout.write(text)
             except (OSError, ValueError):
                 pass
+        if self.file is None:
+            return
         try:
             self.file.write(text)
             self.file.flush()
@@ -46,6 +53,8 @@ class Tee:
                 self.stdout.flush()
             except (OSError, ValueError):
                 pass
+        if self.file is None:
+            return
         try:
             self.file.flush()
         except OSError:
@@ -53,10 +62,14 @@ class Tee:
 
 
 def _missing_slate_days(conn) -> list[str]:
-    """有注单、但 games 表缺行的比赛日（按注单 placed_at 推断），升序返回。"""
+    """有注单、但 games 表缺行的比赛日（按注单 placed_at 推断），升序返回。
+
+    用 UTC−5 近似 ET 比赛日：凌晨 00:00–05:00Z 下的注单属于前一天的 slate
+    （例：11-06T02:00Z 的比赛是 11-05 ET）。否则会去补拉一个不存在的日期。
+    """
     rows = conn.execute(
         """
-        SELECT DISTINCT substr(b.placed_at, 1, 10) AS slate_date
+        SELECT DISTINCT date(b.placed_at, '-5 hours') AS slate_date
         FROM bets b LEFT JOIN games g ON g.id = b.game_id
         WHERE g.id IS NULL AND b.placed_at IS NOT NULL
         """
@@ -65,11 +78,14 @@ def _missing_slate_days(conn) -> list[str]:
 
 
 def _repair_missing_slates(conn, ingest=service.ingest_date) -> list[str]:
-    """补 ingest 缺失的 slate；修不好的（ESPN 也没这场）下次不再重试。"""
+    """补 ingest 缺失的 slate；修不好的（ESPN 也没这场）下次不再重试。
+
+    注意：`service.ingest_date(slate_date)` 自己开连接，不吃 conn。
+    """
     repaired: list[str] = []
     for day in _missing_slate_days(conn):
         try:
-            stats = ingest(conn, day)
+            stats = ingest(day)
             print(f"[watch] repair missing slate {day}: {stats}")
             repaired.append(day)
         except Exception as exc:  # noqa: BLE001
@@ -135,6 +151,32 @@ def _notify_settlements(settled: list[dict]) -> None:
     notify.send("NBA Quant 注单结算", "\n".join(lines) + f"\n合计 {total:+.2f}")
 
 
+def _rotate_log(path, max_bytes: int = 5 * 1024 * 1024, keep: int = 3) -> list[str]:
+    """日志超过 max_bytes 时滚动：watch.log → watch.log.1 → .2 → .3。
+
+    pythonw 常驻进程没有外部日志轮转，跑几个月会把 data/watch.log 写爆；
+    在启动时滚一次即可（每次重启都是新文件，长期运行的单个进程也很少跨月）。
+    """
+    import os
+
+    moved: list[str] = []
+    try:
+        if not path.exists() or path.stat().st_size <= max_bytes:
+            return moved
+        for i in range(keep - 1, 0, -1):
+            src = path.with_name(f"{path.name}.{i}")
+            dst = path.with_name(f"{path.name}.{i + 1}")
+            if src.exists():
+                os.replace(src, dst)
+                moved.append(str(dst))
+        dst = path.with_name(f"{path.name}.1")
+        os.replace(path, dst)
+        moved.append(str(dst))
+    except OSError:
+        pass
+    return moved
+
+
 def run(interval: float | None = None, with_ingest: bool = True, once: bool = False) -> None:
     """Long-running loop: ingest once a day, capture closing lines, settle bets,
     re-predict and push new signals. Hardened: file log, failure alerts,
@@ -143,9 +185,12 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
 
     log_path = ROOT / "data" / "watch.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    rotated = _rotate_log(log_path)
     sys.stdout = Tee(log_path)
     # pythonw/无控制台常驻时 traceback 也要落盘，否则崩溃无痕
     sys.stderr = sys.stdout
+    if rotated:
+        print(f"[watch] log rotated -> {', '.join(rotated)}")
 
     interval = interval or WATCH_INTERVAL
     providers = notify.providers_enabled()

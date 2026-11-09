@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from datetime import datetime, timezone
 
 import numpy as np
@@ -25,7 +24,6 @@ import numpy as np
 from app import db
 from app.config import DATA_DIR
 from app.models import ratings
-from app.pricing.devig import norm_cdf
 
 
 def run(split: float = 0.7, min_games: int = 100) -> dict:

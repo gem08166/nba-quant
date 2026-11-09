@@ -127,8 +127,10 @@ def normalize_refs(conn: sqlite3.Connection) -> int:
     """给没有 ref 的历史注单补上 `srv-<id>`（服务端创建的都走这个规则），
     否则云端合回时会因为 ref 对不上而产生重复。
 
-    只碰 ref IS NULL 的行；如果目标 `srv-<id>` 已被占用（理论上不可能——
-    占用者本身就是那条注单），跳过该行而不是让整轮同步崩溃。
+    注意：bets.id 是普通 INTEGER PRIMARY KEY，删除后 rowid 会被复用，
+    历史 `srv-<id>` 引用可能已经指向另一条注单（本地实测出现过
+    `srv-53` 属于 id=37 的情况）。第一遍正常补；冲突的行退到
+    `srv-<id>-x`（id 唯一，后缀保证不撞），绝不因为 UNIQUE 让整轮同步崩溃。
     """
     cur = conn.execute(
         """
@@ -137,8 +139,16 @@ def normalize_refs(conn: sqlite3.Connection) -> int:
           AND NOT EXISTS (SELECT 1 FROM bets b2 WHERE b2.ref = 'srv-' || bets.id)
         """
     )
+    first = cur.rowcount
+    cur2 = conn.execute(
+        """
+        UPDATE bets SET ref = 'srv-' || id || '-x'
+        WHERE ref IS NULL
+          AND NOT EXISTS (SELECT 1 FROM bets b2 WHERE b2.ref = 'srv-' || bets.id || '-x')
+        """
+    )
     conn.commit()
-    return cur.rowcount
+    return first + cur2.rowcount
 
 
 def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:

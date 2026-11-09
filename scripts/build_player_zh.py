@@ -16,7 +16,6 @@ import json
 import re
 import time
 import unicodedata
-from pathlib import Path
 
 import httpx
 

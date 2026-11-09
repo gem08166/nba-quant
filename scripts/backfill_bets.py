@@ -183,7 +183,7 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
         inserted += 1
 
         if not dry_run:
-            conn.execute(
+            cur = conn.execute(
                 """
                 INSERT INTO bets(game_id, market, side, line, price, stake,
                                 model_prob, ev, clv, placed_at, note, result, profit)
@@ -205,6 +205,8 @@ def backfill(conn, stake: float = 1.0, start: str | None = None, end: str | None
                     round(profit, 4),
                 ),
             )
+            # 回填注单也要有稳定 ref（否则云端合回时只能靠自然键，且唯一索引留空）
+            conn.execute("UPDATE bets SET ref = 'srv-' || id WHERE id = ?", (cur.lastrowid,))
             existing.add(key)
     if not dry_run:
         conn.commit()

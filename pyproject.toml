@@ -28,6 +28,5 @@ include = ["app*", "scripts*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-# 排除坚果云同步产生的「冲突-xxx_Win10」副本文件（不带 test_ 前缀的会被
-# python_files 挡掉，但这个文件名以 test_ 开头，需要显式 ignore）
-ignore = ["tests/*-冲突-*_Win10.py"]
+# 坚果云同步产生的「冲突-xxx_Win10」副本在 tests/conftest.py 里用
+# collect_ignore_glob 排除（`ignore` 不是 pytest 的合法配置项）。

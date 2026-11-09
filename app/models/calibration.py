@@ -7,8 +7,6 @@ from __future__ import annotations
 使用顺序（第三方审查要求）：先校准原始概率，再与市场融合；不校准融合后概率。
 """
 
-from typing import Any
-
 
 def isotonic_fit(xs: list[float], ys: list[float]) -> list[list[float]]:
     """PAVA：返回块列表 [weight, mean, x_start, x_end]（按 x 升序，均值单调递增）。"""
