@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    NBA Quant — 记分台设计系统
    ------------------------------------------------------------
    参照 NBA 记分台（scorer's table）：冷调石墨控制台 + 纸白记分卡。
@@ -67,7 +67,7 @@
 
   --text: #dfe3ea;
   --text-dim: #a8b0bd;
-  --muted: #79828f;
+  --muted: #8a94a3;
 
   /* 语义色 */
   --green: #46b95c;
@@ -101,7 +101,12 @@ body {
   font: 14px/1.6 var(--font-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* 表单控件（日期/下拉）跟随记分台配色，不吃浏览器默认蓝 */
+  accent-color: #3fb950;
 }
+
+/* tab 粘性定位后锚点跳转不留遮挡 */
+[id^="tab-"] { scroll-margin-top: 60px; }
 
 ::selection { background: rgba(70, 185, 92, 0.28); }
 
@@ -124,7 +129,12 @@ body {
 .wrap {
   width: min(1200px, 100%);
   margin: 0 auto;
-  padding: 0 20px 72px;
+  /* APK 全面屏/刘海屏：底部留出系统手势区 */
+  padding: 0 20px calc(72px + env(safe-area-inset-bottom));
+}
+
+.topbar {
+  padding-top: calc(20px + env(safe-area-inset-top, 0px));
 }
 
 /* ---------- 顶栏：记分牌灯箱 ---------- */
@@ -143,6 +153,11 @@ body {
     radial-gradient(520px 160px at 96% -70%, rgba(75, 143, 214, 0.10), transparent 60%);
 }
 
+/* APK 刘海屏：顶栏 padding-top 交给安全区变量接管 */
+@supports (padding: env(safe-area-inset-top)) {
+  .topbar { padding-top: calc(16px + env(safe-area-inset-top, 0px)); }
+}
+
 .brand { display: flex; align-items: center; gap: 13px; }
 
 /* 记分台上的计时器方块 */
@@ -159,6 +174,7 @@ body {
   font-size: 19px;
   line-height: 1;
   box-shadow: inset 0 0 0 1px rgba(70, 185, 92, 0.14);
+  flex: none;
 }
 
 h1 {
@@ -173,7 +189,7 @@ h1 {
   margin: 3px 0 0;
   color: var(--muted);
   font-family: var(--font-num);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.02em;
 }
 
@@ -210,6 +226,14 @@ input:focus, select:focus {
 }
 .btn:hover { border-color: #3d4756; background: var(--panel-3); transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+.btn.primary:disabled { background: #1d5c31; border-color: #2f8a48; }
 .btn.primary {
   background: #1d5c31;
   border-color: #2f8a48;
@@ -272,7 +296,7 @@ input:focus, select:focus {
 .stat:last-child { border-right: 0; }
 .stat .k {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
 }
@@ -338,7 +362,7 @@ input:focus, select:focus {
   justify-content: space-between;
   align-items: center;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   margin-bottom: 9px;
   gap: 8px;
 }
@@ -354,7 +378,7 @@ input:focus, select:focus {
   background: #141922;
   border: 1px solid var(--line);
   font-family: var(--font-num);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -388,7 +412,8 @@ input:focus, select:focus {
 @keyframes blink { 50% { opacity: 0.25; } }
 .score.live-score { font-size: 19px; }
 
-/* 唯一记忆点：纸白记分卡 —— 最终比分像一张裁下来的记分纸 */
+/* 唯一记忆点：纸白记分卡 —— 最终比分像一张裁下来的记分纸
+   （纸面纹理是刻意的材质：等宽刻度线不是装饰渐变） */
 .score.final-score {
   display: inline-block;
   margin-left: 10px;
@@ -397,9 +422,7 @@ input:focus, select:focus {
   font-size: 18px;
   font-weight: 600;
   color: var(--paper-ink);
-  background:
-    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.022) 0 1px, transparent 1px 3px),
-    var(--paper);
+  background: var(--paper);
   letter-spacing: 0.06em;
   vertical-align: 2px;
 }
@@ -453,7 +476,7 @@ input:focus, select:focus {
   padding: 4px 15px;
   background: #1d5c31;
   color: #eafbee;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
 }
@@ -468,7 +491,7 @@ input:focus, select:focus {
   flex: none;
   background: var(--green);
   color: #06180c;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   padding: 2px 7px;
@@ -486,10 +509,10 @@ input:focus, select:focus {
   border-radius: 2px;
   padding: 1px 7px;
   font-family: var(--font-num);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
 }
-.bp-hint { color: var(--muted); font-size: 11.5px; }
+.bp-hint { color: var(--muted); font-size: 12px; }
 .bp-list {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -526,7 +549,7 @@ input:focus, select:focus {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.bp-book { color: var(--muted); font-size: 11px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-book { color: var(--muted); font-size: 12px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bp-ev {
   color: var(--green);
   font-family: var(--font-num);
@@ -556,10 +579,10 @@ tr.row-bettable td { background: rgba(70, 185, 92, 0.09); }
 tr.row-bettable td:first-child { font-weight: 700; color: #c3e6cd; }
 /* 收益页「真实 vs 模拟」对比表：主行加粗、明细行缩进变灰 */
 tr.main-row td { font-weight: 650; }
-tr.sub td { color: var(--muted); font-size: 11.5px; }
+tr.sub td { color: var(--muted); font-size: 12px; }
 
 .bets-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.bets-toolbar .hint { color: var(--muted); font-size: 11.5px; }
+.bets-toolbar .hint { color: var(--muted); font-size: 12px; }
 
 @media (max-width: 560px) {
   .bp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; }
@@ -602,7 +625,6 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
 }
 .live-dot.on {
   background: var(--red);
-  box-shadow: 0 0 8px rgba(224, 87, 79, 0.8);
   animation: pulse 1.2s infinite;
 }
 @keyframes pulse { 50% { opacity: 0.35; } }
@@ -633,11 +655,11 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   justify-content: space-between;
   color: var(--muted);
   font-family: var(--font-num);
-  font-size: 11px;
+  font-size: 12px;
   margin: 4px 0 0 46px;
   font-variant-numeric: tabular-nums;
 }
-.wp-src { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.wp-src { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .mom { font-size: 12px; margin-left: 2px; }
 .mom.up { color: var(--green); }
 .mom.down { color: var(--red); }
@@ -658,13 +680,13 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   margin-bottom: 6px;
 }
 .lm-title {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--amber);
 }
 .lm-src {
   font-family: var(--font-num);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--muted);
 }
 .lm-row {
@@ -676,7 +698,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 .lm-k { color: var(--muted); }
@@ -689,7 +711,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
 }
 .lm-px {
   font-family: var(--font-num);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -703,7 +725,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   border-radius: 2px;
   background: rgba(232, 163, 61, 0.08);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
@@ -744,7 +766,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   flex-direction: column;
   gap: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .lm-panel-grid input { width: 100%; }
 .lm-panel-meta {
@@ -759,7 +781,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
 .lm-panel-actions { display: flex; gap: 8px; margin-top: 11px; }
 .lm-panel-note {
   margin-top: 9px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -768,7 +790,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
 .live-market.lm-muted .lm-title { color: var(--muted); }
 .lm-badge {
   margin-left: auto;
-  font-size: 10.5px;
+  font-size: 11px;
   padding: 1px 6px;
   border-radius: 2px;
   border: 1px solid rgba(232, 163, 61, 0.4);
@@ -779,7 +801,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
 .lm-badge.warn { border-color: #6b4a15; background: #241a0c; }
 .lm-note {
   margin-top: 7px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--muted);
 }
@@ -801,7 +823,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   border-radius: var(--radius-sm);
   padding: 6px 9px;
 }
-.play .pc { color: var(--muted); margin-right: 6px; font-family: var(--font-num); font-size: 11px; font-variant-numeric: tabular-nums; }
+.play .pc { color: var(--muted); margin-right: 6px; font-family: var(--font-num); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* ---------- 赛后复盘 ---------- */
 
@@ -817,7 +839,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   border-radius: var(--radius-sm);
 }
 .post-title {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--text-dim);
   margin-bottom: 6px;
@@ -834,7 +856,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
 }
 .post-block .meta { font-size: 12px; color: var(--muted); margin: 3px 0; }
 .post-sig-title {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   margin: 8px 0 4px;
 }
@@ -904,7 +926,7 @@ tr.sub td { color: var(--muted); font-size: 11.5px; }
   overflow: hidden;
 }
 .model-cell { background: var(--panel); padding: 10px 11px; }
-.model-cell .k { color: var(--muted); font-size: 11px; }
+.model-cell .k { color: var(--muted); font-size: 12px; }
 .model-cell .v {
   font-family: var(--font-num);
   font-size: 17px;
@@ -931,7 +953,7 @@ th, td {
 th {
   color: var(--muted);
   font-weight: 600;
-  font-size: 11px;
+  font-size: 12px;
 }
 tbody tr { transition: background 0.12s ease; }
 tbody tr:hover { background: rgba(42, 49, 61, 0.3); }
@@ -986,7 +1008,7 @@ td.neg { color: var(--muted); }
 .ledger-section:first-child { margin-top: 0; }
 .ledger-count {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
@@ -1018,7 +1040,7 @@ td.neg { color: var(--muted); }
 }
 .ledger-day-sub {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .bet-edit { color: var(--muted); font-size: 12px; }
@@ -1035,7 +1057,7 @@ td.neg { color: var(--muted); }
 }
 .be-profit-auto {
   margin-top: 4px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -1044,7 +1066,7 @@ td.neg { color: var(--muted); }
 .ledger-hint {
   margin: 0 0 8px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -1062,7 +1084,7 @@ td.neg { color: var(--muted); }
   display: inline-block;
   padding: 1px 7px;
   border-radius: 2px;
-  font-size: 11px;
+  font-size: 12px;
   border: 1px solid var(--line);
   color: var(--muted);
 }
@@ -1104,7 +1126,7 @@ td.neg { color: var(--muted); }
   gap: 8px;
   align-items: end;
 }
-.form-grid label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+.form-grid label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .form-grid input, .form-grid select { width: 100%; padding: 8px 9px; }
 .form-grid .btn { width: 100%; }
 
@@ -1191,7 +1213,7 @@ td.neg { color: var(--muted); }
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   padding: 2px 10px;
   cursor: pointer;
@@ -1214,7 +1236,7 @@ td.neg { color: var(--muted); }
 .chart-card canvas { display: block; }
 .chart-note {
   margin: 8px 2px 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -1239,8 +1261,10 @@ body.static-mode .form-grid {
 body.static-mode .bets-scope::after {
   content: "本机浏览器记录 · 不同步";
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
+
+/* ---------- 静态文件缓存策略（serve 端加 no-cache 头，Pages 端由 SW network-first 保证） ---------- */
 
 /* ---------- 响应式 ---------- */
 
@@ -1309,7 +1333,7 @@ body.static-mode .bets-scope::after {
   padding-top: 8px;
   border-top: 1px solid var(--line-soft);
 }
-.card-actions .btn { font-size: 11.5px; padding: 3px 10px; }
+.card-actions .btn { font-size: 12px; padding: 3px 10px; }
 
 /* 赛时看板：每节得分（客 : 主） */
 .qs-row {
@@ -1341,7 +1365,7 @@ body.static-mode .bets-scope::after {
 
 /* 赛时卡片：有未结算注单的标注 */
 .card.has-bet { border-color: #4a3a15; }.bet-tag {
-  font-size: 10.5px;
+  font-size: 11px;
   padding: 1px 6px;
   border-radius: 2px;
   background: rgba(232, 163, 61, 0.12);
@@ -1351,7 +1375,7 @@ body.static-mode .bets-scope::after {
 }
 .bet-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 2px; }
 .bet-chip {
-  font-size: 11px;
+  font-size: 12px;
   padding: 2px 7px;
   border-radius: 2px;
   background: rgba(232, 163, 61, 0.07);

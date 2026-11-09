@@ -650,7 +650,11 @@ document.getElementById("tabs").addEventListener("click", (event) => {
   const button = event.target.closest("[data-tab]");
   if (!button) return;
   const target = button.dataset.tab;
-  document.querySelectorAll("#tabs .tab").forEach((tab) => tab.classList.toggle("active", tab === button));
+  document.querySelectorAll("#tabs .tab").forEach((tab) => {
+    const on = tab === button;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+  });
   ["slate", "live", "post", "bets", "research"].forEach((name) => {
     const panel = document.getElementById(`tab-${name}`);
     if (panel) panel.hidden = name !== target;

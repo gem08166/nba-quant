@@ -185,7 +185,7 @@ function renderSourceStats(bySource, byKind) {
         ${row("信号模拟（历史回填）", sim, "main-row")}
       </tbody>
     </table></div>
-    <p class="notice" style="border:none;margin:-6px 0 16px;padding:0;font-size:11.5px;line-height:1.6">
+    <p class="notice" style="border:none;margin:-6px 0 16px;padding:0;font-size:12px;line-height:1.6">
       <b>我的注单</b>是你真实记录过的（包括跟信号记一笔、手动录入、滚球）；
       <b>信号模拟</b>是脚本用历史信号补的回顾性注单，用来扩大样本，<b>不是成绩</b>。
       两者口径不同，请分开看。

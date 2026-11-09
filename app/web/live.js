@@ -1,4 +1,4 @@
-// 赛时看板：实时比分 + ESPN 胜率 + 模型剩余时间投影。30 秒自动刷新。
+﻿// 赛时看板：实时比分 + ESPN 胜率 + 模型剩余时间投影。30 秒自动刷新。
 // 依赖 app.js 的 api()/esc()/fmt* 工具与全局 state.date。
 
 let liveTimer = null;
@@ -715,9 +715,9 @@ async function loadLive(force = false) {
           /* 没有坚果云 / 本机没在推 → 忽略 */
         }
       }
-      data = await espnLive(requestedDate);
+      data = await espnLive(bjToSlate(requestedDate));
     } else {
-      data = await api(`/api/live?date=${encodeURIComponent(requestedDate)}`);
+      data = await api(`/api/live?date=${encodeURIComponent(bjToSlate(requestedDate))}`);
     }
     if (myToken !== liveToken) return; // 过期响应，丢弃
     const box = document.getElementById("live-games");
@@ -772,8 +772,8 @@ async function loadPost(force = false) {
     const requestedDate = state.date;
     const data =
       window.APP_MODE === "static"
-        ? await espnLive(requestedDate)
-        : await api(`/api/live?date=${encodeURIComponent(requestedDate)}`);
+        ? await espnLive(bjToSlate(requestedDate))
+        : await api(`/api/live?date=${encodeURIComponent(bjToSlate(requestedDate))}`);
     if (myToken !== postToken) return; // 已有更新的请求，丢弃这次结果
     const done = (data.games || []).filter((g) => g.state === "post");
     if (!done.length) {

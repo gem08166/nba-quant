@@ -39,22 +39,32 @@ async def token_auth(request: Request, call_next):
 
 
 app.include_router(router)
+
+
+def _no_cache_response(path: str, media_type: str) -> FileResponse:
+    """HTML/JS/CSS/SW：每次都重新验证（ETag 协商），避免浏览器启发式缓存
+    把旧脚本喂给新会话（实测静态文件更新后新 tab 仍加载旧 JS）。"""
+    resp = FileResponse(WEB_DIR / path, media_type=media_type)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(WEB_DIR / "index.html")
+    return _no_cache_response("index.html", "text/html")
 
 
 @app.get("/manifest.webmanifest")
 def manifest() -> FileResponse:
-    return FileResponse(WEB_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+    return _no_cache_response("manifest.webmanifest", "application/manifest+json")
 
 
 @app.get("/sw.js")
 def service_worker() -> FileResponse:
-    return FileResponse(WEB_DIR / "sw.js", media_type="application/javascript")
+    return _no_cache_response("sw.js", "application/javascript")
 
 
 @app.get("/favicon.ico")
