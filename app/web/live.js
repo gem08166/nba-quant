@@ -724,7 +724,7 @@ async function loadLive(force = false) {
     const inPlay = data.games.filter((g) => g.state === "in").length;
     lastLiveGames = data.games || [];
     if (!data.games.length) {
-      box.innerHTML = `<div class="empty">${esc(data.date)} 没有比赛。换一天，或先 ingest 该日期赛程。</div>`;
+      box.innerHTML = `<div class="empty">${bjSlateLabel(data.date)} 没有比赛。换一天，或先 ingest 该日期赛程。</div>`;
     } else {
       box.innerHTML = data.games.map(liveCard).join("");
     }
@@ -748,6 +748,18 @@ async function loadLive(force = false) {
 // 每次加载自增，渲染前校验是否仍是最新一次。
 let postToken = 0;
 
+
+// slate_date 是美国东部比赛日（数据库主键口径）；北京观众实际看球在次日。
+// 显示层统一换算：北京日期 = slate + 1 天，并标注“北京时间”。
+function bjSlateLabel(slate) {
+  if (!slate) return "—";
+  const d = new Date(slate + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  const day = d.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit" });
+  const week = d.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", weekday: "short" });
+  return `${day} ${week}（北京时间）`;
+}
+
 async function loadPost(force = false) {
   const myToken = ++postToken;
   const dot = document.getElementById("post-dot");
@@ -765,9 +777,9 @@ async function loadPost(force = false) {
     if (myToken !== postToken) return; // 已有更新的请求，丢弃这次结果
     const done = (data.games || []).filter((g) => g.state === "post");
     if (!done.length) {
-      box.innerHTML = `<div class="empty">${esc(data.date)} 没有已结束的比赛。赛后复盘会在比赛收官后出现——点上方「跳到最近完赛日」查看往期。</div>`;
+      box.innerHTML = `<div class="empty">${bjSlateLabel(data.date)} 没有已结束的比赛。赛后复盘会在比赛收官后出现——点上方「跳到最近完赛日」查看往期。</div>`;
       if (stats) stats.innerHTML = "";
-      status.textContent = `${esc(data.date)} · 0 场已结束`;
+      status.textContent = `${bjSlateLabel(data.date)} · 0 场已结束`;
       return;
     }
     box.innerHTML = done.map(postCard).join("");
@@ -776,7 +788,7 @@ async function loadPost(force = false) {
     if (!done.some((g) => g.pregame)) {
       const hint = document.createElement("div");
       hint.className = "empty";
-      hint.innerHTML = `${esc(data.date)} 的比赛没有赛前预测记录（模型从 2026-11-04 才开始保存预测），只能看到最终比分与注单。`;
+      hint.innerHTML = `${bjSlateLabel(data.date)} 的比赛没有赛前预测记录（模型从 2026-11-04 才开始保存预测），只能看到最终比分与注单。`;
       box.appendChild(hint);
     }
 
@@ -829,7 +841,7 @@ async function loadPost(force = false) {
         ),
       ].join("");
     }
-    status.textContent = `${esc(data.date)} · ${done.length} 场已结束 · 更新于 ${new Date().toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" })}`;
+    status.textContent = `${bjSlateLabel(data.date)} · ${done.length} 场已结束 · 更新于 ${new Date().toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" })}`;
   } catch (error) {
     if (myToken === postToken) status.textContent = `加载失败：${error.message}`;
   } finally {
@@ -865,7 +877,7 @@ async function jumpToLastFinished() {
       if (el) el.value = target;
       await loadPost(true);
       const rendered = document.querySelectorAll(".post-card").length || n;
-      toast(`已跳到 ${target}（${rendered} 场已结束）`);
+      toast(`已跳到 ${bjSlateLabel(target)}（${rendered} 场已结束）`);
       return;
     }
 
@@ -884,7 +896,7 @@ async function jumpToLastFinished() {
         const el = document.getElementById("date");
         if (el) el.value = day;
         await loadPost(true);
-        toast(`已跳到 ${day}（${done.length} 场已结束）`);
+        toast(`已跳到 ${bjSlateLabel(day)}（${done.length} 场已结束）`);
         return;
       }
       if (!fallback) fallback = { day, n: done.length };
@@ -894,7 +906,7 @@ async function jumpToLastFinished() {
       const el = document.getElementById("date");
       if (el) el.value = fallback.day;
       await loadPost(true);
-      toast(`已跳到 ${fallback.day}（${fallback.n} 场已结束，该日无赛前预测记录）`);
+      toast(`已跳到 ${bjSlateLabel(fallback.day)}（${fallback.n} 场已结束，该日无赛前预测记录）`);
       return;
     }
     toast("没有已结束的比赛日期");
