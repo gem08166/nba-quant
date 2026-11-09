@@ -151,19 +151,25 @@ def normalize_refs(conn: sqlite3.Connection) -> int:
     return first + cur2.rowcount
 
 
-def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
+def merge_rows(
+    conn: sqlite3.Connection,
+    rows: list[dict],
+    tombstones: set[str] | None = None,
+) -> dict:
     """把 PWA 形状的注单合并进 bets 表（幂等：同一注单只落一次）。
 
     身份判定：
       1. `ref` / `id`（同一份导出重复导入 → 直接命中）；
       2. 自然键 `natural_key()`（换了 ref、毫秒/时区写法不同、浮点线噪声）。
+    tombstones：已删除的 ref 集合——命中则直接跳过（旧版手机重新推送也复活不了）。
     合并规则（单调）：
       - 已存在的 open 注单 ← 云端已结算（won/lost/push）可覆盖，并补收盘线/CLV；
       - 双方都已结算且结果相同 → 只补空的收盘线/CLV/profit；
       - 已结算 ← open（任何情况都不降级）；
       - 其余重复 → 跳过。
     """
-    added = updated = duplicates = invalid = 0
+    added = updated = duplicates = invalid = blocked = 0
+    tombstones = tombstones or set()
     seen: set[tuple] = set()
     for row in rows or []:
         if not isinstance(row, dict) or not row.get("game_id") or not row.get("market") or not row.get("side"):
@@ -173,6 +179,9 @@ def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
             ref = _ref(row)
         except Exception:  # noqa: BLE001 - 单条坏数据不影响整批
             invalid += 1
+            continue
+        if ref in tombstones:
+            blocked += 1  # 已删除的注单：旧版手机重新推送也不复活
             continue
         key = natural_key(row)
         if key in seen:  # 同一批文件里的重复行
@@ -263,13 +272,14 @@ def merge_rows(conn: sqlite3.Connection, rows: list[dict]) -> dict:
     return {
         "added": added,
         "updated": updated,
-        "skipped": duplicates + invalid,
+        "skipped": duplicates + invalid + blocked,
         "duplicates": duplicates,
         "invalid": invalid,
+        "blocked": blocked,
     }
 
 
-def import_rows(conn: sqlite3.Connection, payload) -> dict:
+def import_rows(conn: sqlite3.Connection, payload, tombstones: set[str] | None = None) -> dict:
     """接受多种导出形状：裸数组 / {bets:[...]} / {rows:[...]}。"""
     rows = payload
     if isinstance(payload, dict):
@@ -277,8 +287,8 @@ def import_rows(conn: sqlite3.Connection, payload) -> dict:
         if rows is None:
             rows = payload.get("rows")
     if not isinstance(rows, list):
-        return {"added": 0, "updated": 0, "skipped": 1, "duplicates": 0, "invalid": 1}
-    return merge_rows(conn, rows)
+        return {"added": 0, "updated": 0, "skipped": 1, "duplicates": 0, "invalid": 1, "blocked": 0}
+    return merge_rows(conn, rows, tombstones=tombstones)
 
 
 def export_payload(conn: sqlite3.Connection) -> dict:
@@ -401,7 +411,7 @@ def run(
                 rows = json.loads(text or "[]")
                 if isinstance(rows, dict):
                     rows = rows.get("bets") or []
-                result = merge_rows(conn, rows if isinstance(rows, list) else [])
+                result = merge_rows(conn, rows if isinstance(rows, list) else [], tombstones=deletions)
                 stats["inbox_merged"] += result["added"]
                 stats["inbox_updated"] += result.get("updated", 0)
                 if not pull_only:
@@ -417,7 +427,7 @@ def run(
         try:
             rows = json.loads(ledger_text)
             if isinstance(rows, list):
-                result = merge_rows(conn, rows)
+                result = merge_rows(conn, rows, tombstones=deletions)
                 stats["ledger_merged"] = result["added"]
                 stats["ledger_updated"] = result.get("updated", 0)
         except (json.JSONDecodeError, TypeError) as exc:

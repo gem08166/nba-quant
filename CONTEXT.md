@@ -1027,5 +1027,11 @@ README.md              # 用户文档（含第 0 节验证结论）
     静态导出/数据分支不再带回。
 - **验证**：清空 12 条回填 → 墓碑 12 条 → 重新回填 1 条可下注 → 本地/云端 20 条（1 条模拟）；
   再触发 CI 后 Pages 也是 20 条、旧「回填 赛前信号」全部消失。
-- **测试**：`tests/test_betssync_tombstones.py` 3 例（按 ref 删除幂等 / run 先合并后删 /
-  墓碑并集与持久化）。
+- **CI 补齐**：`refresh.yml`（每日两次）原本完全不跑 betssync → 它的导出会带旧注单。
+  在恢复 DB 后加 `bets-sync --pull-only`（合并云端台账 + 应用墓碑，不回推）。
+- **手机端补齐**：`LB.davSync()` 现在也会拉 `nbaq/deleted.json`，把本机已被删的注单
+  一并移除，否则手机一推又复活（toast 显示「按云端墓碑删除 N 条」）。
+- **服务端兜底**：`merge_rows(..., tombstones=…)` 在合并阶段直接跳过墓碑 ref
+  （返回 `blocked` 计数）——旧版手机把已删注单重新推到云端也复活不了。
+- **测试**：`tests/test_betssync_tombstones.py` 4 例（按 ref 删除幂等 / 合并阶段拦截 /
+  run 先合并后删 / 墓碑并集与持久化）。

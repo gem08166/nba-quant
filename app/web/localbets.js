@@ -414,6 +414,23 @@ async function lbDavSync() {
   } catch (_) {
     /* 云端还没有台账文件 */
   }
+  // 删除墓碑：别的设备删掉的注单，本机也要删，否则本机一推又把它复活
+  let removed = 0;
+  try {
+    const deletedText = await window.DAV.davGetText("nbaq/deleted.json");
+    if (deletedText) {
+      const payload = JSON.parse(deletedText);
+      const refs = new Set((payload?.refs || []).map(String));
+      if (refs.size) {
+        const list = window.LB.read();
+        const kept = list.filter((bet) => !refs.has(String(bet.ref || bet.id || "")));
+        removed = list.length - kept.length;
+        if (removed) window.LB.write(kept);
+      }
+    }
+  } catch (_) {
+    /* 没有墓碑文件（旧版本）忽略 */
+  }
   const list = window.LB.read();
   const body = JSON.stringify(list, null, 1);
   const hash = await sha1Hex(body);
@@ -424,7 +441,7 @@ async function lbDavSync() {
     localStorage.setItem("nbaq:dav:ledger-hash", hash);
     pushed = true;
   }
-  return { mergedIn, pushed };
+  return { mergedIn, pushed, removed };
 }
 
 async function sha1Hex(text) {

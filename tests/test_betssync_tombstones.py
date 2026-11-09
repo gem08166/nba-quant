@@ -84,17 +84,24 @@ class _FakeDav:
 
 
 def test_run_applies_tombstone_after_merging(monkeypatch):
-    # 云端台账还带着 srv-1，但墓碑说它被删了 → 最终不能留在本地
+    # 云端台账还带着 srv-1，但墓碑说它被删了 → 合并阶段就拦住，最终不能留在本地
     fake = _FakeDav(monkeypatch, ["srv-1"])
     fake.push_digest_reset()
     conn = _conn()
 
     stats = betssync.run(conn, pull_only=True)
 
-    assert stats["ledger_merged"] == 2
-    assert stats["deleted"] == 1
+    assert stats["ledger_merged"] == 1  # 只有 srv-2 被合并
     refs = {r["ref"] for r in conn.execute("SELECT ref FROM bets")}
     assert refs == {"srv-2"}
+
+
+def test_merge_rows_skips_tombstoned_ref_without_inserting():
+    conn = _conn()
+    result = betssync.merge_rows(conn, [_bet("srv-1"), _bet("srv-2", line=-4.5)], tombstones={"srv-1"})
+    assert result["added"] == 1
+    assert result["blocked"] == 1
+    assert {r["ref"] for r in conn.execute("SELECT ref FROM bets")} == {"srv-2"}
 
 
 def test_record_deletions_unions_and_persists(monkeypatch):

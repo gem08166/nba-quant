@@ -947,7 +947,10 @@ function renderBetsToolbar() {
     document.getElementById("bets-dav-sync").addEventListener("click", async () => {
       try {
         const result = await window.LB.davSync();
-        toast(`同步完成：拉入 ${result.mergedIn ?? 0} 条${result.pushed ? "，已上传" : ""}`);
+        const parts = [`拉入 ${result.mergedIn ?? 0} 条`];
+        if (result.removed) parts.push(`按云端墓碑删除 ${result.removed} 条`);
+        if (result.pushed) parts.push("已上传");
+        toast(`同步完成：${parts.join(" · ")}`);
         await loadBets();
       } catch (error) {
         toast(`同步失败：${error.message}`);
