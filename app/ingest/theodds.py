@@ -17,7 +17,13 @@ from datetime import datetime, timezone
 
 import httpx
 
-from ..config import DATA_DIR, REQUEST_TIMEOUT, THE_ODDS_API_KEYS, THE_ODDS_API_MIN_HOURS
+from ..config import (
+    DATA_DIR,
+    ODDS_CLOSE_WINDOW_HOURS,
+    REQUEST_TIMEOUT,
+    THE_ODDS_API_KEYS,
+    THE_ODDS_API_MIN_HOURS,
+)
 
 API_BASE = "https://api.the-odds-api.com/v4"
 SPORT_NBA = "basketball_nba"
@@ -75,13 +81,42 @@ def hours_since_last_fetch() -> float | None:
     return (time.time() - last) / 3600.0
 
 
+def _near_closing_window() -> bool:
+    """未来 ODDS_CLOSE_WINDOW_HOURS 小时内是否有开赛——收盘捕捉期豁免间隔闸门。"""
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(DATA_DIR / "nba.db")
+        rows = conn.execute(
+            "SELECT tipoff FROM games WHERE status != 'STATUS_FINAL' AND tipoff IS NOT NULL"
+        ).fetchall()
+        conn.close()
+    except Exception:  # noqa: BLE001 - 查不到就按不在窗口处理
+        return False
+    now = datetime.now(timezone.utc)
+    for (tipoff,) in rows:
+        try:
+            tip = datetime.fromisoformat(str(tipoff).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if tip.tzinfo is None:
+            tip = tip.replace(tzinfo=timezone.utc)
+        hours_to_tip = (tip - now).total_seconds() / 3600.0
+        if 0 <= hours_to_tip <= ODDS_CLOSE_WINDOW_HOURS:
+            return True
+    return False
+
+
 def _remaining_quota_ok() -> tuple[bool, str]:
     hrs = hours_since_last_fetch()
     if hrs is None:
-        return True, "首次调用"
+        return True, "首次拉取"
     if hrs < THE_ODDS_API_MIN_HOURS:
+        if _near_closing_window():
+            return True, f"收盘窗口内豁免间隔（{hrs:.1f}h < {THE_ODDS_API_MIN_HOURS}h）"
         return False, f"距上次拉取 {hrs:.1f}h < {THE_ODDS_API_MIN_HOURS}h（省额度，跳过）"
     return True, f"距上次拉取 {hrs:.1f}h"
+
 
 
 def fetch_nba_odds(force: bool = False) -> tuple[list[dict], str]:
