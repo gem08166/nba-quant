@@ -38,9 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import db, i18n
 from app.jobs import betssync
-
-BJT = timezone(timedelta(hours=8))
-ET = timezone(timedelta(hours=-5))
+from app.timeutil import BEIJING as BJT
+from app.timeutil import EASTERN as ET
 
 MARKET = {"ah": "spread", "ou": "total", "ml": "moneyline"}
 SIDE = {"h": "home", "a": "away", "ov": "over", "ud": "under", "un": "under"}

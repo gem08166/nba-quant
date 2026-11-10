@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from .timeutil import eastern_date
 
 
 def current_slate_date() -> str:
     """The NBA slate currently in progress / upcoming next.
 
     ESPN keys slates by US Eastern date; tip-offs run from ~00:00Z to ~03:30Z
-    of the following UTC day. UTC-5 approximates Eastern time closely enough
-    for picking the active slate (DST shifts this by an hour, which only
-    matters in the early afternoon when no games are live anyway).
+    of the following UTC day. 用真实 America/New_York（含夏令时）计算，
+    避免 3–11 月 DST 期间边界日期错一天。
     """
-    return (datetime.now(timezone.utc) - timedelta(hours=5)).date().isoformat()
+    return eastern_date()

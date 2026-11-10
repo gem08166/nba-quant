@@ -1,21 +1,40 @@
 const $ = (sel) => document.querySelector(sel);
-const state = { date: isoToday(), games: [], detail: null };
+const state = { date: "", games: [], detail: null };
 
 // 日期口径：用户/选择器里的日期 = 北京日期（用户视角）。
-// 数据库/ESPN 的 slate_date = 美国东部比赛日。NBA 比赛都在 ET 下午～深夜进行，
-// 对应北京次日凌晨～上午，因此“北京日期 D 的全部比赛”的 ET 比赛日恒为 D−1。
+// 数据库/ESPN 的 slate_date = 美国东部比赛日（真实时区，含夏令时）。
+// NBA 比赛都在 ET 下午～深夜进行，对应北京次日凌晨～上午；用 Intl 做真实换算，
+// 不再手写 −1 天（北京时间中午的补赛除外，NBA 基本没有）。
+const BJ_DATE_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const ET_DATE_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 function bjToSlate(bjDate) {
-  const d = new Date(bjDate + "T12:00:00+08:00");
-  d.setUTCDate(d.getUTCDate() - 1);
+  return ET_DATE_FMT.format(new Date(bjDate + "T12:00:00+08:00"));
+}
+
+function slateToBjDate(slate) {
+  if (!slate) return "";
+  const d = new Date(slate + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 }
 
-
 function isoToday() {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
+  // 北京今天（不跟设备时区）
+  return BJ_DATE_FMT.format(new Date());
 }
+
+state.date = isoToday();
 
 function esc(value) {
   return String(value ?? "")
@@ -529,7 +548,7 @@ function openManualBetPanel(game) {
         method: "POST",
         body: JSON.stringify({
           game_id: game.id,
-          slate_date: game.slate_date || state.date,
+          slate_date: game.slate_date || bjToSlate(state.date),
           matchup: `${teamShortZh(game.away.abbrev, game.away.name)}@${teamShortZh(game.home.abbrev, game.home.name)}`,
           market,
           side,
@@ -538,7 +557,7 @@ function openManualBetPanel(game) {
           stake,
           model_prob: used,
           ev: used * price - 1,
-          note: `手动 ${marketZh} ${sideZh}${lineText} @${price.toFixed(2)} · ${game.slate_date || state.date}`,
+          note: `手动 ${marketZh} ${sideZh}${lineText} @${price.toFixed(2)} · ${game.slate_date || bjToSlate(state.date)}`,
         }),
       });
       closeManualBetPanel();
@@ -572,12 +591,15 @@ async function load({ repredict = false, silent = false } = {}) {
       }
     }
     const data = await api(`/api/games?date=${encodeURIComponent(bjToSlate(state.date))}`);
-    // 静态模式下后端只导出某一个比赛日：以 payload 的日期为准，
-    // 否则赛时页会去拉一个不在导出范围内的日期（显示 0 场/英文兜底）。
-    if (data.date && data.date !== state.date) {
-      state.date = data.date;
-      const input = document.getElementById("date");
-      if (input) input.value = data.date;
+    // 后端返回的 data.date 是 ET 比赛日；界面 state.date 是北京日期，换算后再存，
+    // 否则下一次请求会再减一天（日期越点越往前）。
+    if (data.date) {
+      const bj = slateToBjDate(data.date);
+      if (bj !== state.date) {
+        state.date = bj;
+        const input = document.getElementById("date");
+        if (input) input.value = bj;
+      }
     }
     if (!data.count) {
       const jumped = await autoAdjustDate();
@@ -636,12 +658,12 @@ async function autoAdjustDate() {
     const data = await api("/api/dates");
     const dates = (data.dates || []).map((item) => item.date);
     if (!dates.length) return false;
-    const current = state.date;
+    const current = bjToSlate(state.date);
     const target = dates.find((d) => d >= current) || [...dates].reverse().find((d) => d < current);
     if (!target || target === current) return false;
-    state.date = target;
-    $("#date").value = target;
-    toast(`当日没有比赛，已跳到最近有比赛的日期：${target}`);
+    state.date = slateToBjDate(target);
+    $("#date").value = state.date;
+    toast(`当日没有比赛，已跳到最近有比赛的日期：${bjSlateLabel(state.date)}`);
     return true;
   } catch (_) {
     return false;
@@ -690,10 +712,11 @@ window.jumpToGame = async function (gameId, slateDate, status) {
     });
     return;
   }
-  if (slateDate && slateDate !== state.date) {
-    state.date = slateDate;
+  const bjDate = slateDate ? slateToBjDate(slateDate) : "";
+  if (bjDate && bjDate !== state.date) {
+    state.date = bjDate;
     const input = document.getElementById("date");
-    if (input) input.value = slateDate;
+    if (input) input.value = bjDate;
     document.querySelector('#tabs [data-tab="slate"]')?.click();
     await load({ silent: true });
   } else {
@@ -1108,7 +1131,7 @@ async function confirmBet(index) {
       method: "POST",
       body: JSON.stringify({
         game_id: state.detail.game.id,
-        slate_date: state.date,
+        slate_date: state.detail?.game?.slate_date || bjToSlate(state.date),
         matchup: `${teamShortZh(state.detail.game.away.abbrev, state.detail.game.away.name)}@${teamShortZh(state.detail.game.home.abbrev, state.detail.game.home.name)}`,
         market: edge.market,
         side: edge.side,

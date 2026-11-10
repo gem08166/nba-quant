@@ -305,7 +305,9 @@ def cmd_bets_export(args: argparse.Namespace) -> None:
         payload = betssync.export_payload(conn)
     finally:
         conn.close()
-    out = Path(args.out or f"data/bets-export-{date.today().isoformat()}.json")
+    from .timeutil import today_beijing
+
+    out = Path(args.out or f"data/bets-export-{today_beijing()}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"exported {payload['count']} bet(s) -> {out}")

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from app import db
 from app.ingest import hao
 from app.jobs.predict import latest_odds
+from app.timeutil import eastern_date
 
 
 def _espn_lines(rows: list[dict]) -> dict:
@@ -83,8 +84,8 @@ def main() -> None:
             hao.match_summary(m)
             for m in matches
             if m.get("state") in ("", "not_start")
-            # 美国东部比赛日：UTC-5 近似（与 app.dates 同一口径）
-            and datetime.fromtimestamp((m.get("kickoffTime") or 0) - 5 * 3600, tz=timezone.utc).strftime("%Y-%m-%d")
+            # 美国东部比赛日：真实 America/New_York（含夏令时）
+            and eastern_date(datetime.fromtimestamp(m.get("kickoffTime") or 0, tz=timezone.utc))
             == slate
         ]
         print(f"好体育当日赛程: {len(target)} 场（好体育未必挂出全部 NBA 场次）\n")

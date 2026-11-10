@@ -1208,3 +1208,26 @@ README.md              # 用户文档（含第 0 节验证结论）
 - `merge_rows`：`hao-` 订单在两边都已结算但结果/盈亏不一致时，以 333 平台结果为准
   （本地自行结算可能早于平台更新，平台是权威）。补回归用例。
 - `data` 分支 `bets.json` / Pages 同步更新为 31 条。**191 passed**。
+
+### 10.71 2026-11-10 时间口径统一（DST + 北京日期）
+
+- **新增 `app/timeutil.py`**：唯一时间源
+  - `EASTERN = ZoneInfo("America/New_York")`（真实夏令时）、`BEIJING = Asia/Shanghai`；
+  - `eastern_date()` / `current_slate_date()` / `beijing_slate_date()` / `today_beijing()` /
+    `fmt_beijing()`；`tzdata` 加入依赖（Windows 必需）。
+- **修掉的混乱点**：
+  1. `app/dates.py` 原来固定 UTC−5 → DST（3–11 月）比赛日会错一天；改用真实 ET。
+  2. `hao.py`、`theodds.py`、`compare_books.py` 里 `- 5*3600` 的 ET 换算同样改为真实 ET。
+  3. `simulate.backfill_finished` 用 `date.today()`（服务器时区）→ 改为 ET 比赛日窗口。
+  4. `bets-export` 默认文件名用 `date.today()` → 北京日期。
+  5. 前端 `isoToday()` 跟设备时区 → 固定北京今天；`bjToSlate()` 改为 Intl 真实 ET 换算
+     （不再手写 −1 天）。
+  6. **前端日期漂移 bug**：`/api/games` 返回 ET 比赛日，前端却直接赋给北京口径的
+     `state.date`，下一次请求又减一天（越刷新越往前）。现在统一 `slateToBjDate()` 回转；
+     注单跳转、赛后复盘「跳到最近完赛日」、自动跳日期也都用同一换算。
+  7. 新增注单时 `slate_date` 不再直接写北京日期，统一写 ET 比赛日。
+- **口径文档**：存储用带时区 ISO；`slate_date` = ET 比赛日；展示时刻=北京时间；
+  收益/复盘的「比赛日」= ET + 1 天（北京）。
+- **测试**：`tests/test_timeutil.py` 6 例（DST 边界/北京换算/当前比赛日）。**197 passed**。
+- **环境坑**：`.venv` 在坚果云同步目录里，`tzdata` 被同步成 `.nssyncsc` 残缺文件 →
+  `ZoneInfo` 找不到时区；已强制重装 `tzdata==2026.6`。

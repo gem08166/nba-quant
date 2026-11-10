@@ -29,12 +29,13 @@ import base64
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 from ..config import REQUEST_SLEEP, REQUEST_TIMEOUT
+from ..timeutil import eastern_date
 
 BASE = "https://0062zyayk-nwapi-wap-dcdn.dovpkzr.com"
 CHECKSUM_HEX = "33069054802374b169bef34b3c4520e4ab9675165286e92cdbf06ab46920a7a5"
@@ -252,7 +253,9 @@ def store_nba_odds(conn, slate_date: str) -> int:
             if match.get("state") not in ("", "not_start"):
                 continue
             summary = match_summary(match)
-            et_date = datetime.utcfromtimestamp((summary["kickoff"] or 0) - 5 * 3600).strftime("%Y-%m-%d")
+            et_date = eastern_date(
+                datetime.fromtimestamp(float(summary["kickoff"] or 0), tz=timezone.utc)
+            )
             if et_date != slate_date:
                 continue
             game = next(

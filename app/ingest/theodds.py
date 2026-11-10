@@ -25,6 +25,7 @@ from ..config import (
     ODDS_CLOSE_FETCH_MIN_HOURS,
     THE_ODDS_API_MIN_HOURS,
 )
+from ..timeutil import eastern_date
 
 API_BASE = "https://api.the-odds-api.com/v4"
 SPORT_NBA = "basketball_nba"
@@ -201,10 +202,7 @@ def ingest_events(conn, events: list[dict], slate_date: str | None = None) -> in
         key = f"{away}|{home}"
         kickoff = event.get("commence_time")  # ISO UTC
         try:
-            et_date = (
-                datetime.fromisoformat(kickoff.replace("Z", "+00:00")).timestamp() - 5 * 3600
-            )
-            et_slate = datetime.utcfromtimestamp(et_date).strftime("%Y-%m-%d")
+            et_slate = eastern_date(kickoff)
         except (TypeError, ValueError):
             continue
         if slate_date and et_slate != slate_date:

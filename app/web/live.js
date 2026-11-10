@@ -552,7 +552,7 @@ function openLmBetPanel(game, data) {
         body: JSON.stringify({
           game_id: game.game_id,
           // 静态模式（本机台账）需要这两项做日期分组/显示；服务端模型会忽略多余字段
-          slate_date: state.date,
+          slate_date: game.slate_date || bjToSlate(state.date),
           matchup: game.matchup_zh || game.matchup,
           market: data.lmMarket,
           side: data.lmSide,
@@ -881,14 +881,15 @@ async function jumpToLastFinished() {
       // 优先跳到"真的有赛前分析"的日期——早期比赛日只有比分没有预测，
       // 跳过去赛后复盘会是空的（模型 11-04 才开始记录预测）
       const hasAnalysis = (day) => (hist[day] || []).some((g) => g.pregame);
+      const currentSlate = bjToSlate(state.date);
       let target =
-        days.find((d) => d <= state.date && hasAnalysis(d)) ||
-        days.find((d) => d <= state.date) ||
+        days.find((d) => d <= currentSlate && hasAnalysis(d)) ||
+        days.find((d) => d <= currentSlate) ||
         days[0];
       const n = (hist[target] || []).length;
-      state.date = target;
+      state.date = slateToBjDate(target);
       const el = document.getElementById("date");
-      if (el) el.value = target;
+      if (el) el.value = state.date;
       await loadPost(true);
       const rendered = document.querySelectorAll(".post-card").length || n;
       toast(`已跳到 ${bjSlateLabel(target)}（${rendered} 场已结束）`);
@@ -898,17 +899,18 @@ async function jumpToLastFinished() {
     // API 模式：按日期列表逐个探（宿主机接口可靠，但仍优先选有预测的日期）
     const dates = await api("/api/dates");
     const list = (dates.dates || []).map((d) => d.date);
+    const currentSlate = bjToSlate(state.date);
     let fallback = null;
     for (const day of [...list].reverse()) {
-      if (day > state.date) continue;
+      if (day > currentSlate) continue;
       const data = await api(`/api/live?date=${encodeURIComponent(day)}`);
       const done = (data.games || []).filter((g) => g.state === "post");
       if (!done.length) continue;
       // 有赛前预测的日期才是真正的"赛后复盘"
       if (done.some((g) => g.pregame)) {
-        state.date = day;
+        state.date = slateToBjDate(day);
         const el = document.getElementById("date");
-        if (el) el.value = day;
+        if (el) el.value = state.date;
         await loadPost(true);
         toast(`已跳到 ${bjSlateLabel(day)}（${done.length} 场已结束）`);
         return;
@@ -916,9 +918,9 @@ async function jumpToLastFinished() {
       if (!fallback) fallback = { day, n: done.length };
     }
     if (fallback) {
-      state.date = fallback.day;
+      state.date = slateToBjDate(fallback.day);
       const el = document.getElementById("date");
-      if (el) el.value = fallback.day;
+      if (el) el.value = state.date;
       await loadPost(true);
       toast(`已跳到 ${bjSlateLabel(fallback.day)}（${fallback.n} 场已结束，该日无赛前预测记录）`);
       return;

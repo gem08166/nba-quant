@@ -419,7 +419,7 @@ async function openCustomBetPanel() {
     if (window.APP_MODE === "static") {
       games = (window.STATIC_PAYLOAD?.board?.games || []).slice();
     } else {
-      const data = await api(`/api/games?date=${encodeURIComponent(state.date)}`);
+      const data = await api(`/api/games?date=${encodeURIComponent(bjToSlate(state.date))}`);
       games = data.games || [];
     }
   } catch (error) {
@@ -548,7 +548,7 @@ async function openCustomBetPanel() {
         method: "POST",
         body: JSON.stringify({
           game_id: game.id,
-          slate_date: game.slate_date || state.date,
+          slate_date: game.slate_date || bjToSlate(state.date),
           matchup: `${teamShortZh(game.away.abbrev, game.away.name)}@${teamShortZh(game.home.abbrev, game.home.name)}`,
           market,
           side,
@@ -557,7 +557,7 @@ async function openCustomBetPanel() {
           stake,
           model_prob: used,
           ev: used * price - 1,
-          note: `自定义 ${MZ[market]} ${sideZh}${lineText} @${price.toFixed(2)} · ${game.slate_date || state.date}`,
+          note: `自定义 ${MZ[market]} ${sideZh}${lineText} @${price.toFixed(2)} · ${game.slate_date || bjToSlate(state.date)}`,
         }),
       });
       panel.remove();

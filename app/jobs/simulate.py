@@ -101,8 +101,10 @@ def backfill_finished(conn: sqlite3.Connection, days: int = 3, stake: float = 2.
     """赛后兜底：最近 N 天已完赛比赛里，漏记的可下注信号补成已结算模拟注单。"""
     from scripts.backfill_bets import backfill
 
-    end = date.today().isoformat()
-    start = (date.today() - timedelta(days=days)).isoformat()
+    from ..dates import current_slate_date
+
+    end = current_slate_date()  # ET 比赛日，不是服务器本地日期
+    start = (date.fromisoformat(end) - timedelta(days=days)).isoformat()
     return backfill(
         conn,
         stake=stake,
