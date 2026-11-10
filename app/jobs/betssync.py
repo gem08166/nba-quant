@@ -77,7 +77,7 @@ def natural_key(row: dict) -> tuple:
     )
 
 
-def _find_existing(conn: sqlite3.Connection, row: dict, ref: str):
+def _find_existing(conn: sqlite3.Connection, row: dict, ref: str, allow_similar: bool = True):
     """先按 ref，再按自然键（同场/同市场/同方向/同线/同时间）。"""
     hit = conn.execute("SELECT * FROM bets WHERE ref=?", (ref,)).fetchone()
     if hit:
@@ -94,7 +94,7 @@ def _find_existing(conn: sqlite3.Connection, row: dict, ref: str):
     ):
         if natural_key(dict(cand)) == key:
             return cand
-    return _find_similar_real(conn, row)
+    return _find_similar_real(conn, row) if allow_similar else None
 
 
 def _parse_ts(value):
@@ -241,7 +241,9 @@ def merge_rows(
             continue
         seen.add(key)
 
-        existing = _find_existing(conn, row, ref)
+        existing = _find_existing(
+            conn, row, ref, allow_similar=not str(ref).startswith("hao-")
+        )
         if existing is not None:
             current = dict(existing)
             incoming = row.get("result")

@@ -1110,3 +1110,21 @@ README.md              # 用户文档（含第 0 节验证结论）
   清空后不会被自动重新补单。
 - **测试**：`tests/test_simulate.py` 增至 7 例（ref 市场级/旧 ref 也能挡住重复）。
   **183 passed**。
+
+### 10.63 2026-11-10 从 333体育导入近 7 天真实注单
+
+- **来源**：内置浏览器登录 333体育 → `/history/order` 的 API 响应（`settlement.data`），
+  导出 `data/333-bets.json`（27 单，0 串关）。
+- **`scripts/import_333_bets.py`**：
+  - ah→spread / ou→total / ml→moneyline；h→home / a→away / ov→over / ud→under；
+  - 欧赔直接入库、注额=ante、盈亏=netWinAmount、结果按盈亏正负；
+  - 球队中文全名 → 缩写按**后缀**匹配（修掉「菲尼克斯太阳」被「尼克斯」抢走）；
+  - kick（北京时间）→ ET 比赛日 → 按 slate + 对阵找 `game_id`；
+  - ref=`hao-<orderId>`，重复导入幂等；`--replace-manual` 删除之前手动记的同一笔
+    （盘口差 ≤0.5 / 赔率差 ≤0.15 / 时间差 ≤24h），先备份 + 写墓碑。
+- **导入侧旁路**：`merge_rows` 对 `hao-` 前缀的 ref 跳过「12h 同笔」启发式，
+  因为平台订单号就是唯一事实（避免把同场同盘口的两张真实订单误合并）。
+- **结果**：真实 17 → **27**（删除 17 条手动重复 + 导入 27 条平台订单），
+  模拟 30 不变；台账 **57**。真实组投入 63u、盈亏 **−6.50u**、ROI −10.3%，
+  与平台 `totalNetWin -6.5` 完全一致；精确重复 0 组。
+- **测试**：**183 passed**。
