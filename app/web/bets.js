@@ -46,12 +46,12 @@ function renderProfitChart() {
       {
         label: "真实",
         color: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#46b95c",
-        points: mine.map((p) => ({ date: p.date, value: p.cum_profit })),
+        points: mine.map((p) => ({ date: bjDateOfSlate(p.date) || p.date, value: p.cum_profit })),
       },
       {
         label: "模拟",
         color: getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#4b8fd6",
-        points: sim.map((p) => ({ date: p.date, value: p.cum_profit })),
+        points: sim.map((p) => ({ date: bjDateOfSlate(p.date) || p.date, value: p.cum_profit })),
       },
     ], { unit });
     return;
@@ -62,7 +62,7 @@ function renderProfitChart() {
       {
         label: "累计",
         color: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#46b95c",
-        points: data.curve.map((p) => ({ date: p.date, value: p.cum_profit })),
+        points: data.curve.map((p) => ({ date: bjDateOfSlate(p.date) || p.date, value: p.cum_profit })),
       },
     ], { unit });
     return;
@@ -313,14 +313,34 @@ function renderLedger(bets) {
 }
 
 // 按比赛日分组渲染（日期倒序，组内按记录时间倒序）；没有日期的归到「未知日期」
+// slate_date 是 ET 比赛日；显示层换算成北京日期（= slate + 1），避免「北京 9 号
+// 下注的比赛全跑到 8 号分组」的误解。
+function ledgerDayLabel(slate) {
+  if (!slate) return "未知日期";
+  if (typeof window.bjSlateLabel === "function") return window.bjSlateLabel(slate);
+  return slate;
+}
+
+// ET 比赛日 → 北京日期（+1 天），用于图表横轴
+function bjDateOfSlate(slate) {
+  if (!slate) return "";
+  const d = new Date(slate + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function ledgerByDate(bets) {
   const groups = new Map();
   for (const bet of bets) {
-    const day = bet.slate_date || "未知日期";
+    const day = bet.slate_date || "";
     if (!groups.has(day)) groups.set(day, []);
     groups.get(day).push(bet);
   }
-  const days = Array.from(groups.keys()).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  const days = Array.from(groups.keys()).sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    return a < b ? 1 : a > b ? -1 : 0;
+  });
   return days
     .map((day) => {
       const rows = groups
@@ -335,7 +355,7 @@ function ledgerByDate(bets) {
       return `
         <div class="ledger-day">
           <div class="ledger-day-head">
-            <span class="ledger-day-date">${esc(day)}</span>
+            <span class="ledger-day-date">${esc(ledgerDayLabel(day))}</span>
             <span class="ledger-day-sub">${esc(sub)}</span>
           </div>
           ${ledgerTable(rows)}

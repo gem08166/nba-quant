@@ -41,6 +41,16 @@ async def token_auth(request: Request, call_next):
 app.include_router(router)
 
 
+@app.middleware("http")
+async def no_cache_static(request: Request, call_next):
+    """静态 JS/CSS 每次协商缓存：避免服务端代码更新后浏览器仍喂旧脚本。"""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/") and path.endswith((".js", ".css")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def _no_cache_response(path: str, media_type: str) -> FileResponse:
     """HTML/JS/CSS/SW：每次都重新验证（ETag 协商），避免浏览器启发式缓存
     把旧脚本喂给新会话（实测静态文件更新后新 tab 仍加载旧 JS）。"""

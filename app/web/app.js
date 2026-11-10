@@ -1213,6 +1213,19 @@ $("#clear-cache")?.addEventListener("click", async () => {
     } catch (_) {
       /* 隐私模式忽略 */
     }
+    // 让浏览器用 cache:"reload" 重新抓一遍脚本/样式，刷新 HTTP 缓存里可能
+    // 残留的旧 JS（Service Worker 已在上一步注销）。
+    try {
+      const assets = [
+        ...Array.from(document.querySelectorAll("script[src]")).map((el) => el.getAttribute("src")),
+        ...Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map((el) =>
+          el.getAttribute("href")
+        ),
+      ].filter(Boolean);
+      await Promise.all(assets.map((src) => fetch(src, { cache: "reload" }).catch(() => null)));
+    } catch (_) {
+      /* 刷新失败也继续 reload */
+    }
   } catch (_) {
     /* 清理失败也继续刷新 */
   }
