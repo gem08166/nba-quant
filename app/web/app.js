@@ -1184,6 +1184,41 @@ $("#date").addEventListener("change", (event) => {
   window.loadLive?.();
 });
 $("#refresh").addEventListener("click", () => load({ repredict: true }));
+
+// 清缓存：注销 Service Worker + 删除 CacheStorage，然后硬刷新。
+// 不动 localStorage（本机注单、主题、坚果云配置保留）。
+$("#clear-cache")?.addEventListener("click", async () => {
+  if (
+    !confirm(
+      "清空浏览器缓存并重新加载？\n\n会删除离线缓存和 Service Worker；本机注单、主题和同步设置不会删除。"
+    )
+  ) {
+    return;
+  }
+  const button = $("#clear-cache");
+  const prev = button.textContent;
+  button.disabled = true;
+  button.textContent = "清理中…";
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    try {
+      sessionStorage.clear();
+    } catch (_) {
+      /* 隐私模式忽略 */
+    }
+  } catch (_) {
+    /* 清理失败也继续刷新 */
+  }
+  button.textContent = prev;
+  location.reload();
+});
 $("#close").addEventListener("click", () => {
   $("#modal").hidden = true;
 });
