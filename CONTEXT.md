@@ -1140,3 +1140,14 @@ README.md              # 用户文档（含第 0 节验证结论）
   平台订单因此能正常落库。
 - **测试**：新增回归用例（墓碑行与平台订单同自然键 → 平台订单必须保留）。
   **184 passed**。
+
+### 10.65 2026-11-10 333 订单导入器支持原始 API 响应 + 未结算单
+
+- `scripts/import_333_bets.py` 的 `normalize_payload()` 自动识别三种输入：
+  1. **原始 API 响应** `{data:{settlement:{data}, unSettlement:{data}}}`（今后浏览器里
+     保存整个响应体即可直接导入；`unSettlement` 以 `result=open` 入库，赛后自动结算）；
+  2. 原始订单数组（带 `gameContent.detail`）；
+  3. 之前导出的紧凑数组。
+- `to_bet()` 支持 open 单（profit=None），`merge_rows` 的单调更新会等赛后结算补结果。
+- 球队匹配改为**后缀优先**（`菲尼克斯太阳` 不再被 `尼克斯` 抢走）。
+- 测试：`tests/test_import_333.py` 5 例。**189 passed**。

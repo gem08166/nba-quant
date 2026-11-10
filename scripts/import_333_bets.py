@@ -1,8 +1,12 @@
 """把 333体育（.com）近 7 天注单导入本地台账（真实注单）。
 
-数据来源：浏览器里 /history/order 的 API 响应（settlement.data），导出成 JSON：
-  [{"orderId","betTime","ante","netWin","orderStatus","result","parlay",
-    "legs":[{"home","away","kick","market","betOn","k","odds","won","inplay","score"}]}]
+数据来源：浏览器里 /history/order 的 API 响应
+（`GET /platform/thirdparty-report/user/orders/sport?betStatus=...&startDate=...&endDate=...`）。
+支持三种 JSON 形状（`normalize_payload` 自动识别）：
+  1. 原始响应：{code, data:{settlement:{data:[...]}, unSettlement:{data:[...]}}}
+     —— settlement 按已结算导入，unSettlement 按未结算（open）导入；
+  2. 原始订单数组（每项带 gameContent.detail）；
+  3. 本脚本导出的紧凑数组（[{orderId,betTime,ante,netWin,legs:[...]}]）。
 
 口径：
 - 单关（parlay=false 且 1 条 leg）才导入；串关跳过并计数；
@@ -69,6 +73,66 @@ def parse_bj(text: str) -> datetime | None:
         return None
 
 
+def _compact_order(order: dict, open_bet: bool = False) -> dict:
+    """把 333 的原始订单对象压成导入脚本使用的紧凑结构。"""
+    content = order.get("gameContent") or {}
+    return {
+        "orderId": order.get("orderId"),
+        "betTime": order.get("betTime"),
+        "ante": float(order.get("ante") or 0),
+        "netWin": None if open_bet else float(order.get("netWinAmount") or 0),
+        "orderStatus": order.get("orderStatus"),
+        "result": order.get("result"),
+        "parlay": bool(content.get("parlayBet")),
+        "open": open_bet,
+        "legs": [
+            {
+                "home": d.get("homeName"),
+                "away": d.get("awayName"),
+                "kick": d.get("kickOffTime"),
+                "market": d.get("market"),
+                "betOn": d.get("betOn"),
+                "k": d.get("k"),
+                "odds": float(d.get("odds") or 0),
+                "won": d.get("won"),
+                "inplay": bool(d.get("inplay")),
+                "score": d.get("matchScore"),
+                "cancel": bool(d.get("cancel")),
+            }
+            for d in (content.get("detail") or [])
+        ],
+    }
+
+
+def normalize_payload(payload) -> list[dict]:
+    """接受三种形状，统一成紧凑记录：
+
+    1. 原始 API 响应：{code, data:{settlement:{data:[...]}, unSettlement:{data:[...]}}}
+       （settlement 记为已结算，unSettlement 记为未结算/open）；
+    2. 原始订单数组（每项带 gameContent.detail）；
+    3. 本脚本之前导出的紧凑数组（直接原样使用）。
+    """
+    if isinstance(payload, dict):
+        data = payload.get("data") or payload
+        out: list[dict] = []
+        for key, is_open in (("settlement", False), ("unSettlement", True)):
+            block = data.get(key) or {}
+            for order in block.get("data") or []:
+                out.append(_compact_order(order, open_bet=is_open))
+        return out
+    if not isinstance(payload, list):
+        return []
+    out = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        if "gameContent" in item:
+            out.append(_compact_order(item))
+        else:
+            out.append(item)
+    return out
+
+
 def find_game(conn, home_ab, away_ab, kick_bj):
     kick = parse_bj(kick_bj)
     if not kick or not home_ab or not away_ab:
@@ -117,8 +181,13 @@ def to_bet(conn, rec: dict):
     bet_time = parse_bj(rec.get("betTime"))
     if not bet_time:
         return None, "bad betTime"
-    net = float(rec.get("netWin") or 0)
-    result = "won" if net > 0 else "lost" if net < 0 else "push"
+    if rec.get("open"):
+        result = "open"
+        profit = None
+    else:
+        net = float(rec.get("netWin") or 0)
+        result = "won" if net > 0 else "lost" if net < 0 else "push"
+        profit = net
     line_text = f" {line:+g}" if market == "spread" and line is not None else (
         f" {line:g}" if line is not None else ""
     )
@@ -138,7 +207,7 @@ def to_bet(conn, rec: dict):
         "ev": 0.0,
         "placed_at": bet_time.isoformat(timespec="seconds"),
         "result": result,
-        "profit": net,
+        "profit": profit,
         "note": note,
         "ref": f"hao-{rec.get('orderId')}",
         "_bet_time": bet_time,
@@ -198,7 +267,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    records = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    records = normalize_payload(json.loads(Path(args.file).read_text(encoding="utf-8")))
     conn = db.connect()
     try:
         prep, skipped = [], []
@@ -218,7 +287,7 @@ def main() -> None:
             for bet in prep:
                 matches.update({c["id"]: c for c in find_manual_matches(conn, bet)})
 
-        print(f"可导入 {len(prep)} 条；跳过 {len(skipped)} 条")
+        print(f"可导入 {len(prep)} 条（未结算 {sum(1 for b in prep if b['result'] == 'open')} 条）；跳过 {len(skipped)} 条")
         for oid, reason in skipped:
             print(f"  跳过 {oid}: {reason}")
 
