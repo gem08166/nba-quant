@@ -88,10 +88,11 @@ jobs:
           rm -rf "$RUNNER_TEMP/db-repo"
           mkdir -p "$RUNNER_TEMP/db-repo"
           cp data/nba.db "$RUNNER_TEMP/db-repo/nba.db"
+          python -m app.cli bets-export --out "$RUNNER_TEMP/db-repo/bets.json"
           cd "$RUNNER_TEMP/db-repo"
           git init -q
           git checkout -q -b data
-          git add nba.db
+          git add nba.db bets.json
           git -c user.name="nba-quant-bot" -c user.email="nba-quant@users.noreply.github.com" \
             commit -q -m "db snapshot: $(date -u +%FT%TZ)"
           git push -q --force \
