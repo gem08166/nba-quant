@@ -20,9 +20,23 @@ from .. import db
 SIM_NOTE_PREFIX = "模拟"
 
 
-def sim_ref(game_id: str, market: str, side: str, line) -> str:
-    raw = f"{game_id}|{market}|{side}|{line}"
+def sim_ref(game_id: str, market: str, side=None, line=None) -> str:
+    """模拟注单的身份：同一场比赛的同一个市场只记一次。
+
+    参数 side/line 保留是为了兼容旧调用方，但**不参与** ref——盘口/赔率随市场
+    漂移（214.5→215.5、218.5→219.0）不该被当成新注单重复记录。
+    """
+    raw = f"{game_id}|{market}"
     return "sim-" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _has_sim(conn: sqlite3.Connection, game_id: str, market: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM bets WHERE game_id=? AND market=? "
+        "AND (note LIKE '模拟%' OR note LIKE '回填%') LIMIT 1",
+        (str(game_id), market),
+    ).fetchone()
+    return row is not None
 
 
 def _now() -> str:
@@ -40,11 +54,12 @@ def ensure_sim_bets(conn: sqlite3.Connection, slate_date: str, stake: float = 2.
     items = notify.collect_signal_items(conn, slate_date, bettable_only=True)
     created = skipped = 0
     for game, edge in items:
-        ref = sim_ref(game["id"], edge.get("market"), edge.get("side"), edge.get("line"))
+        ref = sim_ref(game["id"], edge.get("market"))
         if ref in tombstones:
             skipped += 1
             continue
-        if conn.execute("SELECT 1 FROM bets WHERE ref=?", (ref,)).fetchone():
+        # 同场同市场已经记过（可能来自旧版按 line 生成的 ref），不再重复下注
+        if _has_sim(conn, game["id"], edge.get("market")):
             skipped += 1
             continue
         price = float(edge.get("price") or 0)

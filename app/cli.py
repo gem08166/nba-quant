@@ -374,7 +374,14 @@ def cmd_bets_clear(args: argparse.Namespace) -> None:
             cur = conn.execute("DELETE FROM bets")
         conn.commit()
         try:
+            from .jobs.simulate import sim_ref
+
             refs = [str(r["ref"] or f"srv-{r['id']}") for r in rows]
+            refs += [
+                sim_ref(r["game_id"], r["market"])
+                for r in rows
+                if "模拟" in (r["note"] or "") or "回填" in (r["note"] or "")
+            ]
             tombstoned = betssync.record_deletions(refs)
             if tombstoned:
                 print(f"删除墓碑已同步（{len(refs)} 条）")

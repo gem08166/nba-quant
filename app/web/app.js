@@ -179,6 +179,12 @@ function fmtSignalTime(iso) {
   return `${day} ${time}`;
 }
 
+// 模拟/回填注单只在「收益」页展示；看板/赛时/复盘的卡片不显示，避免和真实注单混淆
+function isSimBet(bet) {
+  const note = String((bet && bet.note) || "");
+  return note.includes("模拟") || note.includes("回填");
+}
+
 function statusInfo(game) {
   if (game.status === "STATUS_FINAL") return { text: "已结束", cls: "final" };
   if (game.status === "STATUS_IN_PROGRESS" || game.status === "STATUS_HALFTIME") {
@@ -587,6 +593,8 @@ async function load({ repredict = false, silent = false } = {}) {
     try {
       const betData = await api("/api/bets");
       for (const bet of betData.bets || []) {
+        // 模拟/回填注单只在收益页出现
+        if (isSimBet(bet)) continue;
         (betsByGame[bet.game_id] ||= []).push(bet);
       }
     } catch (_) {
@@ -769,7 +777,7 @@ function renderModal(data) {
   const injuries = data.injuries || [];
   const suggestions = data.injury_suggestions || [];
   const suggestionFor = (injury) => suggestions.find((s) => s.player === injury.player);
-  const gameBets = data.bets || [];
+  const gameBets = (data.bets || []).filter((bet) => !isSimBet(bet));
   const openBets = gameBets.filter((bet) => bet.result === "open");
   const bettableCount = edges.filter((edge) => edge.signal && edge.bettable).length;
   const edgeRows = edges

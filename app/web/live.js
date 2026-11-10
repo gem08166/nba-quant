@@ -53,8 +53,14 @@ function quarterScores(game) {
 
 function gameBetsOf(game) {
   // 后端聚合（含已结算）+ 静态模式本机 localStorage / 导出快照，按 id 去重
+  // 模拟/回填注单只在收益页展示，赛时/复盘卡片不显示
+  const isSim = (b) => {
+    const note = String((b && b.note) || "");
+    return note.includes("模拟") || note.includes("回填");
+  };
   const map = new Map();
   const add = (bet) => {
+    if (isSim(bet)) return;
     const key = String(bet.id ?? `${bet.market}:${bet.side}:${bet.line}:${bet.price}`);
     if (!map.has(key)) map.set(key, bet);
   };

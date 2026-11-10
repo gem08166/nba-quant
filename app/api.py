@@ -587,9 +587,17 @@ def clear_bets(body: ClearBetsIn, conn: sqlite3.Connection = Depends(get_conn)) 
     conn.commit()
 
     # 写删除墓碑：否则云端台账/其他设备下一轮会把它们合并回来
+    # 模拟单额外记录「同场同市场」的新式 ref，防止自动回填再次生成
     tombstoned = 0
     try:
-        tombstoned = betssync.record_deletions(refs)
+        from .jobs.simulate import sim_ref
+
+        extra = [
+            sim_ref(r["game_id"], r["market"])
+            for r in rows
+            if "模拟" in (r["note"] or "") or "回填" in (r["note"] or "")
+        ]
+        tombstoned = betssync.record_deletions(refs + extra)
     except Exception:  # noqa: BLE001 - 坚果云不可用时仍以本地清空为准
         pass
 

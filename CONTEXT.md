@@ -1093,3 +1093,20 @@ README.md              # 用户文档（含第 0 节验证结论）
   赔率差 ≤0.02 + 时间差 ≤12h」识别为同一笔，直接跳过；模拟/回填不参与此匹配。
 - **测试**：`tests/test_betssync_real_dedupe.py` 4 例（跨设备重复/不同赔率不合并/
   时间差过大不合并/模拟与真实不互相吞并）。**182 passed**。
+
+### 10.62 2026-11-10 模拟单只在收益页显示 + 同场同市场只记一次
+
+- **展示范围**：模拟/回填注单只出现在「收益」页（真实/模拟两个分组）；
+  赛前看板卡片、赛时卡片、赛后复盘的注单 chip 与统计一律过滤掉模拟单
+  （`app.js::isSimBet`、`live.js::gameBetsOf`），避免和真实下注混淆。
+- **只记一次**：模拟单身份从 `sim-<game|market|side|line>` 改为 **`sim-<game|market>`**——
+  盘口漂移（214.5→215.5、218.5/218.0/219.0）不再重复记一条。
+  `ensure_sim_bets` 与 `backfill_finished` 都先用 `(game_id, market)` 检查是否已有模拟单，
+  旧 ref 的历史记录也能挡住新记录。
+- **清理**：`scripts/dedupe_bets.py --sim --apply` 按 `(game, market)` 保留最早一条，
+  删除 3 条盘口漂移产生的重复并写墓碑（含新式 `sim_ref`，防自动补回）。
+  模拟组 33 → **30**（全部按 game+market 唯一）。
+- **清空联动**：API/CLI 清空模拟单时，除删除行的 ref 外还墓碑 `sim_ref(game, market)`，
+  清空后不会被自动重新补单。
+- **测试**：`tests/test_simulate.py` 增至 7 例（ref 市场级/旧 ref 也能挡住重复）。
+  **183 passed**。

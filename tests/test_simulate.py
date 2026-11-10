@@ -88,13 +88,32 @@ def test_ensure_sim_bets_respects_tombstones(monkeypatch):
     assert conn.execute("SELECT COUNT(*) n FROM bets").fetchone()["n"] == 0
 
 
-def test_sim_ref_is_stable_and_distinct():
+def test_sim_ref_is_stable_and_market_scoped():
     a = simulate.sim_ref("g1", "spread", "home", -2.5)
     b = simulate.sim_ref("g1", "spread", "home", -2.5)
-    c = simulate.sim_ref("g1", "spread", "home", -3.5)
-    assert a == b
-    assert a != c
+    # 盘口漂移不算新注单：同场同市场 ref 相同
+    drifted = simulate.sim_ref("g1", "spread", "home", -3.5)
+    other_market = simulate.sim_ref("g1", "total", "over", 220.0)
+    assert a == b == drifted
+    assert a != other_market
     assert a.startswith("sim-") and len(a) == 16
+
+
+def test_ensure_skips_when_same_market_already_has_sim(monkeypatch):
+    from app.jobs import betssync
+
+    monkeypatch.setattr(betssync, "load_deletions", lambda: set())
+    conn = _conn()
+    # 旧版按 line 生成的模拟单（ref 不同）
+    conn.execute(
+        "INSERT INTO bets(game_id, market, side, line, price, stake, model_prob, ev, "
+        "placed_at, result, note, ref) VALUES('g1','spread','home',-3.5,1.9,1.0,0.5,0.1,"
+        "'2026-11-09T00:00:00+00:00','open','模拟 可下注 · old','sim-old-ref')"
+    )
+    conn.commit()
+    stats = simulate.ensure_sim_bets(conn, "2099-01-01")
+    assert stats["created"] == 0
+    assert conn.execute("SELECT COUNT(*) n FROM bets").fetchone()["n"] == 1
 
 
 def test_bet_kind_treats_sim_as_backfill():

@@ -134,10 +134,11 @@ def backfill(conn, stake: float = 2.0, start: str | None = None, end: str | None
     # 已存在的注单（避免重复回填）。sim_only：只把模拟注单当已有，
     # 真实注单不挡模拟样本（否则「跟着信号下过」的信号会从模拟统计里消失）。
     if sim_only:
+        # 同场同市场只记一次（盘口漂移不算新注单）
         existing = {
-            (str(r["game_id"]), r["market"], r["side"], r["line"])
+            (str(r["game_id"]), r["market"])
             for r in conn.execute(
-                "SELECT game_id, market, side, line FROM bets "
+                "SELECT game_id, market FROM bets "
                 "WHERE note LIKE '回填%' OR note LIKE '模拟%'"
             )
         }
@@ -161,7 +162,8 @@ def backfill(conn, stake: float = 2.0, start: str | None = None, end: str | None
         row, edge = item["row"], item["edge"]
         slate = row["slate_date"]
         key = (row["game_id"], edge["market"], edge["side"], edge.get("line"))
-        if key in existing:
+        sim_key = (str(row["game_id"]), edge["market"])
+        if (sim_key if sim_only else key) in existing:
             skipped_dupe += 1
             continue
 
@@ -179,7 +181,7 @@ def backfill(conn, stake: float = 2.0, start: str | None = None, end: str | None
 
         ref = None
         if sim_only and sim_ref is not None:
-            ref = sim_ref(row["game_id"], edge["market"], edge["side"], line)
+            ref = sim_ref(row["game_id"], edge["market"])
             if ref in tombstones:
                 skipped_tombstone += 1
                 continue
@@ -249,7 +251,7 @@ def backfill(conn, stake: float = 2.0, start: str | None = None, end: str | None
             # 非模拟口径的回填：补一个稳定 ref（否则云端合回只能靠自然键，唯一索引留空）
             if ref is None:
                 conn.execute("UPDATE bets SET ref = 'srv-' || id WHERE id = ?", (cur.lastrowid,))
-            existing.add(key)
+            existing.add(sim_key if sim_only else key)
     if not dry_run:
         conn.commit()
 

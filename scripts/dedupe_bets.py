@@ -97,25 +97,51 @@ def find_duplicates(conn, tol: float = 0.02, hours: int = 48) -> list[dict]:
     return to_delete
 
 
+def find_sim_duplicates(conn) -> list[dict]:
+    """模拟单：同场同市场只保留最早的一条（盘口漂移不重复下注）。"""
+    groups: dict[tuple, list[dict]] = {}
+    for row in conn.execute("SELECT * FROM bets ORDER BY id").fetchall():
+        bet = dict(row)
+        note = bet["note"] or ""
+        if not any(tag in note for tag in SIM_TAGS):
+            continue
+        groups.setdefault((str(bet["game_id"]), bet["market"]), []).append(bet)
+
+    to_delete: list[dict] = []
+    for key, bets in groups.items():
+        if len(bets) < 2:
+            continue
+        bets.sort(key=lambda b: b["id"])
+        keep = bets[0]
+        for bet in bets[1:]:
+            to_delete.append({"delete": bet, "keep": keep, "key": key})
+    return to_delete
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="合并真实注单里的重复记录")
+    parser = argparse.ArgumentParser(description="合并注单里的重复记录（真实 / 模拟）")
     parser.add_argument("--apply", action="store_true", help="真正删除（默认只预览）")
     parser.add_argument("--tol", type=float, default=0.02, help="赔率差容忍（默认 0.02）")
     parser.add_argument("--hours", type=int, default=48, help="下注时间差容忍（默认 48h）")
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        help="改为清理模拟单：同场同市场只保留最早一条",
+    )
     args = parser.parse_args()
 
     conn = db.connect()
     try:
-        dupes = find_duplicates(conn, tol=args.tol, hours=args.hours)
+        dupes = find_sim_duplicates(conn) if args.sim else find_duplicates(conn, tol=args.tol, hours=args.hours)
         if not dupes:
-            print("没有发现重复的真实注单")
+            print("没有发现重复注单")
             return
         print(f"发现 {len(dupes)} 条可合并的重复：")
         for item in dupes:
             d, k = item["delete"], item["keep"]
             print(
-                f"  删 #{d['id']} ref={d['ref']} 注额={d['stake']} 赔率={d['price']:.3f} "
-                f"@{d['placed_at']}  ← 保留 #{k['id']} 注额={k['stake']} 赔率={k['price']:.3f}"
+                f"  删 #{d['id']} ref={d['ref']} 盘口={d['line']} 赔率={d['price']:.3f} "
+                f"@{d['placed_at']}  ← 保留 #{k['id']} 盘口={k['line']} 赔率={k['price']:.3f}"
             )
 
         if not args.apply:
@@ -130,6 +156,7 @@ def main() -> None:
             "deduped_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "tol": args.tol,
             "hours": args.hours,
+            "sim": args.sim,
             "count": len(dupes),
             "bets": [item["delete"] for item in dupes],
         }
@@ -138,6 +165,10 @@ def main() -> None:
         )
 
         refs = [str(item["delete"]["ref"] or f"srv-{item['delete']['id']}") for item in dupes]
+        if args.sim:
+            from app.jobs.simulate import sim_ref
+
+            refs += [sim_ref(item["delete"]["game_id"], item["delete"]["market"]) for item in dupes]
         conn.executemany("DELETE FROM bets WHERE id=?", [(item["delete"]["id"],) for item in dupes])
         conn.commit()
         tombstoned = betssync.record_deletions(refs) if refs else 0
