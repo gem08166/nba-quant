@@ -249,7 +249,11 @@ def merge_rows(
             incoming = row.get("result")
             cur_result = current.get("result") or "open"
             if incoming in ("won", "lost", "push"):
-                if cur_result == "open":
+                if cur_result == "open" or (
+                    str(ref).startswith("hao-")
+                    and (cur_result != incoming or row.get("profit") != current.get("profit"))
+                ):
+                    # 333 平台订单是权威：平台结果可以覆盖本地自行结算的结果
                     cur = conn.execute(
                         """
                         UPDATE bets SET result=?, profit=?,

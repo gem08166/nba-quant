@@ -72,3 +72,19 @@ def test_sim_and_real_do_not_collapse():
     )
     assert result["added"] == 1
     assert conn.execute("SELECT COUNT(*) n FROM bets").fetchone()["n"] == 2
+
+
+def test_hao_platform_result_overrides_local_settlement():
+    """333 平台订单是权威：平台结果可以覆盖本地结算结果。"""
+    conn = _conn()
+    betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="lost")],
+    )
+    result = betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="won")],
+    )
+    assert result["updated"] == 1
+    row = conn.execute("SELECT result FROM bets WHERE ref='hao-1'").fetchone()
+    assert row["result"] == "won"
