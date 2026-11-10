@@ -39,6 +39,20 @@ def _has_sim(conn: sqlite3.Connection, game_id: str, market: str) -> bool:
     return row is not None
 
 
+def _has_real(conn: sqlite3.Connection, game_id: str, market: str) -> bool:
+    """同一场比赛同一个市场已经下了真实注单（333）时不再补模拟单。
+
+    模拟单是「没真下的信号」的纸上记录；真下了还记一条会在收益页重复计入
+    同一场比赛。真实注单只看备注前缀：模拟/回填都不算真实。
+    """
+    row = conn.execute(
+        "SELECT 1 FROM bets WHERE game_id=? AND market=? "
+        "AND NOT (note LIKE '模拟%' OR note LIKE '回填%') LIMIT 1",
+        (str(game_id), market),
+    ).fetchone()
+    return row is not None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -60,6 +74,10 @@ def ensure_sim_bets(conn: sqlite3.Connection, slate_date: str, stake: float = 2.
             continue
         # 同场同市场已经记过（可能来自旧版按 line 生成的 ref），不再重复下注
         if _has_sim(conn, game["id"], edge.get("market")):
+            skipped += 1
+            continue
+        # 已经下了真实注单：模拟单不再重复记（避免收益页同一场比赛算两遍）
+        if _has_real(conn, game["id"], edge.get("market")):
             skipped += 1
             continue
         price = float(edge.get("price") or 0)
