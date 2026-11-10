@@ -22,7 +22,9 @@
 
 用法：
     python -m scripts.import_333_bets --file data/333-bets.json            # 预览
-    python -m scripts.import_333_bets --file data/333-bets.json --apply --replace-manual
+    python -m scripts.import_333_bets --file data/333-bets.json --apply
+    # 默认 --authoritative：以 333 为唯一事实（替换手动重复 + 清理快照外的真实注单）；
+    # 想只增不删时加 --no-authoritative。
 """
 from __future__ import annotations
 
@@ -256,6 +258,31 @@ def find_manual_matches(conn, bet):
     return out
 
 
+def find_prunable(conn, imported_refs: set[str], times, complete_snapshot: bool = True) -> list[dict]:
+    """以 333 为准：找出本次快照窗口内、但不在快照里的已结算真实注单。"""
+    if not times:
+        return []
+    lo = min(times) - timedelta(hours=12)
+    hi = max(times) + timedelta(hours=12)
+    out = []
+    for row in conn.execute(
+        "SELECT * FROM bets WHERE note NOT LIKE '回填%' AND note NOT LIKE '模拟%'"
+    ).fetchall():
+        cand = dict(row)
+        ref = str(cand.get("ref") or "")
+        if ref in imported_refs:
+            continue
+        if cand.get("result") == "open":
+            continue  # 未结算的真实注单不删（快照可能不含未结算区）
+        when = _parse_iso(cand.get("placed_at"))
+        if not when or not (lo <= when <= hi):
+            continue
+        if not complete_snapshot and ref.startswith("hao-"):
+            continue
+        out.append(cand)
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="导入 333体育近 7 天注单")
     parser.add_argument("--file", default="data/333-bets.json")
@@ -265,9 +292,32 @@ def main() -> None:
         action="store_true",
         help="删除与 333 记录重复的手动注单（先备份 + 墓碑）",
     )
+    parser.add_argument(
+        "--authoritative",
+        dest="authoritative",
+        action="store_true",
+        default=True,
+        help="以 333 为唯一事实（默认）：替换手动重复 + 删除本次快照里不存在的已结算真实注单",
+    )
+    parser.add_argument(
+        "--no-authoritative",
+        dest="authoritative",
+        action="store_false",
+        help="只导入/更新，不清理额外真实注单",
+    )
     args = parser.parse_args()
+    replace_manual = args.replace_manual or args.authoritative
+    if args.authoritative:
+        print("[authoritative] 以 333 平台订单为准：会清理不在本次快照里的真实注单")
 
-    records = normalize_payload(json.loads(Path(args.file).read_text(encoding="utf-8")))
+    payload = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    records = normalize_payload(payload)
+    complete_snapshot = True
+    if isinstance(payload, dict):
+        data = payload.get("data") or {}
+        cursor = (data.get("paging") or {}).get("nextCursor")
+        complete_snapshot = not cursor
+
     conn = db.connect()
     try:
         prep, skipped = [], []
@@ -279,13 +329,9 @@ def main() -> None:
             prep.append(bet)
 
         matches: dict[int, list[dict]] = {}
-        if args.replace_manual:
-            for bet in prep:
-                for cand in find_manual_matches(conn, bet):
-                    matches[cand["id"]] = cand
-        else:
-            for bet in prep:
-                matches.update({c["id"]: c for c in find_manual_matches(conn, bet)})
+        for bet in prep:
+            for cand in find_manual_matches(conn, bet):
+                matches[cand["id"]] = cand
 
         print(f"可导入 {len(prep)} 条（未结算 {sum(1 for b in prep if b['result'] == 'open')} 条）；跳过 {len(skipped)} 条")
         for oid, reason in skipped:
@@ -296,7 +342,7 @@ def main() -> None:
             print(
                 f"  手动重复 #{cand['id']} {cand['game_id']} {cand['market']}/{cand['side']}/"
                 f"{cand['line']} @{cand['price']:.2f} {cand['placed_at']}"
-                + ("  → 删除" if args.replace_manual else "  → 保留（未加 --replace-manual）")
+                + ("  → 删除" if replace_manual or args.authoritative else "  → 保留（未加 --replace-manual）")
             )
             dup += 1
 
@@ -314,7 +360,7 @@ def main() -> None:
             )
 
         tombstones = []
-        if args.replace_manual and matches:
+        if (replace_manual or args.authoritative) and matches:
             tombstones = [str(c.get("ref") or f"srv-{c['id']}") for c in matches.values()]
             conn.executemany("DELETE FROM bets WHERE id=?", [(cid,) for cid in matches])
             conn.commit()
@@ -326,6 +372,24 @@ def main() -> None:
             f"导入完成：新增 {result['added']} · 更新 {result['updated']} · "
             f"重复跳过 {result['duplicates']} · 删除手动重复 {len(matches)}"
         )
+
+        if args.authoritative:
+            imported_refs = {b["ref"] for b in prep}
+            times = [b["_bet_time"] for b in prep]
+            pruned = find_prunable(conn, imported_refs, times, complete_snapshot)
+            if pruned:
+                ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+                (backup_dir / f"bets-333-pruned-{ts}.json").write_text(
+                    json.dumps(pruned, ensure_ascii=False, indent=1, default=str),
+                    encoding="utf-8",
+                )
+                conn.executemany("DELETE FROM bets WHERE id=?", [(r["id"],) for r in pruned])
+                conn.commit()
+                refs = [str(r.get("ref") or f"srv-{r['id']}") for r in pruned]
+                betssync.record_deletions(refs)
+                print(f"以 333 为准：删除 {len(pruned)} 条快照里不存在的真实注单（已备份 + 墓碑）")
+            else:
+                print("以 333 为准：没有需要清理的额外真实注单")
     finally:
         conn.close()
 

@@ -1,7 +1,34 @@
 """333 订单解析：原始 API 响应 / 订单数组 / 紧凑数组三种形状，以及未结算单。"""
 import sqlite3
+from datetime import datetime
 
-from scripts.import_333_bets import normalize_payload, team_abbrev, to_bet
+from scripts.import_333_bets import find_prunable, normalize_payload, team_abbrev, to_bet
+
+
+def _bets_conn():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE bets (
+            id INTEGER PRIMARY KEY, game_id TEXT, market TEXT, side TEXT, line REAL,
+            price REAL, stake REAL, model_prob REAL, ev REAL, placed_at TEXT,
+            result TEXT, profit REAL, closing_line REAL, closing_price REAL,
+            clv REAL, clv_line REAL, note TEXT, ref TEXT
+        );
+        """
+    )
+    return conn
+
+
+def _insert_bet(conn, ref, placed_at, result="won", note=""):
+    conn.execute(
+        "INSERT INTO bets(game_id, market, side, line, price, stake, model_prob, ev, "
+        "placed_at, result, profit, note, ref) VALUES('g1','spread','home',-2.5,1.95,2,0.5,0,"
+        "?,?,1.9,?,?)",
+        (placed_at, result, note, ref),
+    )
+    conn.commit()
 
 
 def _conn():
@@ -100,3 +127,17 @@ def test_to_bet_settled_uses_net_win():
     assert reason is None, reason
     assert bet["result"] == "won"
     assert bet["profit"] == 1.86
+
+
+def test_authoritative_prunes_only_settled_bets_inside_window():
+    conn = _bets_conn()
+    _insert_bet(conn, "hao-1", "2026-11-09T12:00:00+08:00")          # 快照内，保留
+    _insert_bet(conn, "srv-9", "2026-11-09T13:00:00+08:00")          # 快照内、不在集合 → 删
+    _insert_bet(conn, "srv-8", "2026-10-20T13:00:00+08:00")          # 窗口外 → 保留
+    _insert_bet(conn, "srv-7", "2026-11-09T13:00:00+08:00", result="open")  # 未结算 → 保留
+    _insert_bet(conn, "sim-x", "2026-11-09T13:00:00+08:00", note="模拟 可下注")  # 模拟 → 保留
+
+    times = [datetime.fromisoformat("2026-11-09T12:00:00+08:00")]
+    pruned = find_prunable(conn, {"hao-1"}, times)
+
+    assert [r["ref"] for r in pruned] == ["srv-9"]
