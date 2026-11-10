@@ -450,6 +450,9 @@ def run(
     # 先给历史注单补 ref（服务端创建的 = srv-<id>），否则云端合回会重复
     stats["refs_normalized"] = normalize_refs(conn)
     deletions = load_deletions()
+    # 墓碑先删再合并：否则「已删除的手动注单」会和平台订单同自然键，
+    # 导致新订单被当成重复跳过（实测 333 导入丢过 1 条）。
+    stats["deleted"] = apply_deletions(conn, deletions)
 
     # 1) inbox：手机导出的片段
     #    pull_only：只读合并，绝不 MOVE（MOVE 会把文件从 inbox 拿走，CI 就永远
@@ -487,9 +490,9 @@ def run(
         except (json.JSONDecodeError, TypeError) as exc:
             stats["ledger_error"] = str(exc)[:120]
 
-    # 2.5) 删除墓碑最后生效：先合并（inbox/台账）再删，保证手机重新导出的
-    #      已删注单也不会复活；删除后再推台账，云端也不会再带回来。
-    stats["deleted"] = apply_deletions(conn, deletions)
+    # 2.5) 合并后再清一次兜底（inbox / 台账里可能带回墓碑 ref）：
+    #      先合并再删，保证手机重新导出的已删注单也不会复活。
+    stats["deleted"] += apply_deletions(conn, deletions)
 
     # 3) 本地全量台账 → 云端（内容没变就跳过，省坚果云请求配额）
     if pull_only:

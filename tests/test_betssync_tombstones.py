@@ -5,19 +5,19 @@ import sqlite3
 from app.jobs import betssync
 
 
-def _bet(ref, result="won", profit=0.95, line=-2.5):
+def _bet(ref, result="won", profit=0.95, line=-2.5, placed_at="2026-11-06T10:00:00+00:00", price=1.95):
     return {
         "game_id": "g1",
         "market": "spread",
         "side": "home",
         "line": line,
-        "price": 1.95,
+        "price": price,
         "stake": 1.0,
         "model_prob": 0.55,
         "result": result,
         "profit": profit,
         "ref": ref,
-        "placed_at": "2026-11-06T10:00:00+00:00",
+        "placed_at": placed_at,
     }
 
 
@@ -112,3 +112,35 @@ def test_record_deletions_unions_and_persists(monkeypatch):
     assert body["schema"] == "nbaq.bets.deleted/1"
     assert set(body["refs"]) == {"srv-old", "srv-1", "srv-2"}
     assert body["updated_at"]
+
+
+def test_tombstoned_manual_row_does_not_swallow_platform_order(monkeypatch):
+    """已删除的手动注单与平台订单同自然键时，不能把平台订单当重复跳过。"""
+    from app.jobs import betssync as bs
+
+    conn = _conn()
+    # 手动转记（后来被 333 导入替换，已进墓碑）
+    bs.merge_rows(conn, [_bet("srv-7", "2026-11-05T00:40:44+00:00", price=3.05)])
+
+    platform = _bet("hao-abc", "2026-11-05T08:40:44+08:00", price=3.05)  # 同一绝对时刻
+    ledger = [platform]
+
+    monkeypatch.setattr(bs.webdav, "enabled", lambda: True)
+    monkeypatch.setattr(bs.webdav, "ensure_folders", lambda: None)
+    monkeypatch.setattr(bs.webdav, "list_files", lambda path: [])
+    monkeypatch.setattr(
+        bs.webdav,
+        "get_text",
+        lambda path: json.dumps(ledger)
+        if path == bs.webdav.LEDGER
+        else json.dumps({"refs": ["srv-7"]})
+        if path == bs.webdav.DELETED
+        else None,
+    )
+    monkeypatch.setattr(bs.webdav, "put_text", lambda path, body: True)
+
+    stats = bs.run(conn, pull_only=True)
+
+    refs = {r["ref"] for r in conn.execute("SELECT ref FROM bets")}
+    assert "srv-7" not in refs
+    assert refs == {"hao-abc"}, stats
