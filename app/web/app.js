@@ -1185,53 +1185,102 @@ $("#date").addEventListener("change", (event) => {
 });
 $("#refresh").addEventListener("click", () => load({ repredict: true }));
 
-// 清缓存：注销 Service Worker + 删除 CacheStorage，然后硬刷新。
-// 不动 localStorage（本机注单、主题、坚果云配置保留）。
-$("#clear-cache")?.addEventListener("click", async () => {
-  if (
-    !confirm(
-      "清空浏览器缓存并重新加载？\n\n会删除离线缓存和 Service Worker；本机注单、主题和同步设置不会删除。"
-    )
-  ) {
-    return;
-  }
-  const button = $("#clear-cache");
-  const prev = button.textContent;
-  button.disabled = true;
-  button.textContent = "清理中…";
+// 清理面板：缓存 / 本机注单分开勾选，避免误删。
+$("#clear-cache")?.addEventListener("click", openClearPanel);
+
+function openClearPanel() {
+  document.getElementById("clear-panel")?.remove();
+  let localBets = [];
   try {
-    if ("serviceWorker" in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map((reg) => reg.unregister()));
-    }
-    if (window.caches) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((key) => caches.delete(key)));
-    }
-    try {
-      sessionStorage.clear();
-    } catch (_) {
-      /* 隐私模式忽略 */
-    }
-    // 让浏览器用 cache:"reload" 重新抓一遍脚本/样式，刷新 HTTP 缓存里可能
-    // 残留的旧 JS（Service Worker 已在上一步注销）。
-    try {
-      const assets = [
-        ...Array.from(document.querySelectorAll("script[src]")).map((el) => el.getAttribute("src")),
-        ...Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map((el) =>
-          el.getAttribute("href")
-        ),
-      ].filter(Boolean);
-      await Promise.all(assets.map((src) => fetch(src, { cache: "reload" }).catch(() => null)));
-    } catch (_) {
-      /* 刷新失败也继续 reload */
-    }
+    localBets = window.LB?.read?.() || [];
   } catch (_) {
-    /* 清理失败也继续刷新 */
+    localBets = [];
   }
-  button.textContent = prev;
-  location.reload();
-});
+  const n = localBets.length;
+  const overlay = document.createElement("div");
+  overlay.className = "modal";
+  overlay.id = "clear-panel";
+  overlay.style.zIndex = "60";
+  overlay.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <button class="close" aria-label="关闭">×</button>
+      <h2>清理</h2>
+      <label class="clear-row">
+        <input type="checkbox" id="cc-cache" checked>
+        <span><b>浏览器缓存</b><br>
+          <small>Service Worker、离线缓存、sessionStorage；不会删除本机注单和设置</small></span>
+      </label>
+      <label class="clear-row">
+        <input type="checkbox" id="cc-bets" ${n ? "" : "disabled"}>
+        <span><b>本机注单（${n} 条）</b><br>
+          <small>只清这个浏览器 localStorage 里的注单，不影响云端台账和 333 记录；
+          没同步到坚果云的注单会永久丢失</small></span>
+      </label>
+      <div class="clear-actions">
+        <button class="btn small primary" id="cc-run">执行并刷新</button>
+        <button class="btn small" id="cc-cancel">取消</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector(".close").addEventListener("click", close);
+  overlay.querySelector("#cc-cancel").addEventListener("click", close);
+  overlay.querySelector("#cc-run").addEventListener("click", async () => {
+    const doCache = overlay.querySelector("#cc-cache").checked;
+    const doBets = overlay.querySelector("#cc-bets").checked;
+    if (!doCache && !doBets) {
+      toast("至少选择一项");
+      return;
+    }
+    if (
+      doBets &&
+      !confirm(`删除本机 ${n} 条注单？\n\n只影响这个浏览器；云端台账和 333 记录不会被删。`)
+    ) {
+      return;
+    }
+    const btn = overlay.querySelector("#cc-run");
+    btn.disabled = true;
+    btn.textContent = "清理中…";
+
+    if (doBets) {
+      try {
+        localStorage.removeItem("nbaq:bets:v1");
+      } catch (_) {
+        /* 隐私模式忽略 */
+      }
+    }
+
+    if (doCache) {
+      try {
+        if ("serviceWorker" in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((reg) => reg.unregister()));
+        }
+        if (window.caches) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((key) => caches.delete(key)));
+        }
+        try {
+          sessionStorage.clear();
+        } catch (_) {
+          /* 隐私模式忽略 */
+        }
+        // 用 cache:"reload" 重抓脚本/样式，刷新 HTTP 缓存里可能残留的旧 JS
+        const assets = [
+          ...Array.from(document.querySelectorAll("script[src]")).map((el) => el.getAttribute("src")),
+          ...Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map((el) =>
+            el.getAttribute("href")
+          ),
+        ].filter(Boolean);
+        await Promise.all(assets.map((src) => fetch(src, { cache: "reload" }).catch(() => null)));
+      } catch (_) {
+        /* 清理失败也继续刷新 */
+      }
+    }
+    location.reload();
+  });
+}
 $("#close").addEventListener("click", () => {
   $("#modal").hidden = true;
 });

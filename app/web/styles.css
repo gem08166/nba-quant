@@ -953,6 +953,25 @@ tr.sub td { color: var(--muted); font-size: 12px; }
 }
 .close:hover { color: var(--text); border-color: var(--hover-line); }
 
+/* 清理面板：缓存 / 本机注单 两个勾选项 */
+.clear-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.clear-row input { margin-top: 3px; }
+.clear-row b { font-size: 13px; }
+.clear-row small { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.clear-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
 .modal h2 { margin: 0 40px 4px 0; font-size: 20px; font-weight: 700; }
 .modal .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; }
 
