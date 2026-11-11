@@ -838,7 +838,7 @@ async function loadPost(force = false) {
         cell("已结束比赛", `${done.length}`),
         cell("分差 MAE", nPred ? (errM / nPred).toFixed(2) : "—"),
         cell("总分 MAE", nPred ? (errT / nPred).toFixed(2) : "—"),
-        cell("主胜方向", nPred ? `${mlHit}/${nPred}` : "—"),
+        cell("方向命中", nPred ? `${mlHit}/${nPred}` : "—"),
         cell("历史信号", sigTotal ? `${sigTotal} 条` : "0 条"),
         cell(
           "信号命中",
