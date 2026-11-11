@@ -176,9 +176,15 @@ function postCard(game) {
   if (pred) {
     const errM = Math.abs(pred.pred_margin - m);
     const errT = Math.abs(pred.pred_total - t);
-    const mlOk = (pred.pred_margin > 0) === (m > 0);
+    // pred_margin 是主队口径：>0 模型看好主胜，<0 看好客胜。
+    // 旧文案「主胜方向」会被读成"模型预测主胜"，这里直接写明方向和主胜概率。
+    const predSide = pred.pred_margin >= 0 ? "主胜" : "客胜";
+    const actualSide = m >= 0 ? "主胜" : "客胜";
+    const mlOk = predSide === actualSide;
+    const wpTxt =
+      pred.home_win_prob != null ? ` · 模型主胜 ${Math.round(pred.home_win_prob * 100)}%` : "";
     const cls = mlOk ? "pos" : "neg";
-    statsLine = `<div class="meta">赛前预测 ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)} · 实际 ${m > 0 ? "+" : ""}${m} / ${t} · 分差误差 ${errM.toFixed(1)} · 总分误差 ${errT.toFixed(1)} · 主胜方向 <b class="bet-result ${cls}">${mlOk ? "✓ 对" : "✗ 错"}</b></div>`;
+    statsLine = `<div class="meta">赛前预测 ${fmtSpread(pred.pred_margin)} / 总分 ${fmtTotal(pred.pred_total)}${wpTxt} · 实际 ${m > 0 ? "+" : ""}${m} / ${t} · 分差误差 ${errM.toFixed(1)} · 总分误差 ${errT.toFixed(1)} · 模型方向 <b class="bet-result ${cls}">${predSide} ${mlOk ? "✓ 对" : "✗ 错"}</b></div>`;
   }
   let betsLine = "";
   if (settled.length) {
@@ -866,7 +872,9 @@ async function jumpToLastFinished() {
     if (window.APP_MODE === "static") {
       const histEt = window.STATIC_PAYLOAD?.history || {};
       // history 键是 ET 比赛日；换算成北京日期键（值结构不变），
-      // 使跳转/比较与 state.date（北京日期）同一口径。
+      // 与 state.date（北京日期）同一口径。注意：换算后的键已经是北京日期，
+      // 比较和赋值都要直接用它——再过一次 slateToBjDate 会多 +1 天，
+      // 跳到完赛日的下一天（空页面）。
       const hist = {};
       for (const et of Object.keys(histEt)) {
         const d = new Date(et + "T12:00:00Z");
@@ -881,18 +889,17 @@ async function jumpToLastFinished() {
       // 优先跳到"真的有赛前分析"的日期——早期比赛日只有比分没有预测，
       // 跳过去赛后复盘会是空的（模型 11-04 才开始记录预测）
       const hasAnalysis = (day) => (hist[day] || []).some((g) => g.pregame);
-      const currentSlate = bjToSlate(state.date);
       let target =
-        days.find((d) => d <= currentSlate && hasAnalysis(d)) ||
-        days.find((d) => d <= currentSlate) ||
+        days.find((d) => d <= state.date && hasAnalysis(d)) ||
+        days.find((d) => d <= state.date) ||
         days[0];
       const n = (hist[target] || []).length;
-      state.date = slateToBjDate(target);
+      state.date = target;
       const el = document.getElementById("date");
       if (el) el.value = state.date;
       await loadPost(true);
       const rendered = document.querySelectorAll(".post-card").length || n;
-      toast(`已跳到 ${bjSlateLabel(target)}（${rendered} 场已结束）`);
+      toast(`已跳到 ${bjSlateLabel(bjToSlate(target))}（${rendered} 场已结束）`);
       return;
     }
 
