@@ -1254,3 +1254,18 @@ README.md              # 用户文档（含第 0 节验证结论）
   合并成 `{data:{settlement:{data:[]},unSettlement:{data:[]}}}`；页面 POST 到本机
   8010 接收器落 `data/333-bets.json`，再跑 `import_333_bets --apply`（权威模式）。
 
+### 10.73 2026-11-11 推送去重口径修正（同场/同市场/同方向只推一次）
+
+- **症状**：手机上一串看起来一模一样的推送，只有赔率不同。`notifications` 表可复现：
+  `401909925 spread away -3.5` @1.94 → @1.93 → @1.885 三次；
+  `401909930 moneyline away` @3.55 → @3.41 → @3.40 → @3.35 四次。
+- **根因**：`send_new_signals` 的去重键是 `(game, market, side, line, price)` 精确匹配，
+  赔率每 10 分钟一轮的刷新抖一下就当成新信号；盘口小幅漂移（233.5→233.75）同理。
+- **修正**：身份改为 **`(game_id, market, side)`**，赔率/盘口不再参与去重；同一批
+  `items` 内的重复也一并折掉。不同方向（over/under、主/客）仍是不同注单，各推一次。
+  `notifications` 仍记录首次推送的 line/price 作为审计。
+- **测试**：`tests/test_notify_dedupe.py` 5 例（价格抖动、盘口漂移、反向、换市场、批内重复）。
+  **202 passed**。
+- 注：CI 的 `odds-refresh-light` cron 实为 `*/10`（注释写 30），去重修好后高频轮询
+  不再产生重复推送，仅让首次合格信号更快送达。
+

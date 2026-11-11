@@ -157,23 +157,37 @@ def collect_signal_items(
     return items
 
 
+def _already_sent(conn: sqlite3.Connection, game_id: str, market: str, side: str) -> bool:
+    """这笔注单是否已经推送过（只按 同场/同市场/同方向 认身份）。"""
+    return conn.execute(
+        "SELECT 1 FROM notifications WHERE game_id=? AND market=? AND side=? LIMIT 1",
+        (str(game_id), market, side),
+    ).fetchone() is not None
+
+
 def send_new_signals(conn: sqlite3.Connection, items: list[tuple[dict, dict]]) -> int:
-    """Push signals that were not already sent (dedup by game/market/side/line/price)."""
+    """Push signals that were not already sent.
+
+    **去重口径：同场 / 同市场 / 同方向只推一次**，赔率和盘口不参与身份。
+
+    赔率每几分钟就抖一次（1.94 → 1.93 → 1.885），盘口也会小幅漂移
+    （233.5 → 233.75），这些都是同一笔注单的不同报价；旧版把 price/line
+    放进唯一键，导致同一笔单被反复推送，手机上一串看起来完全一样的消息。
+    不同方向（over/under、主/客）是不同注单，仍然各推一次；
+    同一批 items 里的重复也在这里一并折掉。
+    """
     if not items:
         return 0
     db.init_db(conn)
 
     pending: list[tuple[dict, dict]] = []
+    seen: set[tuple[str, str, str]] = set()
     for game, edge in items:
-        exists = conn.execute(
-            """
-            SELECT 1 FROM notifications
-            WHERE game_id=? AND market=? AND side=? AND line IS ? AND price IS ?
-            """,
-            (game["id"], edge["market"], edge["side"], edge.get("line"), edge.get("price")),
-        ).fetchone()
-        if not exists:
-            pending.append((game, edge))
+        key = (str(game["id"]), edge["market"], edge["side"])
+        if key in seen or _already_sent(conn, *key):
+            continue
+        seen.add(key)
+        pending.append((game, edge))
     if not pending:
         return 0
 
