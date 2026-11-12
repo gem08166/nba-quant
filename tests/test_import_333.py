@@ -141,3 +141,24 @@ def test_authoritative_prunes_only_settled_bets_inside_window():
     pruned = find_prunable(conn, {"hao-1"}, times)
 
     assert [r["ref"] for r in pruned] == ["srv-9"]
+
+
+def test_prune_window_uses_payout_time_not_bet_time():
+    """早下单、窗口开始前已结算的单不在快照里，但不是"平台已删除"。
+
+    真实案例：11-05 10:37 下的滚球单在 11-05 结算，11-12 抓单时
+    「近 7 日已结」窗口从 11-06 起，快照里没有它——旧逻辑按下注时间
+    ±12h 推算窗口，会把它误删（并写墓碑，跨设备生效）。
+    """
+    conn = _bets_conn()
+    _insert_bet(conn, "hao-old", "2026-11-05T10:37:47+08:00")   # 早于结算窗口 → 保留
+    _insert_bet(conn, "srv-9", "2026-11-08T13:00:00+08:00")     # 窗口内、不在集合 → 删
+
+    bet_times = [datetime.fromisoformat("2026-11-08T15:00:00+08:00")]
+    payouts = [
+        datetime.fromisoformat("2026-11-06T12:26:50+08:00"),
+        datetime.fromisoformat("2026-11-09T14:00:00+08:00"),
+    ]
+    pruned = find_prunable(conn, set(), bet_times, True, payouts)
+
+    assert [r["ref"] for r in pruned] == ["srv-9"]

@@ -80,6 +80,9 @@ def _compact_order(order: dict, open_bet: bool = False) -> dict:
     return {
         "orderId": order.get("orderId"),
         "betTime": order.get("betTime"),
+        # 结算时间：「近 7 日已结」查询按结算时间过滤，修剪窗口必须用它，
+        # 不能用下注时间（早下单、晚结算的单会落在窗口外但仍属于快照）。
+        "payoutTime": order.get("payoutTime"),
         "ante": float(order.get("ante") or 0),
         "netWin": None if open_bet else float(order.get("netWinAmount") or 0),
         "orderStatus": order.get("orderStatus"),
@@ -212,6 +215,7 @@ def to_bet(conn, rec: dict):
         "note": note,
         "ref": f"hao-{rec.get('orderId')}",
         "_bet_time": bet_time,
+        "_payout_time": parse_bj(rec.get("payoutTime") or "") if rec.get("payoutTime") else None,
     }, None
 
 
@@ -257,12 +261,27 @@ def find_manual_matches(conn, bet):
     return out
 
 
-def find_prunable(conn, imported_refs: set[str], times, complete_snapshot: bool = True) -> list[dict]:
-    """以 333 为准：找出本次快照窗口内、但不在快照里的已结算真实注单。"""
-    if not times:
+def find_prunable(
+    conn,
+    imported_refs: set[str],
+    times,
+    complete_snapshot: bool = True,
+    payout_times=None,
+) -> list[dict]:
+    """以 333 为准：找出本次快照窗口内、但不在快照里的已结算真实注单。
+
+    窗口下界用**结算时间**（payoutTime）推算——平台按结算时间过滤「近 7 日」，
+    早下单、窗口开始前已结算的单不会出现在快照里，但它仍然真实存在，
+    不能当作"平台已删除"修剪掉（否则每天抓单都会误删历史注单）。
+    payout_times 缺失时退回用下注时间的保守估计。
+    """
+    if not times and not payout_times:
         return []
-    lo = min(times) - timedelta(hours=12)
-    hi = max(times) + timedelta(hours=12)
+    hi = max(times) + timedelta(hours=12) if times else datetime.now(timezone.utc) + timedelta(hours=12)
+    if payout_times:
+        lo = min(payout_times) - timedelta(hours=12)
+    else:
+        lo = min(times) - timedelta(hours=12)
     out = []
     for row in conn.execute(
         "SELECT * FROM bets WHERE note NOT LIKE '回填%' AND note NOT LIKE '模拟%'"
@@ -375,7 +394,8 @@ def main() -> None:
         if args.authoritative:
             imported_refs = {b["ref"] for b in prep}
             times = [b["_bet_time"] for b in prep]
-            pruned = find_prunable(conn, imported_refs, times, complete_snapshot)
+            payouts = [b["_payout_time"] for b in prep if b.get("_payout_time")]
+            pruned = find_prunable(conn, imported_refs, times, complete_snapshot, payouts)
             if pruned:
                 ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
                 (backup_dir / f"bets-333-pruned-{ts}.json").write_text(
