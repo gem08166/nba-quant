@@ -13,6 +13,7 @@ from __future__ import annotations
 """
 
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime
@@ -30,6 +31,11 @@ API = "https://hoopsapi.com/api/v1"
 REQUEST_BUDGET_24H = 10
 MAX_REQUESTS_PER_INVOCATION = 4
 STATE_PATH = DATA_DIR / "hoops_state.json"
+
+# 最小调用间隔：watch 每 10 分钟一轮，若不设间隔会在 100 分钟内把 10 次预算打光，
+# 之后整天都拿不到（Pinnacle 收盘价反而缺失）。默认 150 分钟 ≈ 每天 9–10 次，
+# 正好把预算摊到全天。本机想更省（和 CI 共用同一个 key）可以调大。
+MIN_INTERVAL_S = float(os.getenv("NBAQ_HOOPS_MIN_INTERVAL_MIN", "150")) * 60
 
 
 class HoopsRateLimited(RuntimeError):
@@ -134,14 +140,32 @@ def _providers_to_rows(providers: dict) -> list[dict]:
 
 
 def sync_games(conn: sqlite3.Connection) -> dict:
-    """每日同步：抓 NBA upcoming 列表 → 建立 hoops↔espn 映射 + 主盘入库。"""
+    """每日同步：抓 NBA upcoming 列表 → 建立 hoops↔espn 映射 + 主盘入库。
+
+    受最小调用间隔约束：watch 每 10 分钟一轮，若不限流会在 100 分钟内把
+    10 次/24h 预算打光，之后整天拿不到（Pinnacle 收盘价反而缺失）。
+    """
     from . import service as espn_service
+
+    state = _load_state()
+    last = float(state.get("last_sync_ts") or 0)
+    if last and time.time() - last < MIN_INTERVAL_S:
+        waited = (time.time() - last) / 60
+        return {
+            "games": 0,
+            "mapped": 0,
+            "odds_rows": 0,
+            "skipped": f"距上次 {waited:.0f}min < {MIN_INTERVAL_S / 60:.0f}min",
+        }
 
     stats = {"games": 0, "mapped": 0, "odds_rows": 0}
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
         games = fetch_nba_games(client)
         _sleep()
     stats["games"] = len(games)
+    state = _load_state()
+    state["last_sync_ts"] = time.time()
+    _save_state(state)
 
     for game in games:
         home, away = game.get("home") or "", game.get("away") or ""

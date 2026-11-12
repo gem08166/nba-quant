@@ -1316,3 +1316,23 @@ README.md              # 用户文档（含第 0 节验证结论）
   墓碑与台账无冲突；已结算单 profit 齐全；时区口径抽查一致。
 - **测试**：新增 `tests/test_webdav_retry.py` 3 例，**206 passed**。
 
+### 10.77 2026-11-12 本机补齐数据源 key + HoopsAPI 间隔闸门
+
+- **本机 `.env`**：从 `data/backup/.env.bak-keys-20261107-1157` 恢复
+  `NBAQ_ODDS_API_KEY`（32 位，实测有效：8 本书、剩余 245/已用 255）与
+  `HOOPS_API_KEY`（28 位，有效但当时 429，16.8h 后重置）。备份首行带 UTF-8 BOM，
+  合并脚本用 `utf-8-sig` 读取；合并前已备份当前 `.env` 到
+  `data/backup/.env.bak-before-keys-merge`。`NBAQ_NTFY_TOPIC` 保持为空 →
+  本机不推送，避免与 CI 重复推同一信号。
+- **效果**：本机 `refresh --date 2026-11-12` 后共识达 4–10 本书，能算出
+  `bettable` 信号（独行侠@森林狼 主 -5.5 @1.91 EV+10.3%、黄蜂@太阳 客 @3.06 EV+20.2%），
+  不再只能看 CI 的 Pages。
+- **省额度配置**（本机与 CI 共用同一份 key，自动抓取调保守；需要新鲜价用
+  `nbaq odds-api --force` 手动刷）：
+  `NBAQ_ODDSAPI_MIN_HOURS=8`、`NBAQ_HOOPS_MIN_INTERVAL_MIN=1440`。
+- **新 bug 修复（对 CI 同样重要）**：`hoops.sync_games` 之前每个 watch tick 都发请求，
+  10 次/24h 预算会在约 100 分钟内被打光，之后整天拿不到 Pinnacle 收盘价。
+  加 `MIN_INTERVAL_S`（默认 150 分钟 ≈ 每天 9–10 次）闸门，间隔内直接返回
+  `skipped`，`archive_closing` 仍可继续用剩余预算。
+- **测试**：新增 `tests/test_hoops_interval.py` 2 例，**208 passed**。
+
