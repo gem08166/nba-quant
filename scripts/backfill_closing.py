@@ -16,7 +16,14 @@ import argparse
 import time
 from datetime import date as date_cls, timedelta
 
-from sbrscrape import Scoreboard
+try:
+    from sbrscrape import Scoreboard
+except ImportError as exc:  # pragma: no cover - 仅在缺依赖时触发
+    raise SystemExit(
+        "缺少依赖 sbrscrape（历史收盘线回填专用）：\n"
+        "  pip install sbrscrape\n"
+        "或：pip install -e \".[sbr]\""
+    ) from exc
 
 from app import db
 from app.ingest.espn import american_to_decimal

@@ -1301,3 +1301,18 @@ README.md              # 用户文档（含第 0 节验证结论）
   本地/云端台账 50 条（真实 46 = 40 已结 + 6 未结，模拟 4）一致。
 - **测试**：203 passed。
 
+### 10.76 2026-11-12 全量体检（依赖 / 导入 / 数据 / 网络重试）
+
+- **模块导入扫描**：app+scripts 共 57 个模块，唯一失败 `scripts/backfill_closing`
+  （`sbrscrape` 空壳）。根因是 `.venv/Lib/site-packages` 被坚果云同步改名成
+  `*.nssyncsc`（2679 个 0 字节残留、2671 个原文件丢失）。已 `pip install
+  --ignore-installed sbrscrape==0.0.12` 修复并清理残留；`.venv` 应排除在坚果云同步外。
+- **依赖声明**：`sbrscrape` 之前只出现在脚本 import 里、未在 pyproject 声明；
+  新增可选依赖组 `sbr = ["sbrscrape>=0.0.12"]`，脚本缺依赖时给出可执行的安装提示。
+- **网络重试**：watch 日志出现 `betssync failed: The read operation timed out`
+  （坚果云瞬时超时导致该轮台账同步丢失）。`webdav.get_text/list_files/put_text`
+  统一加 `_retry()`（3 次、0.8s 线性退避，只重试超时/传输错误，状态码错误不重试）。
+- **数据体检**：SQLite integrity/foreign_key 均 ok；注单无孤儿、无重复 ref；
+  墓碑与台账无冲突；已结算单 profit 齐全；时区口径抽查一致。
+- **测试**：新增 `tests/test_webdav_retry.py` 3 例，**206 passed**。
+

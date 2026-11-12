@@ -15,6 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# 历史收盘线回填（scripts/backfill_closing.py）用的第三方抓取库，
+# 非主流程依赖：pip install -e ".[sbr]"
+sbr = ["sbrscrape>=0.0.12"]
 
 [project.scripts]
 nbaq = "app.cli:main"

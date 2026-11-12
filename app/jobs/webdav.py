@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 import httpx
 
@@ -43,6 +44,25 @@ def _client() -> httpx.Client:
 def _url(path: str) -> str:
     base = WEBDAV_URL if WEBDAV_URL.endswith("/") else WEBDAV_URL + "/"
     return base + path
+
+
+def _retry(fn, attempts: int = 3, base_delay: float = 0.8):
+    """对瞬时网络错误重试（坚果云偶发 read timeout / 连接重置）。
+
+    watch 每 10 分钟跑一轮 betssync，一次超时就会漏掉这一轮的台账同步；
+    写操作本身幂等（PUT 全量覆盖、GET 只读），重试是安全的。
+    4xx/5xx 等 HTTP 状态错误不重试，直接抛给调用方。
+    """
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last = exc
+            if i + 1 < attempts:
+                time.sleep(base_delay * (i + 1))
+    assert last is not None
+    raise last
 
 
 def _mkcol_ok(status: int) -> bool:
@@ -82,42 +102,57 @@ def _mkdirs(path: str) -> None:
 def put_text(path: str, text: str) -> bool:
     if not enabled():
         return False
-    with _client() as client:
-        resp = client.put(_url(path), content=text.encode("utf-8"))
-        if resp.status_code in (200, 201, 204):
-            return True
-        # 父目录不存在 → 逐级创建后重试一次
-        _mkdirs(path)
-        resp = client.put(_url(path), content=text.encode("utf-8"))
-        return resp.status_code in (200, 201, 204)
+
+    def _put():
+        with _client() as client:
+            resp = client.put(_url(path), content=text.encode("utf-8"))
+            if resp.status_code in (200, 201, 204):
+                return True
+            # 父目录不存在 → 逐级创建后重试一次
+            _mkdirs(path)
+            resp = client.put(_url(path), content=text.encode("utf-8"))
+            return resp.status_code in (200, 201, 204)
+
+    return _retry(_put)
 
 
 def get_text(path: str) -> str | None:
     """返回文件内容；不存在（404）返回 None，其他错误抛异常。"""
     if not enabled():
         return None
-    with _client() as client:
-        resp = client.get(_url(path))
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        return resp.text
+
+    def _get():
+        with _client() as client:
+            resp = client.get(_url(path))
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.text
+
+    return _retry(_get)
 
 
 def list_files(path: str) -> list[str]:
     """PROPFIND Depth:1，返回该目录下的文件相对路径（不含目录本身）。"""
     if not enabled():
         return []
-    with _client() as client:
-        resp = client.request(
-            "PROPFIND",
-            _url(path + "/"),
-            headers={"Depth": "1", "Content-Type": "application/xml"},
-        )
-        if resp.status_code in (404,):
-            return []
-        resp.raise_for_status()
-    hrefs = re.findall(r"<[a-zA-Z0-9]*:?href>\s*([^<]+)\s*</[a-zA-Z0-9]*:?href>", resp.text)
+
+    def _propfind():
+        with _client() as client:
+            resp = client.request(
+                "PROPFIND",
+                _url(path + "/"),
+                headers={"Depth": "1", "Content-Type": "application/xml"},
+            )
+            if resp.status_code in (404,):
+                return ""
+            resp.raise_for_status()
+            return resp.text
+
+    resp_text = _retry(_propfind)
+    if not resp_text:
+        return []
+    hrefs = re.findall(r"<[a-zA-Z0-9]*:?href>\s*([^<]+)\s*</[a-zA-Z0-9]*:?href>", resp_text)
     prefix = re.sub(r"^https?://[^/]+", "", WEBDAV_URL)
     files: list[str] = []
     for href in hrefs:
