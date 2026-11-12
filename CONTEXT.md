@@ -1336,3 +1336,17 @@ README.md              # 用户文档（含第 0 节验证结论）
   `skipped`，`archive_closing` 仍可继续用剩余预算。
 - **测试**：新增 `tests/test_hoops_interval.py` 2 例，**208 passed**。
 
+### 10.78 2026-11-12 hoops 间隔闸门的 CI 兜底（state 文件不落库）
+
+- **问题**：`hoops_state.json` 不在 data 分支里（CI 只推 `nba.db` + `bets.json`），
+  CI 每轮都是新容器 → 只看 state 的话间隔闸门每轮失效，等于没修。
+- **修复**：`_last_sync_ts(conn, state)`：state 缺失时从库里推断——
+  `MAX(COALESCE(last_seen_at, captured_at)) WHERE source='hoops'`。
+  必须用 `last_seen_at`：报价没变化时 `insert_odds` 只推进 `last_seen_at`，
+  `captured_at` 不变，只读 `captured_at` 会让闸门形同虚设。
+- **实测**：CI（data 分支）hoops 数据正常在进（8292 行、pinnacle 1623 行、
+  今天 02:26Z 仍有更新），预算是服务端自限的；闸门的作用是省掉无效请求与噪声日志。
+- **本机现状**：`.env` 已含两个 key；本机 hoops 最新数据停在 11-05（key 之前为空），
+  本地 429 退避缓存约 16.6 小时后到期，届时自动开始补齐。
+- **测试**：`tests/test_hoops_interval.py` 扩到 4 例，**210 passed**。
+

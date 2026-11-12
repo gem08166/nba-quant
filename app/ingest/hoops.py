@@ -16,7 +16,7 @@ import json
 import os
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -139,6 +139,35 @@ def _providers_to_rows(providers: dict) -> list[dict]:
     return rows
 
 
+def _last_sync_ts(conn, state: dict) -> float:
+    """上次 hoops 同步/归档的时间。
+
+    CI 每轮都是新容器，`hoops_state.json` 不会进 data 分支 → 只看 state 的话
+    间隔闸门每轮都失效（又会在 100 分钟内打光预算）。所以 state 缺失时
+    退回读库：hoops 写入的快照都带 source='hoops'，取最新 captured_at。
+    """
+    ts = float(state.get("last_sync_ts") or 0)
+    if ts:
+        return ts
+    try:
+        row = conn.execute(
+            "SELECT MAX(COALESCE(last_seen_at, captured_at)) FROM odds_snapshots "
+            "WHERE source='hoops'"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 - 查不到就按没同步过处理
+        return 0.0
+    value = row[0] if row else None
+    if not value:
+        return 0.0
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
 def sync_games(conn: sqlite3.Connection) -> dict:
     """每日同步：抓 NBA upcoming 列表 → 建立 hoops↔espn 映射 + 主盘入库。
 
@@ -148,7 +177,7 @@ def sync_games(conn: sqlite3.Connection) -> dict:
     from . import service as espn_service
 
     state = _load_state()
-    last = float(state.get("last_sync_ts") or 0)
+    last = _last_sync_ts(conn, state)
     if last and time.time() - last < MIN_INTERVAL_S:
         waited = (time.time() - last) / 60
         return {
