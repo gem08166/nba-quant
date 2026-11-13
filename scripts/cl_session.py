@@ -110,6 +110,12 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
     conn = sqlite3.connect(str(DATA_DIR / "nba.db"))
     conn.row_factory = sqlite3.Row
 
+    # 收盘捕捉去重表（内存级，每次会话重建）
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS cl_captured ("
+        "game_id TEXT PRIMARY KEY, captured_at TEXT NOT NULL)"
+    )
+
     slate = current_slate_date()
     games = _slate_games(conn, slate)
 
@@ -185,18 +191,44 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
         except Exception as exc:
             _log(f"  ESPN 盘口失败: {exc}")
 
-        # b) The Odds API（收盘窗口豁免 4h 间隔，15 分钟节奏）
+        # b) The Odds API：每场只做一次收盘捕捉（开赛前 30 分钟触发）
+        #    高频轮次用 ESPN + 好体育（免费），Odds API 仅做参考基准
         try:
             from app.ingest import theodds
 
-            events, msg = theodds.fetch_nba_odds()
-            if events:
-                from app.ingest.theodds import ingest_events
+            now_iso = _now().isoformat(timespec="seconds")
+            pending = []
+            for g in games:
+                tip = _parse_ts(g["tipoff"])
+                if not tip:
+                    continue
+                mins_to_tip = (tip - _now()).total_seconds() / 60.0
+                # 收盘时刻：开赛前 25~35 分钟窗口内
+                if 25 <= mins_to_tip <= 35:
+                    # 检查是否已捕捉过
+                    done = conn.execute(
+                        "SELECT 1 FROM cl_captured WHERE game_id = ?",
+                        (g["id"],),
+                    ).fetchone()
+                    if not done:
+                        pending.append(g)
 
-                n = theodds.ingest_events(conn, events, slate_date=slate)
-                _log(f"  Odds API: {msg} · 入库 {n}")
+            if pending:
+                events, msg = theodds.fetch_nba_odds()
+                if events:
+                    from app.ingest.theodds import ingest_events
+
+                    n = theodds.ingest_events(conn, events, slate_date=slate)
+                    for g in pending:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO cl_captured(game_id, captured_at) VALUES (?, ?)",
+                            (g["id"], now_iso),
+                        )
+                    _log(f"  Odds API 收盘: {msg} · {len(pending)} 场 · 入库 {n}")
+                else:
+                    _log(f"  Odds API: {msg}")
             else:
-                _log(f"  Odds API: {msg}")
+                _log("  Odds API: 无待捕捉比赛（收盘时刻未到或已完成）")
         except Exception as exc:
             _log(f"  Odds API 失败: {exc}")
 
