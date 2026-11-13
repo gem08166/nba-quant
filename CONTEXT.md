@@ -1459,3 +1459,36 @@ README.md              # 用户文档（含第 0 节验证结论）
   乘法（保持与历史报告可比）。
 - **测试**：test_devig_shin.py 6 例（无水位退化/和为 1/热门方向/极端价/非法输入/
   分发），**231 passed**。
+
+### 10.83 2026-11-13 比赛日 CL 捕捉会话 + 本地存活监控
+
+- **背景**：收盘线（CL）是模型验收的唯一基准，但 watch 是 24/7 的 5 分钟万能循环，
+  比赛日凌晨才开始抓会让最后几小时的价格变粗；同时没人盯机器，挂了不通知。
+- **CL 会话**（\scripts/cl_session.py\）：按当日赛程算窗口（首场前 2h → 末场后
+  30min），先分段等待（每 5 分钟复核延期/取消），窗口内每 3 分钟一轮：ESPN 盘口
+  \capture_closing\ → The Odds API → 好体育滚球 → ESPN 比分/状态 → 注单结算；
+  全部 STATUS_FINAL 后做最后一轮收盘 + 结算再退出。安全阀：末场后 +60min 强制退出。
+- **额度核心改动**：Odds API 从"每轮都调"改为**每场只调一次**——仅在该场开赛前
+  25~35 分钟窗口内触发，用 \cl_captured(game_id)\ 去重。单日 10 场约 10~15 额度，
+  月消耗 ~300-450（预算 3 key × 500 = 1500）；高频轮次全用免费的 ESPN / 好体育。
+- **Windows 计划任务** \NBA-CL-Session\：每天 06:00 触发（\scripts/deploy_cl_task.ps1\），
+  脚本自己判断等待与退出，无比赛直接返回。执行时间上限 16h，失败重试 3 次。
+- **中文路径坑**：项目在 \F:\量化\...\，计划任务的 Execute 路径含中文时 PowerShell
+  5.1 解析错乱，故建 junction \F:\nba-quant\ → 项目根，任务统一用 ASCII 路径
+  （Python 侧 \Path(__file__).resolve()\ 仍解析回真实路径，DATA_DIR 不受影响）。
+- **\GET /health\ 路由**：浏览器扩展/监控在轮询 \/health\ 而非 \/api/health\，之前
+  持续 404 刷屏；在 \app/main.py\ 加根级别名，返回与 \/api/health\ 相同结构。
+- **本地存活监控**（\scripts/alive_monitor.py\ + \NBA-Alive-Monitor\ 任务，每 5 分钟）：
+  三项检查——serve（\GET /api/health\ 200 且 ok）、watch（进程命令行含 \app.cli watch\）、
+  cl_session（仅在"首场前 2h → 末场后 1h"窗口内要求进程存在，窗口外/无比赛自动放行）。
+  异常推 ntfy（Title 走 UTF-8 字节，与 notify 一致），**同一项 30 分钟节流**；恢复时推
+  一条"已恢复"并清空状态，避免反复刷屏；\--heartbeat\ 每天最多一条"全部存活"（兼作
+  监控自身的存活证明）。进程探测优先 PowerShell CIM（\Get-CimInstance Win32_Process\），
+  **Win11 24H2 起 wmic 已被移除**，wmic 仅作 fallback，两条路都失败时退化为
+  \tasklist\ 只判存在，再失败则保守视为存活（不误报）。
+- **运维命令**：\powershell -File scripts/deploy_cl_task.ps1 [-Remove]\、
+  \scripts/deploy_alive_task.ps1 [-Remove]\；日志 \data/alive_monitor.log\、
+  \data/alive_monitor_state.json\（告警时间戳 + 心跳日期）。
+- **测试**：test_alive_monitor.py 12 例（UTF-8 标题、告警入库、30 分钟节流、节流过期
+  重推、恢复清状态、心跳每日一次/默认关、无比赛放行、窗口内未运行判定、窗口内运行、
+  进程列表不可用视为存活、HTTP 500 判定），**243 passed**。
