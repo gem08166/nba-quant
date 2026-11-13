@@ -43,8 +43,21 @@ def _bj(dt: datetime) -> str:
 
 
 def _log(msg: str) -> None:
+    """写日志到 data/cl_logs/（pythonw 下没有控制台，文件是唯一出口）。"""
     ts = datetime.now(BEIJING).strftime("%H:%M:%S")
-    print(f"[CL {ts}] {msg}", flush=True)
+    line = f"[CL {ts}] {msg}"
+    try:
+        log_dir = DATA_DIR / "cl_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / f"cl_session_{datetime.now(BEIJING):%Y%m%d}.log"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+    try:
+        print(line, flush=True)
+    except (OSError, AttributeError, ValueError):
+        pass
 
 
 def _parse_ts(value: str | None) -> datetime | None:

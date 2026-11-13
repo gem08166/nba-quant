@@ -1504,7 +1504,22 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **进程探测统一 \scripts/procutil.py\**：CIM → wmic → tasklist 三级降级，
   探测不可用返回 None（保守视为存活，不误报不误杀）；alive_monitor /
   serve_watchdog / watch_guard 全部接入。
-- **唤醒与登录态**：CL 任务已开 \WakeToRun\（睡眠可唤醒，合盖深度休眠仍可能不唤醒）；
-  三个任务都是 Interactive——**必须在登录会话里才会触发**，开机停在登录界面时不会跑。
+- **唤醒与登录态**：CL 任务已开 \WakeToRun\（睡眠可唤醒，合盖深度休眠仍可能不唤醒）。
+- **改为「开机即跑、不用登录」（S4U）**：三个任务统一 \LogonType=S4U\（不存密码、
+  不建交互会话，在 session 0 后台跑）。\NBA-AutoStart\ 触发改为 **AtStartup +2min**
+  与 **AtLogon +45s** 双触发（启动即拉起看门狗，登录时再补一次，幂等无重复）。
+  登录界面/锁屏状态下也会跑。实测：手动触发 S4U 的 AutoStart 后，serve/watch/
+  看门狗全部落在 SessionId=0，\GET /api/health\ 200，boot 日志正常写入。
+- **S4U 的边界**：S4U 令牌没有网络凭据委派能力——**访问 SMB/网络共享会失败**，
+  但普通出网 HTTPS 正常（实测 S4U 下 watch 拉到好体育盘口、ntfy 推送成功、
+  坚果云 WebDAV 走 HTTP Basic 亦不受影响）。若哪天要读写局域网共享，需改回
+  \LogonType=Password\（存密码）或 Interactive。
+- **Python 窗口隐藏**：三个计划任务全部改用 \pythonw.exe\（无控制台）；且 S4U 在
+  session 0 运行，屏幕上完全不会闪任何窗口。\cl_session\ 的 \_log\ 改为
+  **写 \data/cl_logs/cl_session_YYYYMMDD.log**（pythonw 没有 stdout，
+  \print\ 会抛 AttributeError）并加了 try/except；alive_monitor / boot_start 的
+  \print\ 同样兜住。看日志要带 \Get-Content -Encoding UTF8\。
+- **手工排查注意**：S4U 实例是常驻的，手动再跑 \serve-ctl start\ 会检测到已有进程
+  而跳过；要临时前台调试就先 \serve-ctl stop\（否则端口被占）。
 - **测试追加**：test_procutil.py 12 例（探测降级、空白归一、pythonw 导入、
   boot_start 幂等判定、guards 检查），**256 passed**。

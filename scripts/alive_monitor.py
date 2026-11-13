@@ -44,7 +44,10 @@ LOG_PATH = DATA_DIR / "alive_monitor.log"
 def log(msg: str) -> None:
     ts = datetime.now(BEIJING).strftime("%m-%d %H:%M:%S")
     line = f"[alive {ts}] {msg}"
-    print(line, flush=True)
+    try:
+        print(line, flush=True)
+    except (OSError, AttributeError, ValueError):
+        pass  # pythonw / 无控制台
     try:
         with open(LOG_PATH, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
