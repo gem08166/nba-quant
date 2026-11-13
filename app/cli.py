@@ -181,6 +181,25 @@ def cmd_predict(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_calibrate(_args: argparse.Namespace) -> None:
+    """A 路：拟合按市场的 Platt 校准参数并落库（幂等，refresh 后可定期跑）。"""
+    from .jobs import calibrate as calibrate_jobs
+
+    conn = db.connect()
+    try:
+        stats = calibrate_jobs.fit_and_save(conn)
+    finally:
+        conn.close()
+    if not stats:
+        print("calibrate: no settled samples yet")
+        return
+    for market, s in sorted(stats.items()):
+        if s.get("skipped"):
+            print(f"  {market}: skipped (n={s['n']} < MIN_SAMPLES)")
+        else:
+            print(f"  {market}: a={s['a']} b={s['b']} (n={s['n']})")
+
+
 def cmd_refresh(args: argparse.Namespace) -> None:
     print(ingest_date(args.date, with_injuries=not args.no_injuries))
     cmd_train(args)
@@ -511,6 +530,11 @@ def build_parser() -> argparse.ArgumentParser:
     predict = sub.add_parser("predict", help="predict a slate and compute edges")
     predict.add_argument("--date", required=True)
     predict.set_defaults(func=cmd_predict)
+
+    sub.add_parser(
+        "calibrate",
+        help="fit per-market Platt calibration from settled predictions",
+    ).set_defaults(func=cmd_calibrate)
 
     refresh = sub.add_parser("refresh", help="ingest + train + predict (+ notify)")
     refresh.add_argument("--date", required=True)

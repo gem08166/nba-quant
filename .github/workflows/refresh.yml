@@ -103,6 +103,10 @@ jobs:
       - name: Backfill signal log (idempotent)
         run: python -m scripts.backfill_signal_log || true
 
+      # A 路：用最新结算结果重拟合按市场 Platt 校准参数（幂等，下一次 predict 起生效）。
+      - name: Fit calibration (per market)
+        run: python -m app.cli calibrate || true
+
       - name: PBP backfill + RAPM
         run: |
           D=$(python -c "from app.dates import current_slate_date as d; from datetime import date, timedelta; x=date.fromisoformat(d()); print((x-timedelta(days=2)).isoformat())")

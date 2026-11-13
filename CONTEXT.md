@@ -1403,3 +1403,31 @@ README.md              # 用户文档（含第 0 节验证结论）
   合法性校验（0<fair<1），非法时不产信号。
 - **测试**：	ests/test_signal_log.py 3 例（四概率三价格、幂等、赛后结算）+
   	est_consensus.py 平票回归 1 例，**216 passed**。
+
+### 10.81 2026-11-13 A/B 两条改进路线落地 + 时间外样本验收
+
+- **A 路（概率校准）已落地**：pp/pricing/calibrate.py（Platt scaling：sigmoid(a·logit(p)+b)，
+  梯度下降拟合，MIN_SAMPLES=80）+ calibrators 表（按市场存 a/b/n）+ pp.cli calibrate
+  命令 + CI refresh 每天拟合。本地拟合（n≈90，向恒等收缩 w=n/(n+300) 后）：
+  moneyline a=1.16（模型偏保守）、spread a=0.855、total a=0.76（都过度自信）。
+- **A 路的关键验收（时间外样本）**：model_clv_history --calibrated 按 60/40 日期切分
+  （train 297 / test 199，2026-02-11 起），测试集：基线 n=199 ROI −14.5%；**校准闸门
+  （edge≥5%）n=76 ROI −36.4%**——校准概率闸门只会挑出最极端的模型分歧，而那正是
+  历史亏最多的部分（与"最高 edge 分位 ROI −27.7%"一致）。**结论：校准概率不进信号闸门。**
+- **生产默认（保持决策 D）**：NBAQ_CALIBRATION=1（校准概率始终计算并写入
+  signal_log.p_calibrated，供离线回测）+ NBAQ_CAL_SIGNALS=0（闸门仍用原始概率，
+  看板行为与改造前完全一致——实测 2026-11-13 bettable 集不变）。要切换只需 env。
+- **B 路（价格闸门）已落地为"标志+可开关"**：_bettable_reason 始终计算
+  price_ev = fair × price_consensus − 1（纯价格视角 EV，不含模型观点）写入 edge；
+  硬拦单需 NBAQ_PRICE_GATE=1（默认关）。实测 70 条已结算信号：price_ev 中位数
+  **−3.78%（就是水位）**，≥0 仅 6.1%，≥+2% 仅 2%——**历史全部 edge 都来自模型与
+  市场分歧，没有一条来自价格优势**；硬开闸门等于停牌。
+- **离线验收脚本**：scripts/ab_backtest.py（signal_log 70 条，1u/共识价口径）：
+  基线 ROI −12.0% CLV +1.3%；仅 B n=1；仅 A（样本内）n=43 ROI +3.5% CLV +2.9%；
+  A+B n=1。样本太小只看方向。**A 样本内正收益但不能外推（时间外已证伪闸门用法）。**
+- **汇总结论**：498 注全量 + 时间外切分 + 价格 EV 分布三组证据一致指向——
+  **模型对收盘线没有正 edge；正 EV 的唯一现实来源是把"拿到价比公允价好"变成
+  下注前置条件（333 侧比价）**。下一步观察点不变（CLV 样本 ≥300 复检），新增观察项：
+  signal_log.p_calibrated 积累后看校准参数是否稳定（a→1 即模型无系统性偏差）。
+- **测试**：test_calibrate.py 4 例（拟合/收缩/应用）+ test_price_gate.py 5 例
+  （标志恒记/开关行为/软书仍拦），**225 passed**。

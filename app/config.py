@@ -43,6 +43,23 @@ BETTABLE_MIN_BOOKS = int(os.getenv("NBAQ_BETTABLE_MIN_BOOKS", "3"))
 # 最优价相对共识中位价的离群容忍（超过视为"拿不到的价"，只观察不下注）。
 BETTABLE_PRICE_OUTLIER = float(os.getenv("NBAQ_BETTABLE_PRICE_OUTLIER", "0.08"))
 
+# B 路（价格闸门）：可下注要求「能拿到的价」本身优于公允概率至少这么多。
+# fair × price_consensus − 1 是不含模型观点的纯市场 EV；0 表示只要不亏水就放行。
+# 实测（2026-11-13，70 条已结算信号）：该值中位数 −3.78%（就是水位），
+# 仅 2% 的信号 ≥ +2%——硬开这个闸门等于停牌。故默认只记标志不拦单，
+# 需要"只在价格真有优势时下注"时设 NBAQ_PRICE_GATE=1。
+MIN_MARKET_EV = float(os.getenv("NBAQ_MIN_MARKET_EV", "0.02"))
+PRICE_GATE = os.getenv("NBAQ_PRICE_GATE", "0") == "1"
+
+# A 路（校准）：开关。开启时 predict 读取 calibrators 表，Platt 校准后的概率
+# **始终计算并写入 signal_log.p_calibrated**（供 A 路积累数据与离线回测）；
+# 但信号/可下注闸门是否使用校准概率由 CAL_SIGNALS 单独控制——
+# 时间外样本实测（2026-11-13，498 样本，切分 2026-02-11）：校准闸门选出的
+# 子集 ROI −36.4%，比全量基线 −14.5% 更差（校准只会挑出最极端的模型分歧，
+# 而那是历史亏得最多的部分）。默认保持决策 D：闸门用原始概率，继续观察。
+CALIBRATION = os.getenv("NBAQ_CALIBRATION", "1") == "1"
+CAL_SIGNALS = os.getenv("NBAQ_CAL_SIGNALS", "0") == "1"
+
 # How much weight to give the model vs the market line when pricing.
 # 0.55 is deliberately conservative: single-book free lines are noisy, and
 # early-season team ratings are stale. Set NBAQ_MARKET_BLEND=1.0 for pure model.

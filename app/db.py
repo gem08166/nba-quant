@@ -108,6 +108,15 @@ CREATE TABLE IF NOT EXISTS signal_log (
 );
 CREATE INDEX IF NOT EXISTS idx_signal_log_game ON signal_log(game_id, market);
 
+CREATE TABLE IF NOT EXISTS calibrators (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    market     TEXT NOT NULL UNIQUE,
+    a          REAL NOT NULL,
+    b          REAL NOT NULL,
+    n          INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS models (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at   TEXT NOT NULL,
@@ -373,6 +382,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 UNIQUE(game_id, market, side, bettable)
             );
             CREATE INDEX IF NOT EXISTS idx_signal_log_game ON signal_log(game_id, market);
+            """
+        )
+    if "calibrators" not in tables:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS calibrators (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                market     TEXT NOT NULL UNIQUE,
+                a          REAL NOT NULL,
+                b          REAL NOT NULL,
+                n          INTEGER NOT NULL
+            )
             """
         )
     conn.commit()

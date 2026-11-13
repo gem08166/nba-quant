@@ -216,6 +216,78 @@ def run(start: str, end: str | None = None) -> dict:
         conn.close()
 
 
+def calibrated_oos(rows: list[dict], frac: float = 0.6, edge_thr: float = 0.05,
+                   ev_thr: float = 0.01) -> dict:
+    """A 路的样本外验收：按日期前 frac 拟合 Platt，后 1−frac 只评估。
+
+    校准后的概率只用于**是否下注**的闸门（edge ≥ 阈值）；下注方向沿用模型
+    原选边（校准是单调映射，方向不会变，只会让边缘弱的注单出局）。
+    """
+    from app.pricing import calibrate as cal
+
+    ordered = sorted(rows, key=lambda r: r["date"])
+    dates = sorted({r["date"] for r in ordered})
+    if len(dates) < 10:
+        return {"error": "too few dates"}
+    split = dates[int(len(dates) * frac)]
+    train = [r for r in ordered if r["date"] < split]
+    test = [r for r in ordered if r["date"] >= split]
+
+    pairs: dict[str, list[tuple[float, int]]] = {}
+    for r in train:
+        if r["result"] == "push":
+            continue
+        pairs.setdefault(r["market"], []).append(
+            (r["model_prob"], 1 if r["result"] == "won" else 0)
+        )
+    fits = {}
+    for market, plist in pairs.items():
+        fit = cal.fit_platt(plist)
+        if fit:
+            fits[market] = fit
+
+    def _stats(items: list[dict]) -> dict:
+        decided = [i for i in items if i["result"] != "push"]
+        if not decided:
+            return {"n": 0}
+        wins = sum(1 for i in decided if i["result"] == "won")
+        profit = sum(i["profit"] for i in items)
+        edges = [i["edge"] for i in items]
+        return {
+            "n": len(decided),
+            "hit_rate": round(wins / len(decided), 4),
+            "roi": round(profit / len(decided), 4),
+            "mean_edge": round(sum(edges) / len(edges), 4),
+        }
+
+    gated = []
+    gated_ev = []
+    for r in test:
+        if r["result"] == "push":
+            continue
+        q = cal.apply(fits.get(r["market"]), r["model_prob"])
+        edge = q - r["closing_fair"]
+        ev = q * r["price"] - 1.0
+        if edge >= edge_thr:
+            gated.append({**r, "edge": edge})
+        # 与生产一致：edge 和 EV 双条件（EV 用实际价格，校准后往往直接出局）
+        if edge >= edge_thr and ev >= ev_thr:
+            gated_ev.append({**r, "edge": edge})
+
+    return {
+        "split_date": split,
+        "train_n": len(train),
+        "test_n": len(test),
+        "fits": {m: {"a": f["a"], "b": f["b"], "n": f["n"], "raw_a": f["raw_a"]}
+                 for m, f in fits.items()},
+        "test_baseline": _stats(test),
+        "test_calibrated_gated": _stats(gated),
+        "test_calibrated_gated_ev": _stats(gated_ev),
+        "edge_threshold": edge_thr,
+        "ev_threshold": ev_thr,
+    }
+
+
 def print_report(report: dict) -> None:
     if report.get("error"):
         print(report["error"])
@@ -245,6 +317,42 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", default="2025-10-21")
     parser.add_argument("--end", default=None)
+    parser.add_argument(
+        "--calibrated", action="store_true",
+        help="追加 A 路验收：前 60%% 日期拟合 Platt，后 40%% 样本外评估",
+    )
     args = parser.parse_args()
     report = run(start=args.start, end=args.end)
     print_report(report)
+    if args.calibrated and not report.get("error"):
+        oos = calibrated_oos(report["rows"])
+        print("  A 路（校准，时间外样本）:")
+        if oos.get("error"):
+            print(f"    {oos['error']}")
+        else:
+            for market, f in sorted(oos["fits"].items()):
+                print(f"    拟合 {market:>9}: a={f['a']} (raw {f['raw_a']}, n={f['n']})")
+            b, g = oos["test_baseline"], oos["test_calibrated_gated"]
+            print(
+                f"    切分 {oos['split_date']} · train {oos['train_n']} / test {oos['test_n']}"
+            )
+            if b.get("n"):
+                print(
+                    f"    测试集 baseline : n={b['n']:4d} edge {b['mean_edge']:+.2%} "
+                    f"ROI {b['roi']:+.2%} 命中 {b['hit_rate']:.1%}"
+                )
+            if g.get("n"):
+                print(
+                    f"    测试集 校准闸门 : n={g['n']:4d} edge {g['mean_edge']:+.2%} "
+                    f"ROI {g['roi']:+.2%} 命中 {g['hit_rate']:.1%} "
+                    f"(edge≥{oos['edge_threshold']:.0%})"
+                )
+            g2 = oos["test_calibrated_gated_ev"]
+            if g2.get("n"):
+                print(
+                    f"    测试集 edge+EV : n={g2['n']:4d} edge {g2['mean_edge']:+.2%} "
+                    f"ROI {g2['roi']:+.2%} 命中 {g2['hit_rate']:.1%} "
+                    f"(edge≥{oos['edge_threshold']:.0%} 且 EV≥{oos['ev_threshold']:.0%})"
+                )
+            else:
+                print(f"    测试集 edge+EV : n=0（校准后无注单满足双条件）")

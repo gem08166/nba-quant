@@ -9,16 +9,21 @@ from .. import db
 from ..config import (
     BETTABLE_MIN_BOOKS,
     BETTABLE_PRICE_OUTLIER,
+    CAL_SIGNALS,
+    CALIBRATION,
     EDGE_THRESHOLD,
     KELLY_FRACTION,
     MARKET_BLEND,
     MAX_STAKE_PCT,
     MIN_EV,
     MIN_FRESH_BOOKS,
+    MIN_MARKET_EV,
     MUTUAL_EXCLUSIVE,
+    PRICE_GATE,
     SHARP_ANCHOR,
 )
 from ..models import rapm, ratings
+from ..pricing import calibrate as cal
 from ..pricing.devig import (
     cover_prob,
     edge as edge_value,
@@ -28,6 +33,7 @@ from ..pricing.devig import (
     moneyline_prob,
     over_prob,
 )
+from . import calibrate as calibrate_jobs
 
 BOOK_PRIORITY = ("Draft Kings", "DraftKings", "ESPN BET", "BetMGM", "Caesars")
 
@@ -394,19 +400,27 @@ def _make_edge(
     book: str,
     created_at: str,
     ev_price: float | None = None,
+    cal_prob: float | None = None,
 ) -> dict | None:
     """edge 用共识公允概率；EV 用 ev_price（共识中位价——可确定拿到的价格），
-    展示价 price 保留最优价用于比较。"""
+    展示价 price 保留最优价用于比较。
+
+    cal_prob（A 路）：Platt 校准后的概率，**始终记录**到返回 dict 的 cal_prob
+    （→ signal_log.p_calibrated）。闸门用哪个概率由 CAL_SIGNALS 决定：
+    默认 0（原始概率，决策 D 不变）；=1 时校准概率参与 edge/EV/信号判定。
+    """
     if price is None or price <= 1.0:
         return None
     # 公允概率必须是合法概率：共识退化（0.0/1.0）时宁可不产信号，也不能拿它
     # 算 edge——否则会得到 +56% 这种假 edge（见 _mode 的平票注释）。
     if fair_prob is None or not (0.0 < float(fair_prob) < 1.0):
         return None
+    q_cal = float(cal_prob) if cal_prob is not None else float(model_prob)
+    q = q_cal if CAL_SIGNALS else float(model_prob)
     ev_p = ev_price or price
-    ev = expected_value(model_prob, ev_p)
-    edge = edge_value(model_prob, fair_prob)
-    kelly = kelly_fraction(model_prob, ev_p)
+    ev = expected_value(q, ev_p)
+    edge = edge_value(q, fair_prob)
+    kelly = kelly_fraction(q, ev_p)
     return {
         "market": market,
         "side": side,
@@ -415,6 +429,7 @@ def _make_edge(
         "price_consensus": ev_p,
         "book": book,
         "model_prob": model_prob,
+        "cal_prob": q_cal,
         "fair_prob": fair_prob,
         "edge": edge,
         "ev": ev,
@@ -427,16 +442,31 @@ def _make_edge(
 
 def _bettable_reason(edge: dict, n_books: int, best_book: str) -> str | None:
     """可下注闸门：signal 只说明"模型算出来有 EV"，bettable 说明"这个价真实
-    可拿、共识足够深"。返回 None=可下注；返回字符串=降级原因。
+    可拿、共识足够深、且价格确实优于公允价"。返回 None=可下注；字符串=降级原因。
 
     与 signal 分开的理由：信号的历史 ROI 是 −11%，其中最大 edge 分位最差
     （−27.7%）——主要死因是"最优价其实是延迟线/限注单"。这几条闸门直接
     针对该死因，宁可少不可假。
+
+    B 路（价格闸门）：要求**可拿到的价**（共识中位价）本身就优于公允概率，
+    即 `fair × price_consensus > 1 + MIN_MARKET_EV`。这条不看模型——纯价格
+    优势；模型只负责把「哪一侧值得看」列出来。
     """
     if best_book and best_book.lower() in SOFT_BOOKS:
         return f"最优价来自软书/聚合源 {best_book}（延迟线/限注单风险）"
     if n_books < BETTABLE_MIN_BOOKS:
         return f"共识书源数 {n_books} < {BETTABLE_MIN_BOOKS}（定价基准不可靠）"
+    fair = edge.get("fair_prob")
+    price = edge.get("price_consensus") or edge.get("price")
+    if fair is not None and price:
+        # B 路：纯价格视角的 EV（不含模型观点）。始终记录到 edge 上供看板/日志
+        # 展示与离线回测；只有 PRICE_GATE 打开时才真正拦单。
+        market_ev = float(fair) * float(price) - 1.0
+        edge["price_ev"] = market_ev
+        if PRICE_GATE and market_ev < MIN_MARKET_EV:
+            return (
+                f"价格未优于公允价（fair EV {market_ev:+.1%} < {MIN_MARKET_EV:.1%}）"
+            )
     return None
 
 
@@ -444,9 +474,12 @@ def build_market(
     pred: dict,
     odds_rows: list[dict],
     created_at: str | None = None,
+    calibrators: dict[str, dict] | None = None,
 ) -> tuple[str | None, dict]:
     """定价：多书共识（多书源各自去水取平均公允概率、线取众数、每侧取共识线下最优价），
-    再与模型按 MARKET_BLEND 融合。只有单书源时自动退化为该书源。"""
+    再与模型按 MARKET_BLEND 融合。只有单书源时自动退化为该书源。
+
+    calibrators（A 路）：{market: {a, b, n}}，Platt 校准参数；None/空时恒等。"""
     created_at = created_at or _now()
     cons = consensus_market(odds_rows)
     book = pick_book(odds_rows)
@@ -481,6 +514,10 @@ def build_market(
 
     probabilities: dict[str, float] = {}
     edges: list[dict] = []
+
+    # A 路（校准）：Platt 校准参数按市场作用在 cover_prob/over_prob 输出上。
+    # calibrators 为空（未拟合）时恒等回退，行为与旧版一致。
+    cals = (calibrators or {}) if CALIBRATION else {}
 
     # 分歧闸门（P0-5 修正版）：分差分歧只拦分差市场，不再跨市场连坐——
     # PHI@DET 的 total 与分差分歧无关（220.4 vs 218.5 仅差 1.9），却被旧版拦掉。
@@ -520,7 +557,8 @@ def build_market(
         ):
             if price is None or fair is None:
                 continue
-            signal = _make_edge("spread", side, side_line, price, p, fair, price_book, created_at)
+            q = cal.apply(cals.get("spread"), p)
+            signal = _make_edge("spread", side, side_line, price, p, fair, price_book, created_at, cal_prob=q)
             if signal and gated:
                 signal["signal"] = False
                 signal["gated"] = f"模型与市场分差分歧 {spread_divergence:.1f} >{divergence_gate:g}，仅记录不下注"
@@ -553,7 +591,8 @@ def build_market(
         ):
             if price is None or fair is None:
                 continue
-            signal = _make_edge("total", side, total_line, price, p, fair, price_book, created_at)
+            q = cal.apply(cals.get("total"), p)
+            signal = _make_edge("total", side, total_line, price, p, fair, price_book, created_at, cal_prob=q)
             if signal:
                 edges.append(signal)
 
@@ -596,7 +635,8 @@ def build_market(
                 continue
             # EV 用共识中位价（可确定拿到的价格）；最优价仅供展示比较
             ev_price = (ml_cons.get("home_price_median") if side == "home" else ml_cons.get("away_price_median")) or price
-            signal = _make_edge("moneyline", side, None, price, p, fair, price_book, created_at, ev_price=ev_price)
+            q = cal.apply(cals.get("moneyline"), p)
+            signal = _make_edge("moneyline", side, None, price, p, fair, price_book, created_at, ev_price=ev_price, cal_prob=q)
             if signal and gated:
                 signal["signal"] = False
                 signal["gated"] = f"模型与市场分差分歧 {spread_divergence:.1f} >{divergence_gate:g}，仅记录不下注（跨市场保留观察）"
@@ -693,13 +733,16 @@ def log_signals(
         fair = edge.get("fair_prob")
         if fair is not None and not (0.0 < float(fair) < 1.0):
             fair = None
+        cal_p = edge.get("cal_prob")
+        if cal_p is not None and not (0.0 < float(cal_p) < 1.0):
+            cal_p = None
         cur = conn.execute(
             """
             INSERT OR IGNORE INTO signal_log(
                 game_id, slate_date, market, side, line, p_model, p_calibrated,
                 p_fair, p_implied, price_best, price_consensus, ev, edge,
                 bettable, book, gated, captured_at, created_at
-            ) VALUES(?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(game_id),
@@ -708,6 +751,7 @@ def log_signals(
                 edge.get("side"),
                 edge.get("line"),
                 edge.get("model_prob"),
+                cal_p,
                 fair,
                 1.0 / float(price),
                 float(price),
@@ -756,7 +800,11 @@ def predict_game(
         density.get(away_id, 0),
     )
     odds_rows = latest_odds(conn, game["id"])
-    book, market = build_market(pred, odds_rows, created_at=_now())
+    try:
+        cals = calibrate_jobs.load(conn)
+    except Exception:  # noqa: BLE001 - 校准参数读取失败时退回恒等
+        cals = {}
+    book, market = build_market(pred, odds_rows, created_at=_now(), calibrators=cals)
 
     try:
         injury_suggestions = rapm.suggest_impacts(conn, game["id"])
