@@ -55,6 +55,12 @@ jobs:
       - name: Watch tick (ingest + closing + settle + predict + notify)
         run: python -m app.cli watch --once
 
+      # 收盘价保险：watch tick 内已抓过一次；再跑一次兜底，防止 watch 的
+      # closing 分支被重构/异常跳过造成收盘缺口（CLV 样本丢失）。
+      # closing 只读 ESPN、不耗 Odds API 额度；盘口没变时只更新 last_seen，幂等。
+      - name: Closing capture (safety net, idempotent)
+        run: python -m app.cli closing || true
+
       # 报告也要生成：轻量运行同样部署 Pages，缺了报告研究页会显示「暂无」
       - name: Reports (backtest + holdout + blend + closing-line + linemove)
         run: |
