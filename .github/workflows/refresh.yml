@@ -98,6 +98,11 @@ jobs:
           python -m app.cli closing || true
           python -m app.cli settle || true
 
+      # 信号日志历史回填（幂等）：把 predictions.details 里的旧信号补进 signal_log。
+      # 轻量 tick 只记新信号，历史部分每天在这里补齐一次。
+      - name: Backfill signal log (idempotent)
+        run: python -m scripts.backfill_signal_log || true
+
       - name: PBP backfill + RAPM
         run: |
           D=$(python -c "from app.dates import current_slate_date as d; from datetime import date, timedelta; x=date.fromisoformat(d()); print((x-timedelta(days=2)).isoformat())")

@@ -154,10 +154,56 @@ def settle(conn: sqlite3.Connection | None = None) -> list[dict]:
                 }
             )
         conn.commit()
+        settle_signal_log(conn)
         return settled
     finally:
         if own:
             conn.close()
+
+
+def settle_signal_log(conn: sqlite3.Connection) -> int:
+    """回填 signal_log 的收盘价与结果（1u 研究口径），返回更新行数。
+
+    信号日志记录的是决策时刻；这里在比赛结束后统一结算，供离线回测使用。
+    收盘价取「开赛前最后一笔」同市场同侧快照，与真实注单的 CLV 口径一致。
+    """
+    rows = conn.execute(
+        """
+        SELECT s.*, g.home_score, g.away_score, g.tipoff
+        FROM signal_log s
+        JOIN games g ON g.id = s.game_id
+        WHERE s.result IS NULL
+          AND g.status = 'STATUS_FINAL'
+          AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+        """
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        bet = {"market": row["market"], "side": row["side"], "line": row["line"]}
+        result = outcome(bet, int(row["home_score"]), int(row["away_score"]))
+        closing = _closing_snapshot(
+            conn, row["game_id"], row["market"], row["side"], row["tipoff"]
+        )
+        closing_line = closing["line"] if closing else None
+        closing_price = closing["price"] if closing else None
+        price = float(row["price_best"] or 0)
+        if result == "won":
+            profit = price - 1.0 if price > 1.0 else None
+        elif result == "lost":
+            profit = -1.0
+        else:
+            profit = 0.0
+        conn.execute(
+            """
+            UPDATE signal_log
+            SET result=?, profit=?, price_closing=?, closing_line=?
+            WHERE id=?
+            """,
+            (result, profit, closing_price, closing_line, row["id"]),
+        )
+        updated += 1
+    conn.commit()
+    return updated
 
 
 def capture_closing(

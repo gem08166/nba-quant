@@ -75,6 +75,39 @@ CREATE TABLE IF NOT EXISTS predictions (
 );
 CREATE INDEX IF NOT EXISTS idx_predictions_game ON predictions(game_id, created_at);
 
+-- 信号日志：每条 bettable 信号第一次出现时记一行（决策时刻的快照），赛后回填
+-- 收盘价与结果。用于 A/B 两条改进路线的回测（校准 / 价格闸门）与归因。
+-- 四个概率：p_model（原始）、p_calibrated（校准后，暂空）、p_fair（去水公允）、
+-- p_implied（成交价隐含 1/price）；三个价格：price_best（当时最优）、
+-- price_consensus（共识中位）、price_closing（收盘）。
+CREATE TABLE IF NOT EXISTS signal_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id         TEXT NOT NULL,
+    slate_date      TEXT,
+    market          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    line            REAL,
+    p_model         REAL,
+    p_calibrated    REAL,
+    p_fair          REAL,
+    p_implied       REAL,
+    price_best      REAL,
+    price_consensus REAL,
+    price_closing   REAL,
+    closing_line    REAL,
+    ev              REAL,
+    edge            REAL,
+    bettable        INTEGER NOT NULL DEFAULT 0,
+    book            TEXT,
+    gated           TEXT,
+    result          TEXT,
+    profit          REAL,
+    captured_at     TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    UNIQUE(game_id, market, side, bettable)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_log_game ON signal_log(game_id, market);
+
 CREATE TABLE IF NOT EXISTS models (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at   TEXT NOT NULL,
@@ -309,6 +342,39 @@ def _migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_hoops_unarchived ON hoops_games(archived);
         """
     )
+    # 信号日志（0.4）：决策时刻的四概率/三价格快照 + 赛后回填的收盘与结果。
+    if "signal_log" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS signal_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id         TEXT NOT NULL,
+                slate_date      TEXT,
+                market          TEXT NOT NULL,
+                side            TEXT NOT NULL,
+                line            REAL,
+                p_model         REAL,
+                p_calibrated    REAL,
+                p_fair          REAL,
+                p_implied       REAL,
+                price_best      REAL,
+                price_consensus REAL,
+                price_closing   REAL,
+                closing_line    REAL,
+                ev              REAL,
+                edge            REAL,
+                bettable        INTEGER NOT NULL DEFAULT 0,
+                book            TEXT,
+                gated           TEXT,
+                result          TEXT,
+                profit          REAL,
+                captured_at     TEXT NOT NULL,
+                created_at      TEXT NOT NULL,
+                UNIQUE(game_id, market, side, bettable)
+            );
+            CREATE INDEX IF NOT EXISTS idx_signal_log_game ON signal_log(game_id, market);
+            """
+        )
     conn.commit()
 
 

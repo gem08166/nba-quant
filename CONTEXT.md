@@ -1382,3 +1382,24 @@ README.md              # 用户文档（含第 0 节验证结论）
   EV 门槛不动；等收盘价检验样本累计到 **≥300 注**（当前 498 注已含早期口径，
   以 model_clv_history 的 n 为准重新计数）再定是否切纯市场锚或改用价格偏离闸门。
   期间真实下注继续按现信号执行，但需知悉：现有证据指向模型 edge 系统性高估。
+
+### 10.80 2026-11-13 信号日志 signal_log（A/B 回测的数据底座）
+
+- **背景**：CLV 检验证明模型 edge 系统性高估后，确定两条改进路线——A（概率校准 +
+  不确定性）、B（价格闸门：只在拿到价优于公允价时下注）。两条路都需要「决策时刻的
+  四概率 + 三价格」，而旧库只在 ets 上记了 model_prob/ev，信号层面完全没有留痕。
+- **新表 signal_log**（pp/db.py）：game/market/side/line + p_model / p_calibrated
+  （校准层待建，先 NULL）/ p_fair / p_implied + price_best / price_consensus /
+  price_closing + ev/edge/bettable/book/gated + result/profit（1u 研究口径）。
+  唯一键 (game_id, market, side, bettable)：信号态与可下注态各记首次出现。
+- **写入**：predict.log_signals() 在每轮 predict 落库后调用；只记 signal=True 的边。
+- **结算**：settle.settle_signal_log() 在 settle() 内自动执行，回填开赛前最后一笔
+  收盘价与胜负（与真实注单 CLV 同口径），幂等。
+- **历史回填**：scripts/backfill_signal_log.py 按 predictions.created_at 升序重放
+  （首见即记），本机回填 93 行 / 已结算 74 行；CI 在 efresh.yml 每天跑两次（幂等）。
+- **顺手修掉的真 bug**：_mode() 平票时返回 (6.5+6.75)/2=6.625 这种市场不存在的
+  线 → t_line 过滤为空 → 公允概率退化成 0 → 产出 +56% 的假 edge（本机实测
+  218.75/244.75 两例）。改为平票取真实存在的中位线；_make_edge() 增加公允概率
+  合法性校验（0<fair<1），非法时不产信号。
+- **测试**：	ests/test_signal_log.py 3 例（四概率三价格、幂等、赛后结算）+
+  	est_consensus.py 平票回归 1 例，**216 passed**。

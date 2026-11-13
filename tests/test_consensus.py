@@ -65,3 +65,13 @@ def test_three_fresh_books_prefer_fresh_subset():
     cons = consensus_market(rows)
     assert cons["spread"]["n_books"] == 3
     assert cons["stale"] is False
+
+
+def test_mode_tie_returns_an_existing_line():
+    """平票时不能平均出市场上不存在的半线（否则 at_line 为空 → fair=0 假 edge）。"""
+    from app.jobs.predict import _mode
+
+    assert _mode([6.5, 6.5, 6.75, 6.75]) in (6.5, 6.75)
+    assert _mode([218.5, 218.5, 219.0, 219.0]) in (218.5, 219.0)
+    assert _mode([220.0]) == 220.0
+    assert _mode([]) is None

@@ -162,16 +162,20 @@ def _apply_sharp_anchor(entries: list[dict], market: dict) -> dict:
 
 
 def _mode(values: list[float]) -> float | None:
-    """最常见线（并列取中位数）：多家书源让分/大小线可能不同。"""
+    """最常见线（并列取真实存在的中位线）。
+
+    平票时取 `tied[(n-1)//2]`，**不要平均**——早期版本返回 (6.5+6.75)/2=6.625，
+    这是市场上不存在的线，随后 `at_line` 过滤为空、公允概率退化成 0，
+    产出一条 +56% 的假 edge（2026-11-13 实测）。
+    """
     if not values:
         return None
-    counts: dict[float, int] = {}
+    counts: dict[float, float] = {}
     for value in values:
         counts[value] = counts.get(value, 0) + 1
     best = max(counts.values())
     tied = sorted(v for v, c in counts.items() if c == best)
-    mid = len(tied) // 2
-    return tied[mid] if len(tied) % 2 else (tied[mid - 1] + tied[mid]) / 2
+    return tied[(len(tied) - 1) // 2]
 
 
 def _robust_pair_stats(entries: list[dict], tol: float = BETTABLE_PRICE_OUTLIER):
@@ -395,6 +399,10 @@ def _make_edge(
     展示价 price 保留最优价用于比较。"""
     if price is None or price <= 1.0:
         return None
+    # 公允概率必须是合法概率：共识退化（0.0/1.0）时宁可不产信号，也不能拿它
+    # 算 edge——否则会得到 +56% 这种假 edge（见 _mode 的平票注释）。
+    if fair_prob is None or not (0.0 < float(fair_prob) < 1.0):
+        return None
     ev_p = ev_price or price
     ev = expected_value(model_prob, ev_p)
     edge = edge_value(model_prob, fair_prob)
@@ -404,6 +412,7 @@ def _make_edge(
         "side": side,
         "line": line,
         "price": price,
+        "price_consensus": ev_p,
         "book": book,
         "model_prob": model_prob,
         "fair_prob": fair_prob,
@@ -661,6 +670,61 @@ def build_market(
     }
 
 
+def log_signals(
+    conn: sqlite3.Connection,
+    game_id: str,
+    slate_date: str | None,
+    edges: list[dict],
+    captured_at: str,
+) -> int:
+    """把本次预测的 signal=True 边写入 signal_log（首见即记，不重复）。
+
+    记录的是**决策时刻**的快照：决策价、共识价、四个概率。赛后由
+    settle.settle_signal_log 回填收盘价与结果，供 A（校准）/ B（价格闸门）
+    两条改进路线离线回测与归因，不必再从 predictions.details 里反推。
+    """
+    inserted = 0
+    for edge in edges:
+        if not edge.get("signal"):
+            continue
+        price = edge.get("price")
+        if not price or price <= 1.0:
+            continue
+        fair = edge.get("fair_prob")
+        if fair is not None and not (0.0 < float(fair) < 1.0):
+            fair = None
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO signal_log(
+                game_id, slate_date, market, side, line, p_model, p_calibrated,
+                p_fair, p_implied, price_best, price_consensus, ev, edge,
+                bettable, book, gated, captured_at, created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(game_id),
+                slate_date,
+                edge.get("market"),
+                edge.get("side"),
+                edge.get("line"),
+                edge.get("model_prob"),
+                fair,
+                1.0 / float(price),
+                float(price),
+                float(edge.get("price_consensus") or price),
+                edge.get("ev"),
+                edge.get("edge"),
+                1 if edge.get("bettable") else 0,
+                edge.get("book"),
+                edge.get("gated"),
+                captured_at,
+                captured_at,
+            ),
+        )
+        inserted += cur.rowcount or 0
+    return inserted
+
+
 def predict_game(
     conn: sqlite3.Connection,
     game: dict,
@@ -737,6 +801,7 @@ def predict_game(
             json.dumps(details, ensure_ascii=False),
         ),
     )
+    log_signals(conn, game["id"], game.get("slate_date"), market["edges"], _now())
     return {"prediction_id": int(cur.lastrowid), **pred, **details}
 
 
