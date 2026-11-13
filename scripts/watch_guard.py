@@ -19,7 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 LOG = ROOT / "data" / "watch-guard.log"
 INTERVAL = 120
 
-sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+# pythonw 下 sys.stdout 是 None（无控制台），reconfigure 会直接抛异常把守护进程杀死
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None:
+        try:
+            _stream.reconfigure(encoding="utf-8", line_buffering=True)
+        except (AttributeError, ValueError, OSError):
+            pass
 
 
 def log(msg: str) -> None:
@@ -47,28 +53,21 @@ def _load_launcher():
 
 
 def watch_running() -> bool:
+    """检查 watch 是否在跑；wmic 已在新 Windows 移除，统一走 scripts.procutil。"""
     try:
-        out = subprocess.run(
-            [
-                "wmic",
-                "process",
-                "where",
-                "name='python.exe' or name='pythonw.exe'",
-                "get",
-                "CommandLine",
-                "/value",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=25,
-            encoding="utf-8",
-            errors="replace",
-        ).stdout or ""
-    except (OSError, subprocess.SubprocessError):
-        return True
-    if not out.strip():
-        return True
-    return "app.cli watch" in out.replace("app.cli  watch", "app.cli watch")
+        from . import procutil
+    except ImportError:  # 以脚本方式直接运行
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "procutil", str(Path(__file__).with_name("procutil.py"))
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        procutil = mod
+
+    found = procutil.has_process(procutil.python_cmdlines(), "app.cli watch")
+    return True if found is None else found
 
 
 def start_watch() -> None:

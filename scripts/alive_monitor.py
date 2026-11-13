@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.config import DATA_DIR, NTFY_SERVER, NTFY_TOPIC
 from app.dates import current_slate_date
+from scripts import procutil
 
 BEIJING = timezone(timedelta(hours=8))
 STATE_PATH = DATA_DIR / "alive_monitor_state.json"
@@ -92,49 +93,8 @@ def check_serve() -> tuple[bool, str]:
 
 
 def _python_cmdlines() -> str | None:
-    """列出所有 python 进程命令行；查询失败返回 None（调用方保守视为存活）。
-
-    Windows 11 24H2 起 wmic 已移除，优先用 PowerShell CIM，退回 wmic。
-    """
-    ps_cmd = (
-        "Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='pythonw.exe'\" "
-        "| Select-Object -ExpandProperty CommandLine"
-    )
-    try:
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
-            capture_output=True,
-            text=True,
-            timeout=40,
-            encoding="utf-8",
-            errors="replace",
-        ).stdout
-        if out is not None and out.strip():
-            return out
-    except (OSError, subprocess.SubprocessError):
-        pass
-
-    try:
-        out = subprocess.run(
-            ["wmic", "process", "where", "name='python.exe' or name='pythonw.exe'", "get", "CommandLine", "/value"],
-            capture_output=True, text=True, timeout=25, encoding="utf-8", errors="replace",
-        ).stdout or ""
-        if out.strip():
-            return out.replace("app.cli  watch", "app.cli watch")
-    except (OSError, subprocess.SubprocessError):
-        pass
-
-    # 两条路都拿不到命令行：退化为只看进程是否存在
-    try:
-        alt = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq python.exe", "/NH"],
-            capture_output=True, text=True, timeout=20, encoding="utf-8", errors="replace",
-        ).stdout or ""
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if "python.exe" in alt or "pythonw.exe" in alt:
-        return None  # 有 python 进程但拿不到命令行，保守视为存活
-    return ""
+    """列出所有 python 进程命令行；查询失败返回 None（调用方保守视为存活）。"""
+    return procutil.python_cmdlines()
 
 
 def check_watch() -> tuple[bool, str]:
@@ -201,6 +161,25 @@ def _bj(dt: datetime) -> str:
     return dt.astimezone(BEIJING).strftime("%m-%d %H:%M")
 
 
+def check_guards() -> tuple[bool, str]:
+    """看守狗（serve_watchdog / watch_guard）是否在跑；进程探测不可用时视为 ok。"""
+    out = _python_cmdlines()
+    if out is None:
+        return True, "process list unavailable (assume ok)"
+    normalized = " ".join(out.split())
+    missing = [
+        name
+        for name, needle in (
+            ("serve_watchdog", "scripts.serve_watchdog"),
+            ("watch_guard", "scripts.watch_guard"),
+        )
+        if needle not in normalized
+    ]
+    if not missing:
+        return True, "both guards running"
+    return False, "missing: " + ", ".join(missing)
+
+
 def run_checks() -> list[tuple[str, bool, str]]:
     results = []
     ok, msg = check_serve()
@@ -209,6 +188,8 @@ def run_checks() -> list[tuple[str, bool, str]]:
     results.append(("watch", ok, msg))
     ok, msg = check_cl()
     results.append(("cl_session", ok, msg))
+    ok, msg = check_guards()
+    results.append(("guards", ok, msg))
     return results
 
 

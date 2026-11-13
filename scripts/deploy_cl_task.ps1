@@ -22,9 +22,11 @@ if ($Remove) {
 $Action = New-ScheduledTaskAction -Execute $Python -Argument "-m scripts.cl_session --interval 180" -WorkingDirectory $ProjectRoot
 $Trigger = New-ScheduledTaskTrigger -Daily -At "06:00"
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 16) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5)
+# Sleep-wake at 06:00 (closed lid / deep sleep may still prevent it)
+$Settings.WakeToRun = $true
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
 
-Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Description "NBA game-day CL capture session"
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Description "NBA game-day CL capture session" -Force | Out-Null
 
 Write-Output "Task '$TaskName' registered."
 Write-Output "  Trigger: daily 06:00"

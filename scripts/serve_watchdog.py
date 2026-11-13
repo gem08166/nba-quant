@@ -19,7 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 LOG = ROOT / "data" / "serve-watchdog.log"
 INTERVAL = 60
 
-sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+# pythonw 下 sys.stdout 是 None（无控制台），reconfigure 会直接抛异常把看门狗杀死
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None:
+        try:
+            _stream.reconfigure(encoding="utf-8", line_buffering=True)
+        except (AttributeError, ValueError, OSError):
+            pass
 
 
 def log(msg: str) -> None:
@@ -35,32 +41,23 @@ def log(msg: str) -> None:
 def serve_running() -> bool:
     """检查是否有 app.cli serve 进程。
 
-    用 tasklist + 窗口标题不可靠（拿不到命令行），这里读 wmic 输出；
-    wmic 不可用时退回到"端口在监听就算在跑"的宽松判断（避免误杀误拉）。
+    wmic 在 Windows 11 24H2 已移除，统一走 scripts.procutil（CIM → wmic → tasklist）；
+    探测不可用时返回 True（宽松判断，避免误杀误拉，端口检查兜底）。
     """
     try:
-        out = subprocess.run(
-            [
-                "wmic",
-                "process",
-                "where",
-                "name='python.exe' or name='pythonw.exe'",
-                "get",
-                "CommandLine",
-                "/value",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=25,
-            encoding="utf-8",
-            errors="replace",
-        ).stdout or ""
-    except (OSError, subprocess.SubprocessError):
-        return True  # 探测失败时不要乱杀乱拉
-    if not out.strip():
-        return True
-    normalized = out.replace("app.cli  serve", "app.cli serve")
-    return "app.cli serve" in normalized
+        from . import procutil
+    except ImportError:  # 以脚本方式直接运行
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "procutil", str(Path(__file__).with_name("procutil.py"))
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        procutil = mod
+
+    found = procutil.has_process(procutil.python_cmdlines(), "app.cli serve")
+    return True if found is None else found
 
 
 def port_listening() -> bool:

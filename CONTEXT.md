@@ -1492,3 +1492,19 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **测试**：test_alive_monitor.py 12 例（UTF-8 标题、告警入库、30 分钟节流、节流过期
   重推、恢复清状态、心跳每日一次/默认关、无比赛放行、窗口内未运行判定、窗口内运行、
   进程列表不可用视为存活、HTTP 500 判定），**243 passed**。
+- **开机自启链**（\scripts/boot_start.py\ + 任务 \NBA-AutoStart\，登录后 45s 触发）：
+  幂等拉起两个看门狗——\scripts.serve_watchdog\（60s 轮询，serve 进程或 8000 端口
+  任一缺失就重启）与 \scripts.watch_guard\（120s 轮询，watch 消失就重启），两者都有
+  文件锁保证单实例。实测 kill serve → **22s 自动恢复**；kill watch → **40s 自动恢复**。
+  开机后不再需要手动 \serve-ctl start\ / \watch-ctl start\。
+- **守护脚本 pythonw 秒退 bug（重要）**：两个守护模块级的
+  \sys.stdout.reconfigure(...)\ 在 pythonw 下 \sys.stdout is None\ 直接抛 AttributeError，
+  进程一启动就死——这才是"看门狗装了却从不工作"的根因。现改为仅当流存在时
+  reconfigure（test_procutil 里有 pythonw 导入回归测试）。
+- **进程探测统一 \scripts/procutil.py\**：CIM → wmic → tasklist 三级降级，
+  探测不可用返回 None（保守视为存活，不误报不误杀）；alive_monitor /
+  serve_watchdog / watch_guard 全部接入。
+- **唤醒与登录态**：CL 任务已开 \WakeToRun\（睡眠可唤醒，合盖深度休眠仍可能不唤醒）；
+  三个任务都是 Interactive——**必须在登录会话里才会触发**，开机停在登录界面时不会跑。
+- **测试追加**：test_procutil.py 12 例（探测降级、空白归一、pythonw 导入、
+  boot_start 幂等判定、guards 检查），**256 passed**。

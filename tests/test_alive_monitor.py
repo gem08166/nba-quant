@@ -1,4 +1,4 @@
-"""alive_monitor（本地存活检测 + ntfy 推送）单元测试。"""
+﻿"""alive_monitor（本地存活检测 + ntfy 推送）单元测试。"""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ def _all_ok(monkeypatch):
     monkeypatch.setattr(am, "check_serve", lambda: (True, "ok"))
     monkeypatch.setattr(am, "check_watch", lambda: (True, "process found"))
     monkeypatch.setattr(am, "check_cl", lambda: (True, "outside window"))
+    monkeypatch.setattr(am, "check_guards", lambda: (True, "ok"))
 
 
 def _capture_pushes(monkeypatch):
@@ -59,6 +60,7 @@ def test_alert_pushed_and_state_recorded(isolated, monkeypatch):
     monkeypatch.setattr(am, "check_serve", lambda: (False, "connection refused"))
     monkeypatch.setattr(am, "check_watch", lambda: (True, "ok"))
     monkeypatch.setattr(am, "check_cl", lambda: (True, "ok"))
+    monkeypatch.setattr(am, "check_guards", lambda: (True, "ok"))
     pushes = _capture_pushes(monkeypatch)
 
     am.run_once()
@@ -74,6 +76,7 @@ def test_alert_throttled_within_window(isolated, monkeypatch):
     monkeypatch.setattr(am, "check_serve", lambda: (False, "connection refused"))
     monkeypatch.setattr(am, "check_watch", lambda: (True, "ok"))
     monkeypatch.setattr(am, "check_cl", lambda: (True, "ok"))
+    monkeypatch.setattr(am, "check_guards", lambda: (True, "ok"))
     pushes = _capture_pushes(monkeypatch)
 
     am.run_once()
@@ -91,6 +94,7 @@ def test_alert_repushed_after_throttle_window(isolated, monkeypatch):
     monkeypatch.setattr(am, "check_serve", lambda: (False, "connection refused"))
     monkeypatch.setattr(am, "check_watch", lambda: (True, "ok"))
     monkeypatch.setattr(am, "check_cl", lambda: (True, "ok"))
+    monkeypatch.setattr(am, "check_guards", lambda: (True, "ok"))
     pushes = _capture_pushes(monkeypatch)
 
     am.run_once()
