@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db
-from .api import router
+from .api import router, _now
 from .config import API_TOKEN, WEB_DIR
 
 
@@ -65,6 +65,17 @@ app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 @app.get("/")
 def index() -> FileResponse:
     return _no_cache_response("index.html", "text/html")
+
+
+@app.get("/health")
+def health_root() -> dict:
+    """根级健康检查（某些监控/浏览器扩展轮询 /health 而非 /api/health）。"""
+    conn = db.connect()
+    try:
+        games = conn.execute("SELECT COUNT(*) AS n FROM games").fetchone()["n"]
+        return {"ok": True, "games": games, "time": _now()}
+    finally:
+        conn.close()
 
 
 @app.get("/manifest.webmanifest")
