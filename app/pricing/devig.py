@@ -56,6 +56,50 @@ def fair_two_way(price_a: float | None, price_b: float | None) -> tuple[float, f
     return None
 
 
+def shin_two_way(price_a: float | None, price_b: float | None) -> tuple[float, float] | None:
+    """Shin (1993) 去水：假设市场里有比例 z 的"知情下注"，由此解出公允概率。
+
+    动机（本库 2026-11-13 锚审计实测）：乘法去水保留市场自身的
+    favorite-longshot bias——冷门侧公允概率被系统性高估 ~10-14pp、
+    热门侧被低估。Shin 方法对长赔端做进一步修正，z=0 时退化为乘法去水。
+
+    公式（Štrumbelj 2014 的两结果形式）：对 implied πi = 1/price_i，
+    Π = πa + πb，p_i(z) = [sqrt(z² + 4(1−z)·πi²/Π) − z] / (2(1−z))，
+    z 由 p_a(z) + p_b(z) = 1 二分求解。
+    """
+    if not (price_a and price_b and price_a > 1.0 and price_b > 1.0):
+        return None
+    pa, pb = 1.0 / float(price_a), 1.0 / float(price_b)
+    total = pa + pb
+    if total <= 1.0:
+        return pa / total, pb / total  # 无水位：无需修正
+
+    def p_of(z: float, pi: float) -> float:
+        return (math.sqrt(z * z + 4.0 * (1.0 - z) * pi * pi / total) - z) / (2.0 * (1.0 - z))
+
+    def overshoot(z: float) -> float:
+        return p_of(z, pa) + p_of(z, pb) - 1.0
+
+    lo, hi = 0.0, 0.5
+    if overshoot(hi) > 0:  # 极端情况下 z 上限不够：退回乘法去水
+        return pa / total, pb / total
+    for _ in range(60):
+        mid = (lo + hi) / 2.0
+        if overshoot(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+    z = (lo + hi) / 2.0
+    return p_of(z, pa), p_of(z, pb)
+
+
+def fair_pair(price_a: float | None, price_b: float | None, method: str = "shin") -> tuple[float, float] | None:
+    """按配置的去水方法返回两侧公允概率。"""
+    if method == "shin":
+        return shin_two_way(price_a, price_b)
+    return fair_two_way(price_a, price_b)
+
+
 def cover_prob(mu_margin: float, home_line: float, sigma: float) -> float:
     """P(home covers), where home_line is the home spread (e.g. -5.5).
 

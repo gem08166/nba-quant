@@ -68,6 +68,12 @@ MARKET_BLEND = float(os.getenv("NBAQ_MARKET_BLEND", "0.55"))
 # Uncertainty floors (points). Calibrate these with backtest data.
 SIGMA_MARGIN_FLOOR = float(os.getenv("NBAQ_SIGMA_MARGIN", "10.5"))
 SIGMA_TOTAL_FLOOR = float(os.getenv("NBAQ_SIGMA_TOTAL", "13.5"))
+
+# 去水方法（2026-11-13 锚审计 + 9866 条快照对比后选 shin）：乘法去水保留市场
+# 自身的 favorite-longshot bias（冷门高估 ~3pp、大热门低估 ~6pp），shin 在
+# 尾部一致改善且 Brier 略优；z=0 时退化为乘法，spread/total 几乎无差别。
+# "multiplicative" 可切回旧行为。
+DEVIG_METHOD = os.getenv("NBAQ_DEVIG", "shin")
 # σ 样本外缩放：样本内残差系统性低估样本外误差（实测 margin 14.51 vs RMSE 15.21），
 # 用 walk-forward RMSE 比值放大，消除定价过度自信（第三方审查 P1-4）。
 SIGMA_OOS_SCALE_MARGIN = float(os.getenv("NBAQ_SIGMA_SCALE_MARGIN", "1.048"))

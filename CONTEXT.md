@@ -1431,3 +1431,31 @@ README.md              # 用户文档（含第 0 节验证结论）
   signal_log.p_calibrated 积累后看校准参数是否稳定（a→1 即模型无系统性偏差）。
 - **测试**：test_calibrate.py 4 例（拟合/收缩/应用）+ test_price_gate.py 5 例
   （标志恒记/开关行为/软书仍拦），**225 passed**。
+
+### 10.82 2026-11-13 公允锚体检 + shin 去水升级 + anchor_audit 固化
+
+- **锚审计三条口径固化为 \scripts/anchor_audit.py\**（只读）：①条件审计
+  （signal_log 信号选中侧）②无条件审计（开赛前最后一版预测的全部 priced 边；
+  聚合数把双边都算会被机械拉平，看分桶与单侧 home/over）③\--devig-compare\
+  （同一批快照重算两种去水法对比）。
+- **条件审计结论**：锚 p_fair 平均 0.489 vs 实际 0.511（差 −2.2pp，CI ±14.6pp），
+  Brier 0.2410 优于恒猜 0.2499——锚校准；模型 p_model 差 +12.3pp（±11.6pp，边缘
+  显著）、Brier 0.2582 **劣于**恒猜——**责任划分成立：病灶在模型概率，锚健康**。
+- **无条件审计结论**（单侧 home/over，n=113）：锚差 −1.7pp（±9.2pp），无系统 bias。
+  分桶暴露尾部 favorite-longshot bias：冷门桶(0.35-0.45)实际 0.263 vs fair 0.399
+  （+13.6pp），热门桶镜像（−13.6pp）；ML 冷门侧聚合 +10.2pp。但 n=18-19/桶（CI
+  ±20pp），属"方向一致的证据"而非定论。
+- **9866 条快照的大样本复核**（predict 外独立重算）：尾部偏差真实但小得多——
+  冷门桶 +3.2pp、0.80+ 桶 −6.6pp、ML 冷门侧 +1.3pp（乘法）。之前 +13.6pp 是小样本
+  噪声。
+- **shin 去水上线**（P1b，默认 \NBAQ_DEVIG=shin\）：\devig.shin_two_way()\
+  （Shin 1993 知情下注模型，z 二分求解，z=0 退化为乘法）+ \air_pair()\ 分发器；
+  predict 的 \_devig_pair\ 与三处 fallback 全部走配置。9866 条对比：冷门桶
+  +2.7pp、0.80+ 桶 −3.8pp（vs 乘法 −6.6pp）、ML 冷门侧 +0.5pp（vs +1.3pp）、
+  Brier 0.2298 vs 0.2300——方向全面一致的小幅改善。切回旧行为设
+  \NBAQ_DEVIG=multiplicative\。上线后今日 ML 冷门 fair 0.148→0.132，bettable 集不变。
+- **口径说明**：signal_log 是决策时刻的诚实记录——历史行保留乘法 fair（回填自
+  details），2026-11-13 之后的新行用 shin；\model_clv_history\ 的收盘基准仍用
+  乘法（保持与历史报告可比）。
+- **测试**：test_devig_shin.py 6 例（无水位退化/和为 1/热门方向/极端价/非法输入/
+  分发），**231 passed**。

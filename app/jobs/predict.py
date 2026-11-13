@@ -11,6 +11,7 @@ from ..config import (
     BETTABLE_PRICE_OUTLIER,
     CAL_SIGNALS,
     CALIBRATION,
+    DEVIG_METHOD,
     EDGE_THRESHOLD,
     KELLY_FRACTION,
     MARKET_BLEND,
@@ -25,10 +26,10 @@ from ..config import (
 from ..models import rapm, ratings
 from ..pricing import calibrate as cal
 from ..pricing.devig import (
+    fair_pair,
     cover_prob,
     edge as edge_value,
     expected_value,
-    fair_two_way,
     kelly_fraction,
     moneyline_prob,
     over_prob,
@@ -132,13 +133,12 @@ def _seen_at(row: dict) -> str | None:
 
 
 def _devig_pair(price_a: float | None, price_b: float | None) -> tuple[float, float] | None:
-    """乘法去水：返回 (a 侧公允概率, b 侧公允概率)。缺一边返回 None——
-    单边价格无法去水，用它计算 edge 会产出假信号（审查 P0 项）。"""
-    if not price_a or not price_b or price_a <= 1.0 or price_b <= 1.0:
-        return None
-    inv_a, inv_b = 1.0 / price_a, 1.0 / price_b
-    total = inv_a + inv_b
-    return inv_a / total, inv_b / total
+    """按 DEVIG_METHOD 去水：返回 (a 侧公允概率, b 侧公允概率)。缺一边返回 None——
+    单边价格无法去水，用它计算 edge 会产出假信号（审查 P0 项）。
+
+    默认 shin（2026-11-13 起）：乘法去水保留市场的 favorite-longshot bias，
+    实测 shin 在尾部一致改善；切回旧行为设 NBAQ_DEVIG=multiplicative。"""
+    return fair_pair(price_a, price_b, method=DEVIG_METHOD)
 
 
 def _apply_sharp_anchor(entries: list[dict], market: dict) -> dict:
@@ -538,9 +538,10 @@ def build_market(
         if spread_cons and spread_cons.get("fair_home") is not None:
             fair_home, fair_away = spread_cons["fair_home"], spread_cons["fair_away"]
         else:
-            pair = fair_two_way(
+            pair = fair_pair(
                 home_spread["price"] if home_spread else None,
                 away_spread["price"] if away_spread else None,
+                method=DEVIG_METHOD,
             )
             if not pair:
                 fair_home = fair_away = None
@@ -573,9 +574,10 @@ def build_market(
         if total_cons and total_cons.get("fair_over") is not None:
             fair_over, fair_under = total_cons["fair_over"], total_cons["fair_under"]
         else:
-            pair = fair_two_way(
+            pair = fair_pair(
                 over_row["price"] if over_row else None,
                 under_row["price"] if under_row else None,
+                method=DEVIG_METHOD,
             )
             if not pair:
                 fair_over = fair_under = None
@@ -604,9 +606,10 @@ def build_market(
         if ml_cons.get("fair_home") is not None:
             fair_home, fair_away = ml_cons["fair_home"], ml_cons["fair_away"]
         else:
-            pair = fair_two_way(
+            pair = fair_pair(
                 home_ml["price"] if home_ml else None,
                 away_ml["price"] if away_ml else None,
+                method=DEVIG_METHOD,
             )
             if not pair:
                 fair_home = fair_away = None
