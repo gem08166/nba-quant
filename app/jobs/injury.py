@@ -43,7 +43,11 @@ def game_injuries(conn: sqlite3.Connection, game_id: str) -> list[dict]:
 
 
 def _suggestions(conn: sqlite3.Connection, game_id: str, model: dict | None = None) -> list[dict]:
-    """rapm.suggest_impacts 的薄包装（测试 monkeypatch 点）。"""
+    """rapm.suggest_impacts 的薄包装（测试 monkeypatch 点）。
+
+    model 语义：**RAPM 模型**（rapm.latest_model 的产物）；None=自动取最新。
+    注意与 predict 的 team-ratings 模型是两套东西，勿混传。
+    """
     return rapm.suggest_impacts(conn, game_id, model=model)
 
 
@@ -69,6 +73,7 @@ def apply_impacts(
 ) -> dict:
     """把 RAPM 建议自动写入 injuries.impact（predict_date 每轮预测前调用）。
 
+    model = RAPM 模型（None=自动取最新 rapm_model），不是 team-ratings 模型。
     规则：
     - impact_source='manual' 的行永不覆盖（用户手设值最权威）；
     - 其余行按去重后的最新行采纳：有建议 → impact=suggested_impact；
@@ -130,6 +135,7 @@ def apply_injury_gate(
     """伤停闸门（bettable 的最后一道）：下注侧 out/doubtful 缺人合计 RAPM 分值
     ≥ INJURY_GATE_POINTS → 降级为观察并注明缺谁缺多少。in-place 改写并返回同一列表。
 
+    model = RAPM 模型（None=自动取最新），非 team-ratings 模型。
     大小分（ov/ud）无球队侧，不触发；阈值默认 3.0 分（约半个首发级别的影响）。
     """
     if not INJURY_GATE_ENABLE or not edges:

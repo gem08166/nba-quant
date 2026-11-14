@@ -819,7 +819,7 @@ def predict_game(
     # 伤停闸门（0.87）：bettable 的最后一道。下注侧缺人合计 RAPM 分值超阈值
     # → 降级观察。log_signals / notify 用同一 edges 引用，天然同步。
     try:
-        injury.apply_injury_gate(conn, game["id"], market["edges"], model=model)
+        injury.apply_injury_gate(conn, game["id"], market["edges"])
     except Exception as exc:  # noqa: BLE001 - 闸门失败不阻塞预测
         print(f"[predict] 伤停闸门失败（跳过）: {exc}")
 
@@ -900,9 +900,7 @@ def predict_date(slate_date: str) -> list[dict]:
         # manual 行不覆盖；随后 predict_game 读到的就是最新伤停口径。
         if config.INJURY_AUTO_APPLY and games:
             try:
-                injury_stats = injury.apply_impacts(
-                    conn, [g["id"] for g in games], model=model
-                )
+                injury_stats = injury.apply_impacts(conn, [g["id"] for g in games])
                 if injury_stats.get("applied"):
                     print(f"[predict] 伤停自动采纳: {injury_stats}")
             except Exception as exc:  # noqa: BLE001 - 伤停采纳失败不阻塞预测
