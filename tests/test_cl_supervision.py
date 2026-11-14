@@ -105,6 +105,42 @@ def test_cl_session_single_instance_lock(tmp_path, monkeypatch):
     third.close()
 
 
+def test_cl_connect_waits_for_writers(tmp_path, monkeypatch):
+    """CL 的连接必须带 30s 忙等（默认 5s，watch 一写就 locked）。"""
+    from scripts import cl_session
+
+    monkeypatch.setattr(cl_session, "DATA_DIR", tmp_path)
+    conn = cl_session._connect()
+    try:
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    finally:
+        conn.close()
+
+
+def test_final_closing_captures_and_settles(monkeypatch):
+    """安全阀退出前也要补一次收盘 + 结算，不能空手走。"""
+    from scripts import cl_session
+
+    calls = []
+    monkeypatch.setattr(cl_session, "capture_closing", lambda conn: calls.append("capture") or [])
+    monkeypatch.setattr(
+        cl_session,
+        "settle",
+        lambda conn: calls.append("settle")
+        or [{"bet_id": 1, "result": "won", "profit": 1.5}],
+    )
+    logged = []
+    monkeypatch.setattr(cl_session, "_log", lambda msg: logged.append(msg))
+
+    import sqlite3
+
+    cl_session._final_closing(sqlite3.connect(":memory:"), "收尾")
+
+    assert calls == ["capture", "settle"]
+    assert any("收尾结算 #1" in msg for msg in logged)
+
+
 def test_boot_start_launches_cl_in_window(monkeypatch):
     from scripts import boot_start
 

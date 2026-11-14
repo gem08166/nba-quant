@@ -1,10 +1,10 @@
 """比赛日 CL 捕捉会话。
 
 在比赛日自动执行完整的收盘线捕捉流程：
-1. 查询当日赛程，计算捕捉窗口（首场开赛前 2 小时 → 最后一场结束后 30 分钟）
+1. 查询当日赛程，计算捕捉窗口（首场开赛前 2 小时 → 末场开赛 + 3h，硬线 +3h30m）
 2. 等待至窗口开启
 3. 窗口期内高频捕捉（ESPN 盘口 + 好体育滚球 + The Odds API 收盘豁免）
-4. 最后一场 STATUS_FINAL 后做最终收盘捕捉，然后退出
+4. 最后一场 STATUS_FINAL 后做最终收盘捕捉，然后退出（到硬线仍未完赛也先收尾再退）
 
 用法：
     python -m scripts.cl_session              # 完整会话（等待 + 捕捉 + 退出）
@@ -30,8 +30,22 @@ sys.path.insert(0, str(ROOT))
 from app.config import DATA_DIR
 from app.dates import current_slate_date
 from app.jobs.settle import capture_closing, settle
+from scripts.cl_window import window_bounds
 
 BEIJING = timezone(timedelta(hours=8))
+
+
+def _connect() -> sqlite3.Connection:
+    """打开数据库：30s 忙等 + WAL。
+
+    watch / serve 也在写同一个库。默认 5s 超时、又只在整轮末尾才 commit，
+    两边会在高速捕捉阶段互相踩（2026-11-14 出现 6 次 database is locked）。
+    """
+    conn = sqlite3.connect(str(DATA_DIR / "nba.db"), timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 
 def _now() -> datetime:
@@ -119,9 +133,34 @@ def _any_live(conn: sqlite3.Connection, games: list[dict]) -> bool:
     return False
 
 
+def _final_closing(conn: sqlite3.Connection, label: str) -> None:
+    """最终收盘 + 结算。正常收工和安全阀退出都走这里，避免漏收尾。
+
+    每次写库后立刻 commit：一手抓网络、一手拖着写事务，是 database is locked
+    的主要来源（watch 每 5 分钟也在写同一个库）。
+    """
+    try:
+        captured = capture_closing(conn)
+        _log(f"  {label}收盘: {len(captured)} 场")
+    except Exception as exc:
+        _log(f"  {label}收盘失败: {exc}")
+    try:
+        settled = settle(conn)
+        for item in settled:
+            _log(f"  {label}结算 #{item['bet_id']}: {item['result']} 盈亏 {item['profit']:+.2f}")
+    except Exception as exc:
+        _log(f"  {label}结算失败: {exc}")
+
+
+def _commit(conn: sqlite3.Connection) -> None:
+    try:
+        conn.commit()
+    except sqlite3.Error as exc:
+        _log(f"  提交失败: {exc}")
+
+
 def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
-    conn = sqlite3.connect(str(DATA_DIR / "nba.db"))
-    conn.row_factory = sqlite3.Row
+    conn = _connect()
 
     # 收盘捕捉去重表（内存级，每次会话重建）
     conn.execute(
@@ -141,13 +180,15 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
         _log("无法解析任何开赛时间，退出")
         return
 
-    # 捕捉窗口：首场前 2h → 最后一场后 30min
-    window_start = first_tip - timedelta(hours=2)
-    window_end_soft = last_tip + timedelta(minutes=30)
+    # 捕捉窗口：首场前 2h → 末场 + 3h；硬线再宽限 30min
+    window_start, window_end_soft, window_end_hard = window_bounds(first_tip, last_tip)
 
     _log(f"赛程 {slate}：{len(games)} 场")
     _log(f"  首场 {_bj(first_tip)} | 末场 {_bj(last_tip)}（北京时间）")
-    _log(f"  捕捉窗口 {_bj(window_start)} → {_bj(window_end_soft)}")
+    _log(
+        f"  捕捉窗口 {_bj(window_start)} → {_bj(window_end_soft)}"
+        f"（硬线 {_bj(window_end_hard)}）"
+    )
 
     if dry_run:
         _log("dry-run 模式，退出")
@@ -203,6 +244,7 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
             _log(f"  ESPN 盘口: {len(captured)} 场")
         except Exception as exc:
             _log(f"  ESPN 盘口失败: {exc}")
+        _commit(conn)
 
         # b) The Odds API：每场只做一次收盘捕捉（开赛前 30 分钟触发）
         #    高频轮次用 ESPN + 好体育（免费），Odds API 仅做参考基准
@@ -244,6 +286,7 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
                 _log("  Odds API: 无待捕捉比赛（收盘时刻未到或已完成）")
         except Exception as exc:
             _log(f"  Odds API 失败: {exc}")
+        _commit(conn)
 
         # c) 好体育滚球盘
         try:
@@ -254,6 +297,7 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
                 _log(f"  滚球盘: {lo_stats}")
         except Exception as exc:
             _log(f"  滚球盘失败: {exc}")
+        _commit(conn)
 
         # d) ESPN 实时比分（补状态 + 比分）
         try:
@@ -280,27 +324,16 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
             if not final_captured:
                 _log("全部比赛已完赛，做最终收盘捕捉")
                 final_captured = True
-                # 最终一轮：收盘线 + 滚球终值
-                try:
-                    from app.jobs.settle import capture_closing
-
-                    capture_closing(conn)
-                except Exception:
-                    pass
-                # 结算所有注单
-                try:
-                    settled = settle(conn)
-                    for item in settled:
-                        _log(f"  最终结算 #{item['bet_id']}: {item['result']} 盈亏 {item['profit']:+.2f}")
-                except Exception:
-                    pass
-                conn.commit()
+                _final_closing(conn, "最终")
+                _commit(conn)
             _log("全部完赛 + 最终收盘完成，休眠退出")
             break
 
-        # g) 窗口后安全阀：超过最后一场 + 30 分钟仍未全部完赛 → 再等一轮后退出
-        if now > window_end_soft + timedelta(minutes=60):
-            _log("超过窗口安全线 60 分钟，强制退出")
+        # g) 安全阀：末场 + 3h30m 仍未全部完赛 → 先补一次收盘/结算再退出
+        if now > window_end_hard:
+            _log(f"超过硬线 {_bj(window_end_hard)} 仍未全部完赛，收尾后强制退出")
+            _final_closing(conn, "收尾")
+            _commit(conn)
             break
 
         # h) 等待下一轮

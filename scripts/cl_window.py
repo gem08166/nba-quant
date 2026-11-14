@@ -1,7 +1,10 @@
 """比赛日捕捉窗口判定（CL 会话 / 存活监控 / 开机自启共用）。
 
 窗口定义与 scripts/cl_session.py 保持一致：
-    首场开赛前 2 小时  →  末场开赛 + 90 分钟（会话软上限 +30min 再宽限 60min）
+    首场开赛前 2 小时  →  末场开赛 + 3h30m
+
+末场之后的时间要按“比赛真的打完”来算，不能按“开赛”算：2026-11-14 末场
+11:30（北京）实际 13:50 才结束，旧口径 13:00 就把会话强杀，最后 3 场没收尾。
 
 状态：
     no_games     当天（美东 slate 日）没有比赛
@@ -22,6 +25,20 @@ from app.dates import current_slate_date
 
 BEIJING = timezone(timedelta(hours=8))
 EXCLUDED = ("STATUS_POSTPONED", "STATUS_CANCELED", "STATUS_CANCELLED")
+
+# 末场开赛后还要等多久（常规赛含暂停/加时约 2h15–2h45）
+WINDOW_AFTER_LAST_TIP = timedelta(hours=3)
+SAFETY_AFTER_SOFT = timedelta(minutes=30)
+
+
+def window_bounds(
+    first_tip: datetime, last_tip: datetime
+) -> tuple[datetime, datetime, datetime]:
+    """返回 (窗口开启, 软线, 硬线)。"""
+    start = first_tip - timedelta(hours=2)
+    soft = last_tip + WINDOW_AFTER_LAST_TIP
+    hard = soft + SAFETY_AFTER_SOFT
+    return start, soft, hard
 
 
 def _bj(dt: datetime) -> str:
@@ -71,8 +88,7 @@ def window_state(
     if not tips:
         return "no_tipoffs", "no tipoffs parsed"
 
-    start = min(tips) - timedelta(hours=2)
-    end = max(tips) + timedelta(minutes=90)
+    start, _soft, end = window_bounds(min(tips), max(tips))
     if now < start:
         return "before", f"before window (starts {_bj(start)})"
     if now > end:

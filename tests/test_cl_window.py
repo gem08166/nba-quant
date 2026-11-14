@@ -83,6 +83,30 @@ def test_after_window(tmp_path):
     assert state == "after"
 
 
+def test_session_stays_active_while_game_still_running(tmp_path):
+    """开赛后 2 小时仍在打（2026-11-14 的实际情况），窗口不能已经关。"""
+    from scripts import cl_window
+
+    past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    db = _make_db(tmp_path, [(SLATE, past, "STATUS_IN_PROGRESS")])
+
+    state, detail = cl_window.window_state(slate=SLATE, db_path=db)
+
+    assert state == "active", detail
+
+
+def test_window_bounds_cover_full_game():
+    from scripts import cl_window
+
+    first = datetime(2026, 11, 14, 0, 0, tzinfo=timezone.utc)
+    last = first + timedelta(hours=3, minutes=30)
+    start, soft, hard = cl_window.window_bounds(first, last)
+
+    assert start == first - timedelta(hours=2)
+    assert soft == last + timedelta(hours=3)
+    assert hard == soft + timedelta(minutes=30)
+
+
 def test_unparsable_tipoff(tmp_path):
     from scripts import cl_window
 

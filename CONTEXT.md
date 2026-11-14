@@ -1532,7 +1532,7 @@ README.md              # 用户文档（含第 0 节验证结论）
   重启打断；boot_start 只拉看门狗，不拉 CL，于是窗口内（末场 11:30）一直空档，
   08:37 监控才推了 `cl_session DOWN`，且**没有自动恢复**。
   - 修复：新增 `scripts/cl_window.py` 统一窗口判定（no_games/all_final/before/
-    active/after，末场 +90min 与 cl_session 强制退出对齐）；`boot_start` 在
+    active/after，末场 +90min 与 cl_session 强制退出对齐；**10.85 已改为 +3h30m**）；`boot_start` 在
     startup/logon 时若窗口 active 且无 CL 进程则拉起；`alive_monitor` 窗口内发现
     CL 掉了会**自动拉起**并推一条"CL 会话已自动重启"（10 分钟冷却，避免崩溃循环）。
   - 防重复：`cl_session` 增加 `data/cl_session.lock` 单实例锁（计划任务/自启/监控
@@ -1552,3 +1552,34 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **测试**：新增 test_cl_window.py 8 例、test_cl_supervision.py 6 例
   （自动拉起/冷却/拉起失败仍告警/单实例锁/boot_start 窗口判断），procutil 补
   4 例错误输出判定，**277 passed**。
+
+### 10.85 2026-11-14 全日复查：窗口早退 / 写库冲突 / 守卫跑旧代码
+
+**当日运行**：CL 会话 06:00:02 起，78 轮；watch 全程 5 分钟一轮、无异常；9 场全部
+FINAL；当日快照 2223 条 / 18 个来源；`live_odds` 618 条（9 场都覆盖到终场）；
+注单累计 79 笔已结算、模拟盈亏 -23.86（明日 5 笔 open）。alive 仅 08:37 报过一次
+CL DOWN，08:45 自动拉起成功；心跳 00:02 已发。
+
+- **故障 1：窗口关得太早，最后 3 场没走"完赛→最终收盘+结算"路径**。旧口径硬线 =
+  末场开赛 +90min：今日末场 11:30，13:00:51 被强制退出，实际 13:50 才打完。
+  - 根因：用"开赛时间"而不是"比赛结束时间"当窗口终点；一场比赛含暂停/加时约
+    2h15–2h45，+90min 在多数比赛日都不够。
+  - 修复：`cl_window.window_bounds()` 统一出 (开启=首场-2h, 软线=末场+3h,
+    硬线=+3h30m)；`cl_session` 直接用同一函数，硬线仍未完赛时**先补一次
+    capture_closing + settle 再退出**（`_final_closing`），不再空手走。
+- **故障 2：`database is locked`（6 次：09:23 / 09:40×2 / 09:57 / 10:14 / 11:50）**。
+  - 根因：`cl_session` 自己 `sqlite3.connect()` 用默认 5s 超时；而它整轮只在末尾
+    `conn.commit()` 一次，中间夹着 ESPN/Odds/hao 的 HTTP（每轮约 30s），写事务长跨
+    网络 I/O，和 watch 的写入互相踩。
+  - 修复：`cl_session._connect()` 改为 `timeout=30` + `PRAGMA busy_timeout=30000`
+    + WAL；每个抓取阶段后立即 `_commit()`，写事务不再跨网络请求。
+- **问题 3：两个看门狗一直在跑 08:35 启动的旧代码**。`procutil` 的修复 08:45 才提交，
+  守卫进程不会热加载，等于"修了但没生效"（WMI 再抽风仍会误重启）。
+  - 处理：23:00 停掉旧守卫（不动 serve/watch）→ `python -m scripts.boot_start`
+    幂等拉起新守卫（pid 39576 / 17552），健康检查 200。以后改 `procutil` 必须重启守卫。
+- **`NBA-CL-Session` 的 LastTaskResult=267014（0x41306）**：08:33 那次重启把 06:00
+  的任务实例杀了；之后全天写日志的是 alive 拉起的那份进程（pid 14664），所以日志
+  尾部仍是正常退出。属预期，无害。
+- **测试**：新增 4 例（开赛后 2h 仍在打 → 窗口必须 active；4h 后 → after；
+  `window_bounds` 数值；`_connect` 带 30s busy_timeout；安全阀退出仍补收盘/结算），
+  **281 passed**。
