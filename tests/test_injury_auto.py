@@ -36,6 +36,26 @@ def conn():
         )
         """
     )
+    c.execute(
+        """
+        CREATE TABLE games (
+            id TEXT PRIMARY KEY,
+            home_id INTEGER,
+            away_id INTEGER
+        )
+        """
+    )
+    c.execute("INSERT INTO games(id, home_id, away_id) VALUES('g1', 5, 6)")
+    c.execute(
+        """
+        CREATE TABLE teams (
+            id INTEGER PRIMARY KEY,
+            abbrev TEXT
+        )
+        """
+    )
+    c.execute("INSERT INTO teams(id, abbrev) VALUES(5, 'CLE')")
+    c.execute("INSERT INTO teams(id, abbrev) VALUES(6, 'DAL')")
     yield c
     c.close()
 
@@ -132,6 +152,88 @@ def test_apply_impacts_zeroes_when_no_suggestion(conn, monkeypatch):
     )
     assert old["impact"] == 3.2
     assert old["applied_at"] is None
+
+
+# ---------- Task 3: 伤停闸门 ----------
+
+
+def _edge(market, side, **kw):
+    base = {
+        "market": market, "side": side, "line": None, "price": 2.0,
+        "bettable": True, "bettable_note": None, "gated": None, "signal": True,
+    }
+    base.update(kw)
+    return base
+
+
+def test_gate_degrades_home_ml_when_home_out_heavy(conn, monkeypatch):
+    _ins(conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 3.2)
+    _mock_suggestions(monkeypatch, [
+        {"team_id": 5, "player": "Evan Mobley", "status": "out", "player_id": 42,
+         "suggested_impact": 3.2, "manual_impact": 0.0},
+    ])
+    edges = [_edge("moneyline", "home"), _edge("moneyline", "away", bettable=False)]
+    out = injury.apply_injury_gate(conn, "g1", edges)
+    assert out[0]["bettable"] is False
+    assert "伤停闸门" in (out[0]["bettable_note"] or "")
+    assert "Evan Mobley" in (out[0]["bettable_note"] or "")
+    assert out[0]["gated"] == out[0]["bettable_note"]
+    assert out[1]["bettable"] is False  # 本来就不是 bettable 的不碰
+
+
+def test_gate_ignores_away_side_injury_for_home_bet(conn, monkeypatch):
+    """away 侧缺人不影响 home 方向的信号。"""
+    _ins(conn, "g1", 6, "Nikola Jokic", "out", "2026-11-14T18:00:00+00:00", 5.0)
+    _mock_suggestions(monkeypatch, [
+        {"team_id": 6, "player": "Nikola Jokic", "status": "out", "player_id": 7,
+         "suggested_impact": 5.0, "manual_impact": 0.0},
+    ])
+    edges = [_edge("spread", "home", line=12.5)]
+    out = injury.apply_injury_gate(conn, "g1", edges)
+    assert out[0]["bettable"] is True
+
+
+def test_gate_skips_total_market(conn, monkeypatch):
+    _ins(conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 3.2)
+    _mock_suggestions(monkeypatch, [
+        {"team_id": 5, "player": "Evan Mobley", "status": "out", "player_id": 42,
+         "suggested_impact": 3.2, "manual_impact": 0.0},
+    ])
+    edges = [_edge("total", "over", line=231.5)]
+    out = injury.apply_injury_gate(conn, "g1", edges)
+    assert out[0]["bettable"] is True
+
+
+def test_gate_below_threshold_no_degrade(conn, monkeypatch):
+    """合计分值低于阈值（默认 3.0）不降级。"""
+    _ins(conn, "g1", 5, "Role Player", "out", "2026-11-14T18:00:00+00:00", 1.5)
+    _mock_suggestions(monkeypatch, [
+        {"team_id": 5, "player": "Role Player", "status": "out", "player_id": 9,
+         "suggested_impact": 1.5, "manual_impact": 0.0},
+    ])
+    edges = [_edge("moneyline", "home")]
+    out = injury.apply_injury_gate(conn, "g1", edges)
+    assert out[0]["bettable"] is True
+
+
+def test_gate_disabled_flag(conn, monkeypatch):
+    _ins(conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 3.2)
+    _mock_suggestions(monkeypatch, [
+        {"team_id": 5, "player": "Evan Mobley", "status": "out", "player_id": 42,
+         "suggested_impact": 3.2, "manual_impact": 0.0},
+    ])
+    # injury.py 模块级绑定了旗标，patch injury 自己的名字才生效
+    monkeypatch.setattr(injury, "INJURY_GATE_ENABLE", False)
+    edges = [_edge("moneyline", "home")]
+    out = injury.apply_injury_gate(conn, "g1", edges)
+    assert out[0]["bettable"] is True
+
+
+def test_side_of_mapping():
+    assert injury.side_of({"side": "h"}) == "home"
+    assert injury.side_of({"side": "a"}) == "away"
+    assert injury.side_of({"side": "ov"}) is None
+    assert injury.side_of({"side": "ud"}) is None
 
 
 def test_migrate_adds_injury_columns(tmp_path):

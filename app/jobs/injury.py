@@ -108,3 +108,73 @@ def apply_impacts(
             if not sug:
                 stats["zeroed"] += 1
     return stats
+
+
+def side_of(edge: dict) -> str | None:
+    """edge.side（home/away；兼容 h/a）→ 球队侧；大小分（ov/ud）无球队侧返回 None。"""
+    raw = (edge.get("side") or "").casefold()
+    return {"home": "home", "away": "away", "h": "home", "a": "away"}.get(raw)
+
+
+def _team_short(conn: sqlite3.Connection, team_id: int) -> str:
+    row = conn.execute("SELECT abbrev FROM teams WHERE id=?", (team_id,)).fetchone()
+    return (row["abbrev"] if row else "") or str(team_id)
+
+
+def apply_injury_gate(
+    conn: sqlite3.Connection,
+    game_id: str,
+    edges: list[dict],
+    model: dict | None = None,
+) -> list[dict]:
+    """伤停闸门（bettable 的最后一道）：下注侧 out/doubtful 缺人合计 RAPM 分值
+    ≥ INJURY_GATE_POINTS → 降级为观察并注明缺谁缺多少。in-place 改写并返回同一列表。
+
+    大小分（ov/ud）无球队侧，不触发；阈值默认 3.0 分（约半个首发级别的影响）。
+    """
+    if not INJURY_GATE_ENABLE or not edges:
+        return edges
+    rows = game_injuries(conn, game_id)
+    if not rows:
+        return edges
+    suggestions = {
+        (s["team_id"], s["player"]): s for s in _suggestions(conn, game_id, model=model)
+    }
+    by_side: dict[str, list[str]] = {"home": [], "away": []}
+    points: dict[str, float] = {"home": 0.0, "away": 0.0}
+    for row in rows:
+        sug = suggestions.get((row["team_id"], row["player"]))
+        impact = float(sug["suggested_impact"]) if sug else float(row["impact"] or 0.0)
+        if impact <= 0:
+            continue
+        side = "home" if row["team_id"] == _home_team_id(conn, game_id) else "away"
+        # 只累计会真实降低该侧战力的值（out/doubtful/questionable 才有建议）
+        if sug is None and (row.get("status") or "").casefold() not in ("out", "doubtful", "questionable", "day-to-day"):
+            continue
+        by_side[side].append(f"{row['player']} {impact:.1f}")
+        points[side] += impact
+    if not by_side["home"] and not by_side["away"]:
+        return edges
+    for edge in edges:
+        if not edge.get("bettable"):
+            continue
+        side = side_of(edge)
+        if side is None or points.get(side, 0.0) < INJURY_GATE_POINTS:
+            continue
+        team = _team_short(conn, _home_team_id(conn, game_id) if side == "home" else _away_team_id(conn, game_id))
+        names = ", ".join(sorted(by_side[side], reverse=True))
+        note = f"伤停闸门：{side} 队缺人合计 {points[side]:.1f} 分（{names}）"
+        edge["bettable"] = False
+        edge["bettable_note"] = note
+        edge["gated"] = note
+    return edges
+
+
+def _home_team_id(conn: sqlite3.Connection, game_id: str) -> int | None:
+    row = conn.execute("SELECT home_id FROM games WHERE id=?", (str(game_id),)).fetchone()
+    return int(row["home_id"]) if row else None
+
+
+def _away_team_id(conn: sqlite3.Connection, game_id: str) -> int | None:
+    row = conn.execute("SELECT away_id FROM games WHERE id=?", (str(game_id),)).fetchone()
+    return int(row["away_id"]) if row else None
