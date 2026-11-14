@@ -1583,3 +1583,20 @@ CL DOWN，08:45 自动拉起成功；心跳 00:02 已发。
 - **测试**：新增 4 例（开赛后 2h 仍在打 → 窗口必须 active；4h 后 → after；
   `window_bounds` 数值；`_connect` 带 30s busy_timeout；安全阀退出仍补收盘/结算），
   **281 passed**。
+
+### 10.86 2026-11-14 安装 333 下注 skill（交接包 → 本机）
+
+交接包 `nba-quant-handoff` 是 11-13 的旧副本（CONTEXT 只到 10.82、README 还是 Telegram
+口径、`.env` 是单 Odds key），唯一需要落地的是 `333-place-bets` skill。
+
+- 安装位置：`C:\Users\Administrator\.config\opencode\skills\333-place-bets\`
+  （SKILL.md + `ls_store.py` / `receiver.py` / `drop_sim_dups.py`）。
+- **路径改写**：`C:\Users\11066\...` → `C:\Users\Administrator\...`；
+  `D:\nba-quant-20261103` → `F:\量化\nba-quant-20261103`（含两个脚本的默认 `--out` / `--project`）。
+- **未复制** `scripts/.333-localstorage.json`（含 333 明文账号密码的登录态快照）：
+  首次使用按 Step 0 正常登录，确认登录后立刻保存快照；该文件只留在本机 skill 目录，
+  不进 git、不同步坚果云。
+- 验证：三脚本 `py_compile` 通过；`drop_sim_dups.py` 只读模式跑通
+  （`sim=15 real=64 to_delete=0`，当前无重复）。
+- 数据侧依赖本机已有：`scripts/import_333_bets.py`（默认权威模式）、
+  `scripts/export_static.py`、`app.cli bets-sync`。
