@@ -1396,7 +1396,8 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **结算**：settle.settle_signal_log() 在 settle() 内自动执行，回填开赛前最后一笔
   收盘价与胜负（与真实注单 CLV 同口径），幂等。
 - **历史回填**：scripts/backfill_signal_log.py 按 predictions.created_at 升序重放
-  （首见即记），本机回填 93 行 / 已结算 74 行；CI 在 efresh.yml 每天跑两次（幂等）。
+  （首见即记），本机回填 93 行 / 已结算 74 行；CI 在 
+efresh.yml 每天跑两次（幂等）。
 - **顺手修掉的真 bug**：_mode() 平票时返回 (6.5+6.75)/2=6.625 这种市场不存在的
   线 → t_line 过滤为空 → 公允概率退化成 0 → 产出 +56% 的假 edge（本机实测
   218.75/244.75 两例）。改为平票取真实存在的中位线；_make_edge() 增加公允概率
@@ -1600,3 +1601,31 @@ CL DOWN，08:45 自动拉起成功；心跳 00:02 已发。
   （`sim=15 real=64 to_delete=0`，当前无重复）。
 - 数据侧依赖本机已有：`scripts/import_333_bets.py`（默认权威模式）、
   `scripts/export_static.py`、`app.cli bets-sync`。
+
+### 10.87 2026-11-15 按信号下 333 真实注单 + 修 CI 跨平台测试失败
+
+**下注**（用户授权：注额 2、走优惠金、接受 5.40 漂移）
+
+- 信号：`401909980` DEN @ NO，`moneyline|home`（鹈鹕独赢），模型价 6.00，edge +5.11%，EV +15.2%
+- 333 实盘 **5.40**（较信号 −10%），按模型概率折算 EV ≈ +3.7%；用户明确确认接受后下单
+- **查重**：本地台账 `401909980` 只有模拟单 `sim-25a314b52c0e`；333 未结 3 笔 + 已结 42 笔
+  里没有任何「新奥尔良鹈鹕 vs 丹佛掘金」（历史命中 5 笔都是 11-09～11-12 的其它对手）→ 无重复
+- 成交：`261114121552-4kPgrV`，@5.40，2 CNY，可赢 8.8，未结
+- **优惠金没生效**：投注单里点过「折扣 → 优惠金 1张（双十一 −0.4 / 折抵上限 0.4）」，
+  但平台记 `anteBetCredit=0` / `anteCoupon=0`，余额 70.03 → 68.03 全额扣 2.0。
+  下次判据：**提交前 `本金` 必须变成 1.6**（历史成功单为 `anteBetCredit=0.4`），否则没用上。
+- 台账：`import_333_bets --apply` 新增 1 条（id 187 `hao-261114121552-4kPgrV`，note「333体育 胜负 主 @5.40」），
+  `drop_sim_dups --apply` 删掉同场同市场同边的模拟单 1 条（墓碑 129）
+- 登录态：交接包的 `.333-localstorage.json` 已放到 skill 目录（3341B，21 键，含 `credentials`），
+  token 过期后靠它自动登录；本次登录被平台判为「新装置」弹了一次提示，点确定即可，**未要短信码**
+  登录后已重新保存快照（3400B / 21 键）。333 不把 token 放 localStorage，所以跨会话必须靠账号密码自动登录。
+
+**CI**（`refresh-and-deploy` 自 11-14 起连续 5 次失败 → Pages 一天没更新）
+
+- 根因：`tests/test_cl_supervision.py::test_cl_session_single_instance_lock` 在 ubuntu runner 上
+  报 `ModuleNotFoundError: No module named 'msvcrt'` —— `cl_session.acquire_single_instance_lock()`
+  只有 Windows 实现（93eb894 引入）
+- 修复（`39d77b5`）：`os.name == nt` 走 `msvcrt.locking`，否则 `fcntl.flock(LOCK_EX|LOCK_NB)`；
+  拿不到锁时先 `fh.close()` 再返回 None（避免句柄泄漏）
+- 验证：本地 **281 passed**；CI run #151 **success**；`data/bets.json` 与 Pages `static.json`
+  均已含 `4kPgrV`，模拟单已清除
