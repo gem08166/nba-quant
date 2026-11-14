@@ -23,6 +23,7 @@ from ..config import (
     PRICE_GATE,
     SHARP_ANCHOR,
 )
+from .. import config
 from ..models import rapm, ratings
 from . import injury
 from ..pricing import calibrate as cal
