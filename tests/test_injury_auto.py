@@ -71,3 +71,82 @@ def test_snapshot_shape(conn):
     assert snap == [
         {"team_id": 5, "player": "Evan Mobley", "status": "out", "impact": 2.5, "impact_source": "manual"}
     ]
+
+
+# ---------- Task 2: 自动采纳 ----------
+
+
+def _mock_suggestions(monkeypatch, rows):
+    """固定建议列表，避免测试依赖 PBP 名册。"""
+    monkeypatch.setattr(injury, "_suggestions", lambda conn, gid, model=None: list(rows))
+
+
+def test_apply_impacts_writes_suggestion(conn, monkeypatch):
+    _ins(conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00")
+    _mock_suggestions(monkeypatch, [
+        {"team_id": 5, "player": "Evan Mobley", "status": "out", "player_id": 42,
+         "suggested_impact": 3.2, "manual_impact": 0.0},
+    ])
+    stats = injury.apply_impacts(conn, ["g1"])
+    assert stats["applied"] == 1
+    row = dict(conn.execute("SELECT * FROM injuries WHERE player='Evan Mobley'").fetchone())
+    assert row["impact"] == 3.2
+    assert row["impact_source"] == "auto"
+    assert row["applied_status"] == "out"
+    assert row["applied_at"]
+
+
+def test_apply_impacts_respects_manual(conn, monkeypatch):
+    _ins(conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 1.0, source="manual")
+    _mock_suggestions(monkeypatch, [
+        {"team_id": 5, "player": "Evan Mobley", "status": "out", "player_id": 42,
+         "suggested_impact": 3.2, "manual_impact": 1.0},
+    ])
+    stats = injury.apply_impacts(conn, ["g1"])
+    assert stats["skipped"] == 1
+    row = dict(conn.execute("SELECT * FROM injuries WHERE player='Evan Mobley'").fetchone())
+    assert row["impact"] == 1.0  # 手设值不动
+    assert row["applied_at"] is None
+
+
+def test_apply_impacts_zeroes_when_no_suggestion(conn, monkeypatch):
+    """状态翻出因子表 / 匹配不到球员 → 无建议 → impact 归 0（复活）。"""
+    _ins(conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 3.2)
+    _ins(conn, "g1", 5, "Evan Mobley", "day-to-day", "2026-11-14T20:00:00+00:00")  # 最新行
+    _mock_suggestions(monkeypatch, [])  # day-to-day 行匹配不到 PBP id → 无建议
+    stats = injury.apply_impacts(conn, ["g1"])
+    assert stats["zeroed"] == 1
+    # 最新行（day-to-day@20:00）的 impact 应被归零
+    row = dict(
+        conn.execute(
+            "SELECT * FROM injuries WHERE player='Evan Mobley' ORDER BY captured_at DESC LIMIT 1"
+        ).fetchone()
+    )
+    assert row["impact"] == 0.0
+    assert row["applied_status"] == "day-to-day"
+    # 旧行（out@18:00）已被去重逻辑排除，不被动过
+    old = dict(
+        conn.execute(
+            "SELECT * FROM injuries WHERE player='Evan Mobley' AND status='out'"
+        ).fetchone()
+    )
+    assert old["impact"] == 3.2
+    assert old["applied_at"] is None
+
+
+def test_migrate_adds_injury_columns(tmp_path):
+    """迁移：旧库（无新列）打开后补齐 3 列，幂等。"""
+    import shutil
+
+    from app import db as dbmod
+
+    work = tmp_path / "nba.db"
+    shutil.copy("data/nba.db", work)
+    conn = dbmod.connect(work)  # connect() 内部跑 _migrate
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(injuries)")}
+        assert {"impact_source", "applied_status", "applied_at"} <= cols
+        cols2 = {r["name"] for r in conn.execute("PRAGMA table_info(signal_log)")}
+        assert "injuries" in cols2
+    finally:
+        conn.close()

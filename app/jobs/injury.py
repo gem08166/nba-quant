@@ -59,3 +59,52 @@ def snapshot(conn: sqlite3.Connection, game_id: str) -> list[dict]:
         }
         for r in game_injuries(conn, game_id)
     ]
+
+
+def apply_impacts(
+    conn: sqlite3.Connection,
+    game_ids: list[str],
+    model: dict | None = None,
+    force: bool = False,
+) -> dict:
+    """把 RAPM 建议自动写入 injuries.impact（predict_date 每轮预测前调用）。
+
+    规则：
+    - impact_source='manual' 的行永不覆盖（用户手设值最权威）；
+    - 其余行按去重后的最新行采纳：有建议 → impact=suggested_impact；
+      无建议（状态不在因子表 / 匹配不到 PBP id）→ impact=0（复活归零）；
+    - force=True 时连 manual 行也重算（CLI 显式重建用，日常流程不用）。
+
+    返回 {"applied": 采纳数, "updated": 有变化数, "skipped": manual 跳过数, "zeroed": 归零数}。
+    """
+    now = _now()
+    stats = {"applied": 0, "updated": 0, "skipped": 0, "zeroed": 0}
+    for game_id in game_ids:
+        suggestions = {
+            (s["team_id"], s["player"]): s for s in _suggestions(conn, game_id, model=model)
+        }
+        for row in game_injuries(conn, game_id):
+            key = (row["team_id"], row["player"])
+            source = row.get("impact_source") or "auto"
+            if source == "manual" and not force:
+                stats["skipped"] += 1
+                continue
+            sug = suggestions.get(key)
+            new_impact = float(sug["suggested_impact"]) if sug else 0.0
+            new_status = (sug["status"] if sug else row["status"]) or None
+            old_impact = float(row["impact"] or 0.0)
+            changed = abs(new_impact - old_impact) > 1e-9
+            conn.execute(
+                """
+                UPDATE injuries
+                SET impact=?, impact_source='auto', applied_status=?, applied_at=?
+                WHERE id=?
+                """,
+                (new_impact, new_status, now, row["id"]),
+            )
+            stats["applied"] += 1
+            if changed:
+                stats["updated"] += 1
+            if not sug:
+                stats["zeroed"] += 1
+    return stats

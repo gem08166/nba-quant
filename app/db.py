@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS injuries (
     detail      TEXT,
     impact      REAL NOT NULL DEFAULT 0,
     captured_at TEXT NOT NULL,
+    impact_source TEXT NOT NULL DEFAULT 'auto',
+    applied_status TEXT,
+    applied_at  TEXT,
     UNIQUE(game_id, team_id, player, status)
 );
 CREATE INDEX IF NOT EXISTS idx_injuries_game ON injuries(game_id);
@@ -270,6 +273,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE games ADD COLUMN live_home_score INTEGER")
     if games_columns and "live_away_score" not in games_columns:
         conn.execute("ALTER TABLE games ADD COLUMN live_away_score INTEGER")
+
+    # 伤停自动采纳（0.87）：impact_source 区分 auto/manual（manual 永不被自动
+    # 逻辑覆盖）；applied_status/applied_at 记录最近一次采纳依据，便于审计。
+    injury_columns = {row["name"] for row in conn.execute("PRAGMA table_info(injuries)")}
+    if injury_columns and "impact_source" not in injury_columns:
+        conn.execute(
+            "ALTER TABLE injuries ADD COLUMN impact_source TEXT NOT NULL DEFAULT 'auto'"
+        )
+    if injury_columns and "applied_status" not in injury_columns:
+        conn.execute("ALTER TABLE injuries ADD COLUMN applied_status TEXT")
+    if injury_columns and "applied_at" not in injury_columns:
+        conn.execute("ALTER TABLE injuries ADD COLUMN applied_at TEXT")
+    # signal_log.injuries：决策时刻的伤停快照 JSON（校准 impact 系数用）
+    signal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(signal_log)")}
+    if signal_columns and "injuries" not in signal_columns:
+        conn.execute("ALTER TABLE signal_log ADD COLUMN injuries TEXT")
 
     # 滚球封盘标记：价格全 0.00 / 市场消失即封盘。存成列后分析可以直接
     # WHERE suspended=0 过滤，不必每次重新解析 market_raw。
