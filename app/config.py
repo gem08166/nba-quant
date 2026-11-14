@@ -82,6 +82,12 @@ SIGMA_OOS_SCALE_TOTAL = float(os.getenv("NBAQ_SIGMA_SCALE_TOTAL", "1.014"))
 # Optional bearer token for the API. Empty = disabled (personal LAN use).
 API_TOKEN = os.getenv("NBAQ_TOKEN", "")
 
+# 伤停自动采纳与闸门（0.87）：ESPN 伤停 → RAPM 建议自动写入 injuries.impact，
+# bettable 信号按下注侧缺人合计分值降级观察。impact 单位 = 净胜分点。
+INJURY_AUTO_APPLY = os.getenv("NBAQ_INJURY_AUTO_APPLY", "1") == "1"
+INJURY_GATE_ENABLE = os.getenv("NBAQ_INJURY_GATE_ENABLE", "1") == "1"
+INJURY_GATE_POINTS = float(os.getenv("NBAQ_INJURY_GATE_POINTS", "3.0"))
+
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
 USER_AGENT = "nba-quant-personal/0.1 (research)"
 REQUEST_TIMEOUT = float(os.getenv("NBAQ_TIMEOUT", "25"))
