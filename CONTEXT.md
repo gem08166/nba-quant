@@ -1396,7 +1396,8 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **结算**：settle.settle_signal_log() 在 settle() 内自动执行，回填开赛前最后一笔
   收盘价与胜负（与真实注单 CLV 同口径），幂等。
 - **历史回填**：scripts/backfill_signal_log.py 按 predictions.created_at 升序重放
-  （首见即记），本机回填 93 行 / 已结算 74 行；CI 在 efresh.yml 每天跑两次（幂等）。
+  （首见即记），本机回填 93 行 / 已结算 74 行；CI 在 
+efresh.yml 每天跑两次（幂等）。
 - **顺手修掉的真 bug**：_mode() 平票时返回 (6.5+6.75)/2=6.625 这种市场不存在的
   线 → t_line 过滤为空 → 公允概率退化成 0 → 产出 +56% 的假 edge（本机实测
   218.75/244.75 两例）。改为平票取真实存在的中位线；_make_edge() 增加公允概率
@@ -1629,3 +1630,39 @@ CL DOWN，08:45 自动拉起成功；心跳 00:02 已发。
   拿不到锁时先 `fh.close()` 再返回 None（避免句柄泄漏）
 - 验证：本地 **281 passed**；CI run #151 **success**；`data/bets.json` 与 Pages `static.json`
   均已含 `4kPgrV`，模拟单已清除
+
+### 10.88 2026-11-15 伤停管线补全（自动采纳 A/B 验收未过 → 只保留闸门+快照）
+
+背景：当日唯一 bettable 信号（鹈鹕 ML @6.0）按授权下注后复查伤停，发现鹈鹕缺 5 人
+（Missi/Trey Murphy/Dejounte Murray 等）——模型不含伤停输入是已知盲区，且伤停管线
+其实已建 80%：ESPN 抓取自动跑（injuries 表 11-03 起积累 679 行）、predict_game 留了
+impact 入参、rapm.suggest_impacts 有建议逻辑，唯一缺的是 impact 全是 0（只有网页
+「一键采用」按钮会写）。
+
+实现（docs/superpowers/plans/2026-11-15-injury-auto-impact.md，5 任务全过）：
+
+- **迁移**：injuries +3 列（impact_source 'auto'|'manual'、applied_status、applied_at）；
+  signal_log +1 列 injuries（JSON 快照）。SCHEMA 同步。
+- **新模块 app/jobs/injury.py**：latest_by_player（唯一键含 status → 同球员状态变化会
+  插新行旧行残留，**消费方必须去重取最新 captured_at 行**，生产库已验证 8 组
+  day-to-day+out 并存）、game_injuries、_suggestions（monkeypatch 点）、apply_impacts
+  （自动采纳，manual 永不覆盖，复活归零）、apply_injury_gate（下注侧缺人合计 >=3.0 分
+  → bettable 降级 + 注明缺谁）、snapshot、side_of。
+- **predict 编排**：predict_date 预测前批量采纳（AUTO_APPLY 开时）→ predict_game
+  edges 就绪后过闸门 → log_signals 写伤停快照。
+- **接口错位两处（实现期发现）**：①RAPM 建议要的是 rapm_model，predict 手里的
+  team_model 传进去返回空 —— model 参数语义改为 RAPM 模型/None 自动；②
+  rapm.suggest_impacts 不去重，Mobley 双行出双建议 —— injury 层按去重行取。
+- **A/B 验收**（scripts/injury_ab_test.py，11-03→11-13，76 场/53 场有伤停，只读不写）：
+  - MAE margin：baseline 11.129 vs auto **11.354（略差）**
+  - beta(close)：0.108±0.213 vs 0.103±0.214（n=66，**均不显著，持平**）
+  - 修正方向：53 场 26/53 更准，偏差 +0.10→-0.29（中性）
+  - 噪音源：44/53 场是 [0,3) 的 dtd/questionable 碎片修正；OKC 缺 6 主力仍赢
+    CLE 8 分的案例说明 0.8 系数高估缺阵损失（板凳深度消化）
+- **判定**：无证据支持改预测 → NBAQ_INJURY_AUTO_APPLY **默认 0**（代码保留，随时可开）；
+  **闸门保留**（默认开，只拦不修，与价格闸门同一哲学）；快照保留（signal_log.injuries
+  积累后回看校准 0.8/0.4）。
+- **333 skill**：前置条件后新增 **Step 1.5 查伤停**（强制）：bettable_note 带「伤停闸门」
+  或下注侧 out/doubtful impact 合计 >=3.0 → 停止授权流程报告用户；role player/无新消息
+  可继续但须列伤停名单。
+- 测试 **295 passed**（新增 14 例：去重/采纳/manual/归零/迁移/闸门 5 态/快照/幂等）。
