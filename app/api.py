@@ -693,14 +693,18 @@ class ImpactIn(BaseModel):
 
 @router.post("/injuries/{injury_id}/impact")
 def set_impact(injury_id: int, body: ImpactIn, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    conn.execute("UPDATE injuries SET impact=? WHERE id=?", (body.impact, injury_id))
+    # 手设值必须标 manual：自动采纳/闸门/快照都尊重 manual（0.87 审查 F3）
+    conn.execute(
+        "UPDATE injuries SET impact=?, impact_source='manual' WHERE id=?",
+        (body.impact, injury_id),
+    )
     conn.commit()
     return {"ok": True}
 
 
 @router.post("/injuries/{injury_id}/apply-suggestion")
 def apply_impact_suggestion(injury_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    """把 RAPM 建议仓位写入该伤停的 impact（一键采用）。"""
+    """把 RAPM 建议仓位写入该伤停的 impact（一键采用，视为人工确认 → manual）。"""
     from .models import rapm as rapm_module
 
     injury = conn.execute("SELECT id, game_id, player FROM injuries WHERE id=?", (injury_id,)).fetchone()
@@ -710,7 +714,10 @@ def apply_impact_suggestion(injury_id: int, conn: sqlite3.Connection = Depends(g
     match = next((s for s in suggestions if s["player"] == injury["player"]), None)
     if not match:
         raise HTTPException(status_code=404, detail="no RAPM suggestion for this player")
-    conn.execute("UPDATE injuries SET impact=? WHERE id=?", (match["suggested_impact"], injury_id))
+    conn.execute(
+        "UPDATE injuries SET impact=?, impact_source='manual' WHERE id=?",
+        (match["suggested_impact"], injury_id),
+    )
     conn.commit()
     return {"ok": True, "impact": match["suggested_impact"], "rapm_rating": match["rapm_rating"]}
 

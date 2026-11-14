@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -85,8 +86,9 @@ def test_game_injuries_dedup_takes_latest_row(conn):
     assert len(rows) == 2  # 去重后两人
 
 
-def test_snapshot_shape(conn):
+def test_snapshot_shape(conn, monkeypatch):
     _ins(conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 2.5, source="manual")
+    _mock_suggestions(monkeypatch, [])  # manual 行不查建议
     snap = injury.snapshot(conn, "g1")
     assert snap == [
         {"team_id": 5, "player": "Evan Mobley", "status": "out", "impact": 2.5, "impact_source": "manual"}
@@ -279,8 +281,17 @@ def signal_conn(conn):
 def test_log_signals_writes_injury_snapshot(signal_conn, monkeypatch):
     from app.jobs.predict import log_signals
 
+    # impact=3.2 但 source=auto 且无建议 → 快照按决策口径记建议值 0.0；
+    # 手设值（manual）才会被尊重。断言随 F5 语义更新。
     _ins(signal_conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 3.2)
+    _mock_suggestions(monkeypatch, [])
     snap = injury.snapshot(signal_conn, "g1")
+    assert snap[0]["impact"] == 0.0  # auto 行无建议 → 决策口径 0
+
+    _ins(signal_conn, "g1", 5, "Manual Guy", "out", "2026-11-14T18:00:00+00:00", 4.0, source="manual")
+    snap = injury.snapshot(signal_conn, "g1")
+    manual = [x for x in snap if x["player"] == "Manual Guy"][0]
+    assert manual["impact"] == 4.0
     edges = [_edge("moneyline", "home", model_prob=0.55, ev=0.1, edge=0.05)]
     n = log_signals(
         signal_conn, "g1", "2026-11-14", edges, "2026-11-14T20:00:00+00:00",
@@ -291,7 +302,6 @@ def test_log_signals_writes_injury_snapshot(signal_conn, monkeypatch):
     payload = json.loads(row["injuries"])
     assert payload and payload[0]["player"] == "Evan Mobley"
     assert payload[0]["status"] == "out"
-    assert payload[0]["impact"] == 3.2
 
 
 def test_log_signals_without_snapshot_leaves_null(signal_conn):
@@ -307,10 +317,15 @@ def test_migrate_adds_injury_columns(tmp_path):
     """迁移：旧库（无新列）打开后补齐 3 列，幂等。"""
     import shutil
 
+    import pytest
+
     from app import db as dbmod
 
+    src = Path("data/nba.db")
+    if not src.exists():
+        pytest.skip("本地无 data/nba.db（新 clone 未恢复 data 分支）")
     work = tmp_path / "nba.db"
-    shutil.copy("data/nba.db", work)
+    shutil.copy(src, work)
     conn = dbmod.connect(work)  # connect() 内部跑 _migrate
     try:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(injuries)")}

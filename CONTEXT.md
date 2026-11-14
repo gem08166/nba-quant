@@ -1666,3 +1666,27 @@ impact 入参、rapm.suggest_impacts 有建议逻辑，唯一缺的是 impact �
   或下注侧 out/doubtful impact 合计 >=3.0 → 停止授权流程报告用户；role player/无新消息
   可继续但须列伤停名单。
 - 测试 **295 passed**（新增 14 例：去重/采纳/manual/归零/迁移/闸门 5 态/快照/幂等）。
+
+### 10.89 2026-11-15 伤停管线最终审查修复（4 Important + 2 Minor）
+
+最终审查（fresh-context reviewer）在 10.88 交付上发现 4 个 Important，全部修复
+（TDD：tests/test_injury_fixpass.py 8 例先 RED 后 GREEN，全量 303 passed）：
+
+- **F1 幽灵伤停（最重要）**：predict_game 求和读全表不去重，与 apply_impacts
+  （只更新去重行）组合 → AUTO_APPLY 开启时旧行 impact 永久残留，复活球员被
+  永久扣分。修：求和走 injury.game_injuries() 去重。测试精确复现 3.2 幽灵值。
+- **F2 建议-行错配**：rapm.suggest_impacts 对多状态行返回同键多建议，dict 压缩
+  是 rowid 序碰运气（upsert 不改 rowid，out→dtd→out 时旧行持有最新 captured_at）。
+  修：新增 _align_suggestion()，闸门/采纳/快照都按**去重行 status** 对齐建议。
+- **F3 manual 否决权不可达**：api 两条手写路径（POST /injuries/{id}/impact 与
+  /apply-suggestion）不写 impact_source='manual' → 自动逻辑会覆盖手设值。
+  修：两路径都落 manual 标记；闸门取值优先级改为 manual > 行内 impact > 建议。
+- **F4 闸门收窄**：原来 questionable/day-to-day 碎片也累计（与规格和 333 skill
+  的「out/doubtful 才拦」矛盾）；A/B 显示 dtd 碎片是主要噪音。修：_GATE_STATUSES
+  只认 out/doubtful；闸门取值对齐去重行建议。
+- **F5 快照记录决策口径**：AUTO_APPLY 关时库内 impact 恒 0，快照原样照抄 →
+  校准永远拿不到数据。修：snapshot() 记 manual 手设值或对齐建议值（库内不动）。
+- M1：闸门 note 用队名缩写（原 "home 队" + 死变量）；M3：快照调用加异常隔离；
+  M5：迁移测试无本地 db 时 skip。M2（A/B ROI 判据未跑）记入 10.88 的口径说明：
+  判定基于 MAE+β 两条，ROI 因收盘价样本不足未算——维持 OFF 的结论不受影响
+  （OFF 本身是保守决策）。M4/M6 缓办不追。

@@ -51,18 +51,53 @@ def _suggestions(conn: sqlite3.Connection, game_id: str, model: dict | None = No
     return rapm.suggest_impacts(conn, game_id, model=model)
 
 
-def snapshot(conn: sqlite3.Connection, game_id: str) -> list[dict]:
-    """决策时刻的伤停快照（signal_log.injuries 的 JSON 形状）。"""
-    return [
-        {
+def _align_suggestion(suggestions: dict, row) -> dict | None:
+    """从 (team_id, player) 索引的建议表里挑与去重行 status 一致的那条。
+
+    rapm.suggest_impacts 对同球员多状态行会返回多条同键建议（不去重），
+    dict 压缩时是 rowid 序碰运气（0.87 审查 F2）；这里显式按去重行的
+    status 对齐，对不上再退回最后一条。
+    """
+    same_key = [
+        s for s in suggestions.values()
+        if s["team_id"] == row["team_id"] and s["player"] == row["player"]
+    ]
+    if not same_key:
+        return None
+    status = (row["status"] or "").casefold()
+    for s in same_key:
+        if (s.get("status") or "").casefold() == status:
+            return s
+    return same_key[-1]
+
+
+def snapshot(conn: sqlite3.Connection, game_id: str, model: dict | None = None) -> list[dict]:
+    """决策时刻的伤停快照（signal_log.injuries 的 JSON 形状）。
+
+    impact 记录**决策口径**：manual 手设值，否则去重行对齐的建议值
+    （AUTO_APPLY 关时库内 impact 恒 0，快照不带建议值就无法校准系数——
+    0.87 审查 F5）。库内 impact 不被本函数改动。
+    """
+    rows = game_injuries(conn, game_id)
+    suggestions = {
+        (s["team_id"], s["player"]): s
+        for s in _suggestions(conn, game_id, model=model)
+    }
+    out = []
+    for r in rows:
+        if (r.get("impact_source") or "auto") == "manual":
+            impact = float(r["impact"] or 0.0)
+        else:
+            sug = _align_suggestion(suggestions, r)
+            impact = float(sug["suggested_impact"]) if sug else 0.0
+        out.append({
             "team_id": r["team_id"],
             "player": r["player"],
             "status": r["status"],
-            "impact": float(r["impact"] or 0.0),
+            "impact": impact,
             "impact_source": r["impact_source"] or "auto",
-        }
-        for r in game_injuries(conn, game_id)
-    ]
+        })
+    return out
 
 
 def apply_impacts(
@@ -94,7 +129,7 @@ def apply_impacts(
             if source == "manual" and not force:
                 stats["skipped"] += 1
                 continue
-            sug = suggestions.get(key)
+            sug = _align_suggestion(suggestions, row)
             new_impact = float(sug["suggested_impact"]) if sug else 0.0
             new_status = (sug["status"] if sug else row["status"]) or None
             old_impact = float(row["impact"] or 0.0)
@@ -126,17 +161,23 @@ def _team_short(conn: sqlite3.Connection, team_id: int) -> str:
     return (row["abbrev"] if row else "") or str(team_id)
 
 
+# 闸门只认确证缺阵（规格 0.87：out/doubtful 才拦）。questionable/day-to-day 是
+# 赛前投机状态，A/B 显示其碎片修正是主要噪音源（44/53 场 <3 分）。
+_GATE_STATUSES = {"out", "doubtful"}
+
+
 def apply_injury_gate(
     conn: sqlite3.Connection,
     game_id: str,
     edges: list[dict],
     model: dict | None = None,
 ) -> list[dict]:
-    """伤停闸门（bettable 的最后一道）：下注侧 out/doubtful 缺人合计 RAPM 分值
+    """伤停闸门（bettable 的最后一道）：下注侧 out/doubtful 缺人合计分值
     ≥ INJURY_GATE_POINTS → 降级为观察并注明缺谁缺多少。in-place 改写并返回同一列表。
 
     model = RAPM 模型（None=自动取最新），非 team-ratings 模型。
-    大小分（ov/ud）无球队侧，不触发；阈值默认 3.0 分（约半个首发级别的影响）。
+    取值优先级：manual 手设 impact > 去重行对应的建议（0.87 审查 F2/F3）；
+    大小分（ov/ud）无球队侧不触发；阈值默认 3.0 分（约半个首发级别的影响）。
     """
     if not INJURY_GATE_ENABLE or not edges:
         return edges
@@ -149,14 +190,24 @@ def apply_injury_gate(
     by_side: dict[str, list[str]] = {"home": [], "away": []}
     points: dict[str, float] = {"home": 0.0, "away": 0.0}
     for row in rows:
-        sug = suggestions.get((row["team_id"], row["player"]))
-        impact = float(sug["suggested_impact"]) if sug else float(row["impact"] or 0.0)
+        status = (row["status"] or "").casefold()
+        if status not in _GATE_STATUSES:
+            continue
+        # manual 手设值最权威；否则用与该行 status 对齐的建议（F2：同键多建议
+        # 时取 status 匹配去重行的那条，取不到才退回 rowid 最后一条）
+        if (row.get("impact_source") or "auto") == "manual":
+            impact = float(row["impact"] or 0.0)
+        else:
+            sug = suggestions.get((row["team_id"], row["player"]))
+            if sug is None:
+                impact = float(row["impact"] or 0.0)
+            elif sug.get("status", "").casefold() == status:
+                impact = float(sug["suggested_impact"])
+            else:
+                impact = float(row["impact"] or 0.0)
         if impact <= 0:
             continue
         side = "home" if row["team_id"] == _home_team_id(conn, game_id) else "away"
-        # 只累计会真实降低该侧战力的值（out/doubtful/questionable 才有建议）
-        if sug is None and (row.get("status") or "").casefold() not in ("out", "doubtful", "questionable", "day-to-day"):
-            continue
         by_side[side].append(f"{row['player']} {impact:.1f}")
         points[side] += impact
     if not by_side["home"] and not by_side["away"]:
@@ -169,7 +220,7 @@ def apply_injury_gate(
             continue
         team = _team_short(conn, _home_team_id(conn, game_id) if side == "home" else _away_team_id(conn, game_id))
         names = ", ".join(sorted(by_side[side], reverse=True))
-        note = f"伤停闸门：{side} 队缺人合计 {points[side]:.1f} 分（{names}）"
+        note = f"伤停闸门：{team} 缺人合计 {points[side]:.1f} 分（{names}）"
         edge["bettable"] = False
         edge["bettable_note"] = note
         edge["gated"] = note

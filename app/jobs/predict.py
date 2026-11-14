@@ -780,6 +780,15 @@ def log_signals(
     return inserted
 
 
+def _injury_snapshot_safe(conn: sqlite3.Connection, game_id: str) -> list[dict] | None:
+    """快照失败不阻塞预测（与闸门同一隔离策略，0.87 审查 M3）。"""
+    try:
+        return injury.snapshot(conn, game_id)
+    except Exception as exc:  # noqa: BLE001 - 快照尽力而为
+        print(f"[predict] 伤停快照失败（跳过）: {exc}")
+        return None
+
+
 def predict_game(
     conn: sqlite3.Connection,
     game: dict,
@@ -790,12 +799,11 @@ def predict_game(
 ) -> dict:
     density = density or {}
     home_id, away_id = int(game["home_id"]), int(game["away_id"])
-    injuries = conn.execute(
-        "SELECT team_id, player, status, impact FROM injuries WHERE game_id=?",
-        (game["id"],),
-    ).fetchall()
-    injury_home = sum(float(row["impact"]) for row in injuries if int(row["team_id"]) == home_id)
-    injury_away = sum(float(row["impact"]) for row in injuries if int(row["team_id"]) == away_id)
+    # 伤停求和必须按球员去重（唯一键含 status，同球员多行并存），
+    # 否则旧行 impact 残留 + 复活球员会被永久扣分（0.87 审查 F1）。
+    deduped = injury.game_injuries(conn, game["id"])
+    injury_home = sum(float(r["impact"] or 0.0) for r in deduped if int(r["team_id"]) == home_id)
+    injury_away = sum(float(r["impact"] or 0.0) for r in deduped if int(r["team_id"]) == away_id)
 
     pred = ratings.predict(
         model,
@@ -873,7 +881,7 @@ def predict_game(
         game.get("slate_date"),
         market["edges"],
         _now(),
-        injury_snapshot=injury.snapshot(conn, game["id"]),
+        injury_snapshot=_injury_snapshot_safe(conn, game["id"]),
     )
     return {"prediction_id": int(cur.lastrowid), **pred, **details}
 
