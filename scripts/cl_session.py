@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -347,18 +348,28 @@ def acquire_single_instance_lock():
     """单实例锁：计划任务、开机自启、存活监控三处都可能拉起 CL 会话，
     没有锁就会并行跑两三个，重复抓盘口/重复烧额度。
 
-    Windows 进程退出会自动释放文件锁，无需清理陈旧锁。
+    进程退出会自动释放文件锁，无需清理陈旧锁。
+    生产环境是 Windows（msvcrt）；CI/POSIX 走 fcntl.flock，保证测试可跨平台。
     """
-    import msvcrt
-
     lock_path = DATA_DIR / "cl_session.lock"
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         fh = open(lock_path, "a+")
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-        return fh
     except OSError:
         return None
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
 
 
 def main() -> None:
