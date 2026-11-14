@@ -720,14 +720,19 @@ def log_signals(
     slate_date: str | None,
     edges: list[dict],
     captured_at: str,
+    injury_snapshot: list[dict] | None = None,
 ) -> int:
     """把本次预测的 signal=True 边写入 signal_log（首见即记，不重复）。
 
     记录的是**决策时刻**的快照：决策价、共识价、四个概率。赛后由
     settle.settle_signal_log 回填收盘价与结果，供 A（校准）/ B（价格闸门）
     两条改进路线离线回测与归因，不必再从 predictions.details 里反推。
+    injury_snapshot（0.87）：决策时刻的伤停快照 JSON，用于校准 impact 系数。
     """
     inserted = 0
+    injuries_json = (
+        json.dumps(injury_snapshot, ensure_ascii=False) if injury_snapshot else None
+    )
     for edge in edges:
         if not edge.get("signal"):
             continue
@@ -745,8 +750,8 @@ def log_signals(
             INSERT OR IGNORE INTO signal_log(
                 game_id, slate_date, market, side, line, p_model, p_calibrated,
                 p_fair, p_implied, price_best, price_consensus, ev, edge,
-                bettable, book, gated, captured_at, created_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                bettable, book, gated, captured_at, created_at, injuries
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(game_id),
@@ -767,6 +772,7 @@ def log_signals(
                 edge.get("gated"),
                 captured_at,
                 captured_at,
+                injuries_json,
             ),
         )
         inserted += cur.rowcount or 0
@@ -860,7 +866,14 @@ def predict_game(
             json.dumps(details, ensure_ascii=False),
         ),
     )
-    log_signals(conn, game["id"], game.get("slate_date"), market["edges"], _now())
+    log_signals(
+        conn,
+        game["id"],
+        game.get("slate_date"),
+        market["edges"],
+        _now(),
+        injury_snapshot=injury.snapshot(conn, game["id"]),
+    )
     return {"prediction_id": int(cur.lastrowid), **pred, **details}
 
 

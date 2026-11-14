@@ -236,6 +236,73 @@ def test_side_of_mapping():
     assert injury.side_of({"side": "ud"}) is None
 
 
+# ---------- Task 4: signal_log 伤停快照 ----------
+
+
+@pytest.fixture()
+def signal_conn(conn):
+    """加 signal_log 表（与生产同构，含 injuries 列）。"""
+    conn.execute(
+        """
+        CREATE TABLE signal_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id         TEXT NOT NULL,
+            slate_date      TEXT,
+            market          TEXT NOT NULL,
+            side            TEXT NOT NULL,
+            line            REAL,
+            p_model         REAL,
+            p_calibrated    REAL,
+            p_fair          REAL,
+            p_implied       REAL,
+            price_best      REAL,
+            price_consensus REAL,
+            price_closing   REAL,
+            closing_line    REAL,
+            ev              REAL,
+            edge            REAL,
+            bettable        INTEGER NOT NULL DEFAULT 0,
+            book            TEXT,
+            gated           TEXT,
+            result          TEXT,
+            profit          REAL,
+            captured_at     TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            injuries        TEXT,
+            UNIQUE(game_id, market, side, bettable)
+        )
+        """
+    )
+    return conn
+
+
+def test_log_signals_writes_injury_snapshot(signal_conn, monkeypatch):
+    from app.jobs.predict import log_signals
+
+    _ins(signal_conn, "g1", 5, "Evan Mobley", "out", "2026-11-14T18:00:00+00:00", 3.2)
+    snap = injury.snapshot(signal_conn, "g1")
+    edges = [_edge("moneyline", "home", model_prob=0.55, ev=0.1, edge=0.05)]
+    n = log_signals(
+        signal_conn, "g1", "2026-11-14", edges, "2026-11-14T20:00:00+00:00",
+        injury_snapshot=snap,
+    )
+    assert n == 1
+    row = dict(signal_conn.execute("SELECT * FROM signal_log WHERE game_id='g1'").fetchone())
+    payload = json.loads(row["injuries"])
+    assert payload and payload[0]["player"] == "Evan Mobley"
+    assert payload[0]["status"] == "out"
+    assert payload[0]["impact"] == 3.2
+
+
+def test_log_signals_without_snapshot_leaves_null(signal_conn):
+    from app.jobs.predict import log_signals
+
+    edges = [_edge("moneyline", "home", model_prob=0.55, ev=0.1, edge=0.05)]
+    log_signals(signal_conn, "g2", "2026-11-14", edges, "2026-11-14T20:00:00+00:00")
+    row = dict(signal_conn.execute("SELECT * FROM signal_log WHERE game_id='g2'").fetchone())
+    assert row["injuries"] is None
+
+
 def test_migrate_adds_injury_columns(tmp_path):
     """迁移：旧库（无新列）打开后补齐 3 列，幂等。"""
     import shutil

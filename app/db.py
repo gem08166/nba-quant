@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS signal_log (
     profit          REAL,
     captured_at     TEXT NOT NULL,
     created_at      TEXT NOT NULL,
+    injuries        TEXT,
     UNIQUE(game_id, market, side, bettable)
 );
 CREATE INDEX IF NOT EXISTS idx_signal_log_game ON signal_log(game_id, market);
@@ -398,6 +399,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 profit          REAL,
                 captured_at     TEXT NOT NULL,
                 created_at      TEXT NOT NULL,
+                injuries        TEXT,
                 UNIQUE(game_id, market, side, bettable)
             );
             CREATE INDEX IF NOT EXISTS idx_signal_log_game ON signal_log(game_id, market);
