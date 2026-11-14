@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from scripts import alive_monitor as am
+from scripts import cl_window
 
 
 @pytest.fixture
@@ -156,8 +157,8 @@ def _make_db(tmp_path, rows):
 
 def test_check_cl_no_games(tmp_path, monkeypatch):
     _make_db(tmp_path, [])
-    monkeypatch.setattr(am, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(am, "current_slate_date", lambda: "2099-01-01")
+    monkeypatch.setattr(cl_window, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cl_window, "current_slate_date", lambda: "2099-01-01")
     monkeypatch.setattr(am, "_python_cmdlines", lambda: "")
 
     ok, msg = am.check_cl()
@@ -172,8 +173,8 @@ def test_check_cl_window_active_but_not_running(tmp_path, monkeypatch):
         tmp_path,
         [("g1", "2099-01-01", "STATUS_SCHEDULED", tipoff.isoformat())],
     )
-    monkeypatch.setattr(am, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(am, "current_slate_date", lambda: "2099-01-01")
+    monkeypatch.setattr(cl_window, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cl_window, "current_slate_date", lambda: "2099-01-01")
     monkeypatch.setattr(am, "_python_cmdlines", lambda: "python.exe -m app.cli watch")
 
     ok, msg = am.check_cl()
@@ -188,8 +189,8 @@ def test_check_cl_window_active_and_running(tmp_path, monkeypatch):
         tmp_path,
         [("g1", "2099-01-01", "STATUS_SCHEDULED", tipoff.isoformat())],
     )
-    monkeypatch.setattr(am, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(am, "current_slate_date", lambda: "2099-01-01")
+    monkeypatch.setattr(cl_window, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cl_window, "current_slate_date", lambda: "2099-01-01")
     monkeypatch.setattr(am, "_python_cmdlines", lambda: "python.exe -m scripts.cl_session")
 
     ok, msg = am.check_cl()
@@ -207,8 +208,8 @@ def test_check_cl_all_games_final_is_ok(tmp_path, monkeypatch):
             ("g2", "2099-01-01", "STATUS_FINAL", tipoff),
         ],
     )
-    monkeypatch.setattr(am, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(am, "current_slate_date", lambda: "2099-01-01")
+    monkeypatch.setattr(cl_window, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cl_window, "current_slate_date", lambda: "2099-01-01")
     monkeypatch.setattr(am, "_python_cmdlines", lambda: "")
 
     ok, msg = am.check_cl()
@@ -223,8 +224,8 @@ def test_check_cl_process_list_unavailable_is_treated_as_ok(tmp_path, monkeypatc
         tmp_path,
         [("g1", "2099-01-01", "STATUS_SCHEDULED", tipoff.isoformat())],
     )
-    monkeypatch.setattr(am, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(am, "current_slate_date", lambda: "2099-01-01")
+    monkeypatch.setattr(cl_window, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cl_window, "current_slate_date", lambda: "2099-01-01")
     monkeypatch.setattr(am, "_python_cmdlines", lambda: None)
 
     ok, _ = am.check_cl()

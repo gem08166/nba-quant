@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts import procutil  # noqa: E402
+from scripts import cl_window, procutil  # noqa: E402
 
 LOG = ROOT / "data" / "boot_start.log"
 PY = ROOT / ".venv" / "Scripts" / "python.exe"
@@ -54,11 +54,11 @@ def _running(needle: str) -> bool | None:
     return procutil.has_process(procutil.python_cmdlines(), needle)
 
 
-def _launch(module: str) -> int:
+def _launch(module: str, extra: list[str] | None = None) -> int:
     from scripts.launch_detached import create_detached
 
     exe = str(PYW if PYW.exists() else PY)
-    return create_detached(exe, ["-m", module], str(ROOT))
+    return create_detached(exe, ["-m", module, *(extra or [])], str(ROOT))
 
 
 def main() -> None:
@@ -81,6 +81,24 @@ def main() -> None:
             log(f"{label}: launched pid={pid}")
         except OSError as exc:
             log(f"{label}: launch failed: {exc}")
+
+    # 比赛日窗口内重启：CL 会话没有自己的看门狗，这里补一次（带单实例锁，重复启动无害）
+    state, detail = cl_window.window_state()
+    log(f"cl window: {state} ({detail})")
+    if state == "active":
+        running = _running("scripts.cl_session")
+        if running is True:
+            log("cl_session: already running")
+        elif running is None:
+            log("cl_session: process probe unavailable, skip")
+        elif check_only:
+            log("cl_session: NOT running (would start)")
+        else:
+            try:
+                pid = _launch("scripts.cl_session", ["--interval", "180"])
+                log(f"cl_session: launched pid={pid} (window active)")
+            except OSError as exc:
+                log(f"cl_session: launch failed: {exc}")
 
     # 给看门狗几秒把 serve/watch 拉起来，再汇报一次（仅日志，不阻塞）
     if not check_only:

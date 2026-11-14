@@ -310,12 +310,35 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
     _log("CL 捕捉会话结束")
 
 
+def acquire_single_instance_lock():
+    """单实例锁：计划任务、开机自启、存活监控三处都可能拉起 CL 会话，
+    没有锁就会并行跑两三个，重复抓盘口/重复烧额度。
+
+    Windows 进程退出会自动释放文件锁，无需清理陈旧锁。
+    """
+    import msvcrt
+
+    lock_path = DATA_DIR / "cl_session.lock"
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "a+")
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        return fh
+    except OSError:
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="比赛日 CL 捕捉会话")
     parser.add_argument("--interval", type=int, default=180, help="捕捉间隔（秒），默认 180")
     parser.add_argument("--now", action="store_true", help="跳过等待，立即开始捕捉")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不执行")
     args = parser.parse_args()
+
+    lock = acquire_single_instance_lock()
+    if lock is None and not args.dry_run:
+        _log("已有 CL 会话在跑，本实例退出")
+        return
 
     run_session(interval=args.interval, skip_wait=args.now, dry_run=args.dry_run)
 

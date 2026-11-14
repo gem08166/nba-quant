@@ -1523,3 +1523,32 @@ README.md              # 用户文档（含第 0 节验证结论）
   而跳过；要临时前台调试就先 \serve-ctl stop\（否则端口被占）。
 - **测试追加**：test_procutil.py 12 例（探测降级、空白归一、pythonw 导入、
   boot_start 幂等判定、guards 检查），**256 passed**。
+
+### 10.84 2026-11-14 日志复查：两处真故障 + 修复
+
+- **S4U 自启实战验证通过**：08:33 用户重启，08:34 开机、08:35:36 NBA-AutoStart
+  自动跑起来（无需登录），serve/watch/两个看门狗全部恢复，`GET /api/health` 200。
+- **故障 1：重启后 CL 会话不会回来**。06:00 起的 CL 会话跑到 08:32:52，被 08:33 的
+  重启打断；boot_start 只拉看门狗，不拉 CL，于是窗口内（末场 11:30）一直空档，
+  08:37 监控才推了 `cl_session DOWN`，且**没有自动恢复**。
+  - 修复：新增 `scripts/cl_window.py` 统一窗口判定（no_games/all_final/before/
+    active/after，末场 +90min 与 cl_session 强制退出对齐）；`boot_start` 在
+    startup/logon 时若窗口 active 且无 CL 进程则拉起；`alive_monitor` 窗口内发现
+    CL 掉了会**自动拉起**并推一条"CL 会话已自动重启"（10 分钟冷却，避免崩溃循环）。
+  - 防重复：`cl_session` 增加 `data/cl_session.lock` 单实例锁（计划任务/自启/监控
+    三处都可能拉起它）。实测 08:45 监控自动拉起并恢复抓取，进程只有一份。
+- **故障 2：WMI 错误文本被当成"没有进程"**。07:41–08:20 期间频繁出现
+  `serve down (proc=False listening=True)` 与 `watch down`，看门狗据此重复拉起
+  → 多开 watch 会重复抓数、重复烧额度；同时伴随 `CreateProcessW err=1455`
+  （分页文件资源不足）。根因是 PowerShell/WMI 偶发拒绝访问时往 stdout 吐错误文本，
+  旧逻辑把非空输出当作"命令行里没有匹配项"。
+  - 修复：`procutil` 严格校验（`$ErrorActionPreference='Stop'`、检查 returncode 与
+    stderr、识别错误标记），任何可疑输出一律返回 `None`（未知），调用方保守处理；
+    PowerShell 失败自动重试一次（睡眠恢复后首次常失败）。
+- **HoopsAPI 仍在 429 退避**（84231s ≈ 23h），watch 已按预算跳过归档，只影响
+  Hoops 派生数据，不影响 CL/收盘。
+- **Odds API 当日收盘**：08:26 用 1 次额度抓了 3 场临近开赛的收盘，当前 key 剩 176
+  （多 key 轮换中，合计仍充裕）。
+- **测试**：新增 test_cl_window.py 8 例、test_cl_supervision.py 6 例
+  （自动拉起/冷却/拉起失败仍告警/单实例锁/boot_start 窗口判断），procutil 补
+  4 例错误输出判定，**277 passed**。

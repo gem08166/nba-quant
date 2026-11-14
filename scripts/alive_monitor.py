@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import subprocess
 import sys
 import time
@@ -32,8 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.config import DATA_DIR, NTFY_SERVER, NTFY_TOPIC
-from app.dates import current_slate_date
-from scripts import procutil
+from scripts import cl_window, procutil
 
 BEIJING = timezone(timedelta(hours=8))
 STATE_PATH = DATA_DIR / "alive_monitor_state.json"
@@ -111,57 +109,21 @@ def check_watch() -> tuple[bool, str]:
 
 
 def check_cl() -> tuple[bool, str]:
-    """CL 会话存活：比赛日窗口期（首场前 2h → 末场后 1h）内进程必须存在。"""
+    """CL 会话存活：窗口内必须有 cl_session 在跑。
+
+    窗口判定统一走 scripts/cl_window.py（与 cl_session 同口径）：
+    无比赛 / 全部完赛 / 窗口外 一律放行，避免收工后误报。
+    """
+    state, detail = cl_window.window_state()
+    if state != "active":
+        return True, detail
+
     out = _python_cmdlines()
     if out is None:
-        return True, "process list unavailable (assume ok)"
-    cl_running = "cl_session" in out
-
-    conn = sqlite3.connect(str(DATA_DIR / "nba.db"))
-    conn.row_factory = sqlite3.Row
-    try:
-        slate = current_slate_date()
-        games = conn.execute(
-            "SELECT tipoff, status FROM games WHERE slate_date = ? "
-            "AND status NOT IN ('STATUS_POSTPONED','STATUS_CANCELED','STATUS_CANCELLED')",
-            (slate,),
-        ).fetchall()
-        if not games:
-            return True, "no games today"
-
-        # 全部完赛 = 会话正常收工，窗口尾部不再要求进程存在（避免误报）
-        if all(g["status"] == "STATUS_FINAL" for g in games):
-            return True, "all games final (session done)"
-
-        now = datetime.now(timezone.utc)
-        tips = []
-        for g in games:
-            try:
-                tip = datetime.fromisoformat(str(g["tipoff"]).replace("Z", "+00:00"))
-                if tip.tzinfo is None:
-                    tip = tip.replace(tzinfo=timezone.utc)
-                tips.append(tip)
-            except ValueError:
-                continue
-        if not tips:
-            return True, "no tipoffs parsed"
-
-        first, last = min(tips), max(tips)
-        window_start = first - timedelta(hours=2)
-        window_end = last + timedelta(hours=1)
-
-        if not (window_start <= now <= window_end):
-            return True, f"outside window ({_bj(now)} not in {_bj(window_start)}~{_bj(window_end)})"
-
-        if cl_running:
-            return True, "running in window"
-        return False, f"window active but cl_session not running"
-    finally:
-        conn.close()
-
-
-def _bj(dt: datetime) -> str:
-    return dt.astimezone(BEIJING).strftime("%m-%d %H:%M")
+        return True, f"process list unavailable (assume ok); {detail}"
+    if procutil.has_process(out, "scripts.cl_session"):
+        return True, f"running in window ({detail})"
+    return False, f"window active but cl_session not running ({detail})"
 
 
 def check_guards() -> tuple[bool, str]:
@@ -204,11 +166,54 @@ def notify_down(down: list[tuple[str, str]]) -> bool:
     return _ntfy_send("NBA Quant 服务异常", text)
 
 
+def _relaunch_cl() -> int | None:
+    """窗口内 cl_session 不在跑时拉起一个（幂等：cl_session 自己带单实例锁）。"""
+    try:
+        from scripts.launch_detached import create_detached
+    except ImportError:
+        return None
+    pyw = DATA_DIR.parent / ".venv" / "Scripts" / "pythonw.exe"
+    py = DATA_DIR.parent / ".venv" / "Scripts" / "python.exe"
+    exe = str(pyw if pyw.exists() else py)
+    try:
+        return create_detached(exe, ["-m", "scripts.cl_session", "--interval", "180"], str(DATA_DIR.parent))
+    except OSError as exc:
+        log(f"cl_session relaunch failed: {exc}")
+        return None
+
+
 def run_once(heartbeat: bool = False) -> None:
     state = _load_state()
     results = run_checks()
+
+    # CL 会话是唯一没有独立守护进程的关键任务：窗口内挂了/被重启干掉就自动拉起。
+    # 10 分钟内最多尝试一次，避免崩溃循环时疯狂 spawn。
+    cl_down = any(name == "cl_session" and not ok for name, ok, _ in results)
+    if cl_down:
+        last_try = state.get("cl_relaunch", "")
+        try:
+            last_ts = datetime.fromisoformat(last_try) if last_try else None
+        except ValueError:
+            last_ts = None
+        cooled = not last_ts or (datetime.now(timezone.utc) - last_ts).total_seconds() > 600
+        if cooled:
+            pid = _relaunch_cl()
+            state["cl_relaunch"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            if pid:
+                time.sleep(6)
+                ok, msg = check_cl()
+                log(f"cl_session relaunched pid={pid} -> {'ok' if ok else 'still down'}")
+                if ok:
+                    results = [
+                        (n, True, "auto-restarted") if n == "cl_session" else (n, o, m)
+                        for n, o, m in results
+                    ]
+                    _ntfy_send(
+                        "CL 会话已自动重启",
+                        f"窗口内发现 cl_session 不在跑，已拉起并确认存活\n\n{datetime.now(BEIJING).strftime('%m-%d %H:%M')}",
+                    )
+
     down = [(name, msg) for name, ok, msg in results if not ok]
-    down_names = {name for name, _ in down}
 
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     alerted = state.setdefault("alerted", {})
