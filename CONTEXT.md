@@ -1396,8 +1396,7 @@ README.md              # 用户文档（含第 0 节验证结论）
 - **结算**：settle.settle_signal_log() 在 settle() 内自动执行，回填开赛前最后一笔
   收盘价与胜负（与真实注单 CLV 同口径），幂等。
 - **历史回填**：scripts/backfill_signal_log.py 按 predictions.created_at 升序重放
-  （首见即记），本机回填 93 行 / 已结算 74 行；CI 在 
-efresh.yml 每天跑两次（幂等）。
+  （首见即记），本机回填 93 行 / 已结算 74 行；CI 在 efresh.yml 每天跑两次（幂等）。
 - **顺手修掉的真 bug**：_mode() 平票时返回 (6.5+6.75)/2=6.625 这种市场不存在的
   线 → t_line 过滤为空 → 公允概率退化成 0 → 产出 +56% 的假 edge（本机实测
   218.75/244.75 两例）。改为平票取真实存在的中位线；_make_edge() 增加公允概率
@@ -1601,6 +1600,7 @@ CL DOWN，08:45 自动拉起成功；心跳 00:02 已发。
   （`sim=15 real=64 to_delete=0`，当前无重复）。
 - 数据侧依赖本机已有：`scripts/import_333_bets.py`（默认权威模式）、
   `scripts/export_static.py`、`app.cli bets-sync`。
+
 
 ### 10.87 2026-11-15 按信号下 333 真实注单 + 修 CI 跨平台测试失败
 
