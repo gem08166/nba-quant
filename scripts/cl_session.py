@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import httpx
 import json
 import os
 import sqlite3
@@ -28,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, NTFY_SERVER, NTFY_TOPIC
 from app.dates import current_slate_date
 from app.jobs.settle import capture_closing, settle
 from scripts.cl_window import window_bounds
@@ -73,6 +74,26 @@ def _log(msg: str) -> None:
         print(line, flush=True)
     except (OSError, AttributeError, ValueError):
         pass
+
+
+def _notify(title: str, text: str) -> bool:
+    """ntfy 手机推送（0.90）：会话开始捕捉/结束时通知。
+
+    未配置 NTFY_TOPIC 或发送失败都静默返回 False——通知是尽力而为，
+    绝不能因为推送挂了影响捕捉主流程。
+    """
+    if not NTFY_TOPIC:
+        return False
+    try:
+        resp = httpx.post(
+            f"{NTFY_SERVER}/{NTFY_TOPIC}",
+            content=text.encode("utf-8"),
+            headers={"Title": title.encode("utf-8"), "Tags": "basketball"},
+            timeout=15,
+        )
+        return resp.status_code in (200, 204)
+    except Exception:
+        return False
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -134,12 +155,14 @@ def _any_live(conn: sqlite3.Connection, games: list[dict]) -> bool:
     return False
 
 
-def _final_closing(conn: sqlite3.Connection, label: str) -> None:
+def _final_closing(conn: sqlite3.Connection, label: str) -> float:
     """最终收盘 + 结算。正常收工和安全阀退出都走这里，避免漏收尾。
 
     每次写库后立刻 commit：一手抓网络、一手拖着写事务，是 database is locked
     的主要来源（watch 每 5 分钟也在写同一个库）。
+    返回本次结算的盈亏合计（供结束通知汇总，失败按 0 计）。
     """
+    profit_total = 0.0
     try:
         captured = capture_closing(conn)
         _log(f"  {label}收盘: {len(captured)} 场")
@@ -149,8 +172,10 @@ def _final_closing(conn: sqlite3.Connection, label: str) -> None:
         settled = settle(conn)
         for item in settled:
             _log(f"  {label}结算 #{item['bet_id']}: {item['result']} 盈亏 {item['profit']:+.2f}")
+            profit_total += float(item.get("profit") or 0.0)
     except Exception as exc:
         _log(f"  {label}结算失败: {exc}")
+    return profit_total
 
 
 def _commit(conn: sqlite3.Connection) -> None:
@@ -217,10 +242,17 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
             if first_tip and _now() >= first_tip - timedelta(hours=2):
                 break
         _log("窗口开启，开始捕捉")
+        # 0.90：捕捉真正开始时推一条，手机上知道 CL 已经上线
+        _notify(
+            "CL 开始捕捉",
+            f"{slate}：{len(games)} 场 · 窗口 {_bj(window_start)}~{_bj(window_end_soft)}",
+        )
 
     # ===== 捕捉阶段 =====
     round_num = 0
     final_captured = False
+    profit_total = 0.0
+    end_reason = "赛程清空"
 
     while True:
         round_num += 1
@@ -315,6 +347,7 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
             if settled:
                 for item in settled:
                     _log(f"  结算 #{item['bet_id']}: {item['result']} 盈亏 {item['profit']:+.2f}")
+                    profit_total += float(item.get("profit") or 0.0)
         except Exception as exc:
             _log(f"  结算失败: {exc}")
 
@@ -325,22 +358,28 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
             if not final_captured:
                 _log("全部比赛已完赛，做最终收盘捕捉")
                 final_captured = True
-                _final_closing(conn, "最终")
+                profit_total += _final_closing(conn, "最终")
                 _commit(conn)
             _log("全部完赛 + 最终收盘完成，休眠退出")
+            end_reason = "全部完赛"
             break
 
         # g) 安全阀：末场 + 3h30m 仍未全部完赛 → 先补一次收盘/结算再退出
         if now > window_end_hard:
             _log(f"超过硬线 {_bj(window_end_hard)} 仍未全部完赛，收尾后强制退出")
-            _final_closing(conn, "收尾")
+            profit_total += _final_closing(conn, "收尾")
             _commit(conn)
+            end_reason = "超硬线强退"
             break
 
         # h) 等待下一轮
         time.sleep(interval)
 
     # ===== 收尾 =====
+    _notify(
+        "CL 捕捉结束",
+        f"{slate}：{round_num} 轮 · 结算盈亏 {profit_total:+.2f} · {end_reason}",
+    )
     _log("CL 捕捉会话结束")
 
 
