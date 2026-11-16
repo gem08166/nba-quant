@@ -45,3 +45,6 @@ deploy/*.png
 # 坚果云同步冲突副本（Nutstore 生成的附属文件，不属于仓库内容）
 *-冲突-*_Win10*
 **/*-冲突-*_Win10*
+
+# playwright MCP 输出（快照/控制台日志）
+.playwright-mcp/
