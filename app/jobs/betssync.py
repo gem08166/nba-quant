@@ -207,6 +207,7 @@ def merge_rows(
     conn: sqlite3.Connection,
     rows: list[dict],
     tombstones: set[str] | None = None,
+    authoritative: bool = False,
 ) -> dict:
     """把 PWA 形状的注单合并进 bets 表（幂等：同一注单只落一次）。
 
@@ -214,6 +215,10 @@ def merge_rows(
       1. `ref` / `id`（同一份导出重复导入 → 直接命中）；
       2. 自然键 `natural_key()`（换了 ref、毫秒/时区写法不同、浮点线噪声）。
     tombstones：已删除的 ref 集合——命中则直接跳过（旧版手机重新推送也复活不了）。
+    authoritative：True 表示这批 rows 来自 333 平台订单权威导入
+      （import_333_bets）——平台结算的 profit 可以覆盖本地已结算单的 profit
+      （带券输单 −1.60 vs 守护进程/手机保守记的 −2.00）。
+      False（inbox/云端台账合并等）不允许覆盖已结算单的 profit，只补空。
     合并规则（单调）：
       - 已存在的 open 注单 ← 云端已结算（won/lost/push）可覆盖，并补收盘线/CLV；
       - 双方都已结算且结果相同 → 只补空的收盘线/CLV/profit；
@@ -251,7 +256,10 @@ def merge_rows(
             if incoming in ("won", "lost", "push"):
                 if cur_result == "open" or (
                     str(ref).startswith("hao-")
-                    and (cur_result != incoming or row.get("profit") != current.get("profit"))
+                    and (
+                        cur_result != incoming
+                        or (authoritative and row.get("profit") != current.get("profit"))
+                    )
                 ):
                     # 333 平台订单是权威：平台结果可以覆盖本地自行结算的结果
                     cur = conn.execute(

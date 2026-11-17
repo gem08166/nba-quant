@@ -21,7 +21,7 @@ def _conn():
     return conn
 
 
-def _bet(ref, placed, price=1.95, stake=2.0, note="lowvig.ag / model 55%", result="open"):
+def _bet(ref, placed, price=1.95, stake=2.0, note="lowvig.ag / model 55%", result="open", profit=None):
     return {
         "game_id": "g1",
         "market": "spread",
@@ -33,6 +33,7 @@ def _bet(ref, placed, price=1.95, stake=2.0, note="lowvig.ag / model 55%", resul
         "placed_at": placed,
         "note": note,
         "result": result,
+        "profit": profit,
         "ref": ref,
     }
 
@@ -88,3 +89,37 @@ def test_hao_platform_result_overrides_local_settlement():
     assert result["updated"] == 1
     row = conn.execute("SELECT result FROM bets WHERE ref='hao-1'").fetchone()
     assert row["result"] == "won"
+
+
+def test_non_authoritative_merge_keeps_existing_settled_profit():
+    """inbox/云端台账合并（非权威）不得覆盖已结算单的 profit——
+    手机/守护进程的保守 −2.00 不能盖掉 333 平台权威的 −1.60（带券输单）。"""
+    conn = _conn()
+    betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="lost", profit=-1.6)],
+    )
+    result = betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="lost", profit=-2.0)],
+    )
+    assert result["duplicates"] == 1
+    row = conn.execute("SELECT profit FROM bets WHERE ref='hao-1'").fetchone()
+    assert row["profit"] == -1.6
+
+
+def test_authoritative_merge_overrides_existing_settled_profit():
+    """333 权威导入（authoritative=True）可以覆盖已结算单的 profit。"""
+    conn = _conn()
+    betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="lost", profit=-2.0)],
+    )
+    result = betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="lost", profit=-1.6)],
+        authoritative=True,
+    )
+    assert result["updated"] == 1
+    row = conn.execute("SELECT profit FROM bets WHERE ref='hao-1'").fetchone()
+    assert row["profit"] == -1.6

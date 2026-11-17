@@ -383,7 +383,9 @@ def main() -> None:
             conn.executemany("DELETE FROM bets WHERE id=?", [(cid,) for cid in matches])
             conn.commit()
 
-        result = betssync.merge_rows(conn, prep, tombstones=betssync.load_deletions())
+        result = betssync.merge_rows(
+            conn, prep, tombstones=betssync.load_deletions(), authoritative=True
+        )
         if tombstones:
             betssync.record_deletions(tombstones)
         print(
