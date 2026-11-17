@@ -1690,3 +1690,31 @@ impact 入参、rapm.suggest_impacts 有建议逻辑，唯一缺的是 impact �
   M5：迁移测试无本地 db 时 skip。M2（A/B ROI 判据未跑）记入 10.88 的口径说明：
   判定基于 MAE+β 两条，ROI 因收盘价样本不足未算——维持 OFF 的结论不受影响
   （OFF 本身是保守决策）。M4/M6 缓办不追。
+
+### 10.90 2026-11-17 带券输单盈亏被同步通道改回 −2.00（merge_rows 权威源缺失）
+
+复盘今日（11-17 早场 3 单）时发现：台账里 6 笔带券输单的 profit 从平台真实的
+−1.60 被改回 −2.00（含 11-14 的 RjD6kg、周末 1 笔、今日 4 笔），真实台账从
+−7.84 变成 −10.24。
+
+根因：`betssync.merge_rows` 的「已结算同结果 + profit 不同 → 覆盖」规则本来
+只为 **333 权威导入**（`import_333_bets`，更正守护进程/手机的保守 −2.00 记账），
+但一函数多通道共用——手机 inbox 推送、云端台账拉取都走同一条规则，保守值反过来
+覆盖平台权威值。且 `bets-sync`（push 模式）内部先拉云端台账再推，导入刚写下的
+修正会在同一轮被云端旧值覆盖，随后又把覆盖后的值推回云端（自我固化）。
+
+修（a529d68，rebase 到 dfd29e2 后 c0ed64e，309 passed）：
+
+- `merge_rows(..., authoritative: bool = False)`：只有 profit 覆盖这一条受控——
+  结果翻转（won/lost）保持任何源可覆盖（原有 `test_hao_platform_result_overrides_local_settlement`
+  语义不变）；`authoritative=False` 时落入「只补空字段」分支，已结算 profit 不动。
+- `scripts/import_333_bets.py` 传 `authoritative=True`（唯一权威源）。
+- 新增 2 例回归测试：非权威合并不覆盖已结算 profit / 权威导入可以覆盖。
+
+收敛：WebDAV 台账已推送修正（−1.60 ✓）；本地库 −7.84u ✓；云端 data 分支的
+nba.db 是 CI 自己的副本（CI 从 data 分支恢复 + 只拉台账 + 结果翻转才覆盖），
+所以 CI 不会自己修 profit——用修正后的本地库按 CI 同款步骤覆盖 data 分支即可
+（`sqlite backup` → git init data → push --force，见 refresh.yml 的 Persist 步骤）。
+
+教训：多通道共用一个合并函数时，必须把「谁是权威源」显式参数化；否则保守兜底
+值会顺着另一条通道反噬权威值，且失败是静默的（只在复盘对账时才发现）。
