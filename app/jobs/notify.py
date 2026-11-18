@@ -165,6 +165,22 @@ def _already_sent(conn: sqlite3.Connection, game_id: str, market: str, side: str
     ).fetchone() is not None
 
 
+def _has_open_bet(conn: sqlite3.Connection, game_id: str, market: str) -> bool:
+    """同场同市场是否已有在台注单（真实或模拟）。
+
+    用户规则（2026-11-19）：已有在台单的市场不再推送——同场同市场重复下注
+    等于双倍仓位；推送只会诱导加仓。方向/盘口不参与判定：大小分先买大、
+    模型后来改看小，仍然算"这个市场已经有单"，不再推。
+    """
+    try:
+        return conn.execute(
+            "SELECT 1 FROM bets WHERE game_id=? AND market=? AND result='open' LIMIT 1",
+            (str(game_id), market),
+        ).fetchone() is not None
+    except sqlite3.OperationalError:  # 无 bets 表（极简测试库）→ 不拦
+        return False
+
+
 def send_new_signals(conn: sqlite3.Connection, items: list[tuple[dict, dict]]) -> int:
     """Push signals that were not already sent.
 
@@ -175,6 +191,9 @@ def send_new_signals(conn: sqlite3.Connection, items: list[tuple[dict, dict]]) -
     放进唯一键，导致同一笔单被反复推送，手机上一串看起来完全一样的消息。
     不同方向（over/under、主/客）是不同注单，仍然各推一次；
     同一批 items 里的重复也在这里一并折掉。
+
+    **同场同市场已有在台单 → 不推**（2026-11-19 用户规则，见 `_has_open_bet`）：
+    不管方向/盘口是否一致，只要该市场还有 open 注单就跳过——避免诱导加仓。
     """
     if not items:
         return 0
@@ -185,6 +204,8 @@ def send_new_signals(conn: sqlite3.Connection, items: list[tuple[dict, dict]]) -
     for game, edge in items:
         key = (str(game["id"]), edge["market"], edge["side"])
         if key in seen or _already_sent(conn, *key):
+            continue
+        if _has_open_bet(conn, game["id"], edge["market"]):
             continue
         seen.add(key)
         pending.append((game, edge))

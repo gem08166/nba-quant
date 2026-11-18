@@ -30,9 +30,22 @@ def _conn():
             game_id TEXT, market TEXT, side TEXT, line REAL, price REAL, sent_at TEXT,
             UNIQUE(game_id, market, side, line, price)
         );
+        CREATE TABLE bets (
+            id INTEGER PRIMARY KEY, game_id TEXT, market TEXT, side TEXT, line REAL,
+            price REAL, stake REAL, result TEXT, ref TEXT
+        );
         """
     )
     return conn
+
+
+def _add_bet(conn, market="spread", result="open", game_id="g1"):
+    conn.execute(
+        "INSERT INTO bets(game_id, market, side, line, price, stake, result, ref) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        (game_id, market, "home", -2.5, 1.9, 2.0, result, "hao-test"),
+    )
+    conn.commit()
 
 
 def _patch(monkeypatch):
@@ -93,3 +106,27 @@ def test_batch_within_one_push_dedupes_same_bet(monkeypatch):
     assert sent == 1
     assert len(calls) == 1
     assert calls[0].count("可下注") == 1
+
+
+def test_open_bet_on_same_market_is_not_pushed(monkeypatch):
+    """同场同市场已有在台单 → 不推送（即使方向/盘口不同，2026-11-19 用户规则）。"""
+    calls = _patch(monkeypatch)
+    conn = _conn()
+    _add_bet(conn, market="spread", result="open")
+
+    # 反向（home 已有单，信号是 away）也不推
+    assert notify.send_new_signals(conn, [(GAME, _edge(1.94, side="away"))]) == 0
+    assert len(calls) == 0
+
+    # 不同市场照常推
+    assert notify.send_new_signals(conn, [(GAME, _edge(1.95, market="total", side="under", line=233.5))]) == 1
+
+
+def test_settled_bet_on_same_market_still_pushes(monkeypatch):
+    """已结算的单不占位：新的一天/新盘口该推还推。"""
+    calls = _patch(monkeypatch)
+    conn = _conn()
+    _add_bet(conn, market="spread", result="won")
+
+    assert notify.send_new_signals(conn, [(GAME, _edge(1.94))]) == 1
+    assert len(calls) == 1
