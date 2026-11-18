@@ -47,6 +47,15 @@ UUID = "2f9bb3caad4e79bb0ad93de3d5b17f06"
 # 失败再用静态配置；逐个尝试直到成功。
 MIRRORS = [
     {
+        # 2026-11-18 实测可用（333 体育主站同款白标）：端点 /product/business/sport/...，
+        # 页面 HTML 不内嵌 checksum，静态值来自浏览器请求头（x-checksum 解码），
+        # 失效时用浏览器 hook setRequestHeader 重新取一次即可。
+        "web": "https://333fzwno98.app",
+        "api": "https://gle-nwapi.oszxcb.com",
+        "checksum": "0b561624d692ff9fc03aa9f4289ed369e2e0d0f4c06ff1f89f5063a6eadb4a04",
+        "uuid": "1ca324f66d49eeffca6a62263ce23f72",
+    },
+    {
         "web": "https://39374.app",
         "api": "https://0062zyayk-nwapi-wap-dcdn.dovpkzr.com",
         "checksum": "33069054802374b169bef34b3c4520e4ab9675165286e92cdbf06ab46920a7a5",
@@ -92,7 +101,8 @@ def _headers(mirror: dict) -> dict:
     _last_request_at = time.time()
     ms = int(time.time() * 1000)
     web_host = mirror["web"].split("//", 1)[1]
-    checksum = base64.b64encode(f"{mirror['checksum']}|{web_host}|{UUID}|{ms}|".encode()).decode()
+    uuid = mirror.get("uuid") or UUID
+    checksum = base64.b64encode(f"{mirror['checksum']}|{web_host}|{uuid}|{ms}|".encode()).decode()
     return {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -100,7 +110,7 @@ def _headers(mirror: dict) -> dict:
         "Referer": f"{mirror['web']}/",
         "apptype": "2",
         "x-checksum": checksum,
-        "x-uuid": UUID,
+        "x-uuid": uuid,
         "currency": "CNY",
         "time-zone": "GMT+08:00",
         "device": "mobile",
