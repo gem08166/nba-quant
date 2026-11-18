@@ -19,6 +19,7 @@ from ..config import (
     MIN_EV,
     MIN_FRESH_BOOKS,
     MIN_MARKET_EV,
+    ML_UNDERDOG_MAX_PRICE,
     MUTUAL_EXCLUSIVE,
     PRICE_GATE,
     SHARP_ANCHOR,
@@ -458,6 +459,16 @@ def _bettable_reason(edge: dict, n_books: int, best_book: str) -> str | None:
         return f"最优价来自软书/聚合源 {best_book}（延迟线/限注单风险）"
     if n_books < BETTABLE_MIN_BOOKS:
         return f"共识书源数 {n_books} < {BETTABLE_MIN_BOOKS}（定价基准不可靠）"
+    # 大冷门 ML 闸门：厚尾模型（sigma≈15）系统性高估大冷门胜率。实测 ML 赔率
+    # ≥4.0 已结算 7 单仅 1 胜、ROI −36%，且市场 12 家书一致时模型仍给 +30% EV——
+    # 这种"边际"是分布形状差异，不是定价错误。一律降级观察。
+    if edge.get("market") == "moneyline":
+        ml_price = edge.get("price") or edge.get("price_consensus")
+        if ml_price and float(ml_price) >= ML_UNDERDOG_MAX_PRICE:
+            return (
+                f"大冷门 ML（@{float(ml_price):.2f} ≥ {ML_UNDERDOG_MAX_PRICE:.1f}"
+                "，历史 ROI −36%）仅观察"
+            )
     fair = edge.get("fair_prob")
     price = edge.get("price_consensus") or edge.get("price")
     if fair is not None and price:

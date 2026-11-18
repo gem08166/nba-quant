@@ -25,6 +25,9 @@ MAX_STAKE_PCT = float(os.getenv("NBAQ_MAX_STAKE", "0.03"))
 # 共识新鲜度：某市场新鲜书源少于该数量时，回退到全量书源并标记 stale。
 # 只用 1-2 家新鲜书源会让共识退化成单书，比"略旧的 12 家共识"更差。
 MIN_FRESH_BOOKS = int(os.getenv("NBAQ_MIN_FRESH_BOOKS", "3"))
+# 大冷门 ML 闸门（2026-11-19）：赔率 ≥ 该值的胜负信号一律降级观察。
+# 数据依据：ML 赔率 ≥4.0 的已结算单 7 单仅 1 胜、ROI −36%（厚尾模型系统性高估冷门）。
+ML_UNDERDOG_MAX_PRICE = float(os.getenv("NBAQ_ML_UNDERDOG_MAX", "4.0"))
 
 # 信号有效期：超过该小时数未更新（或比赛已开赛/结束）即标记过期，
 # 不再计入「信号/可下注」统计，也不出现在可下注面板。

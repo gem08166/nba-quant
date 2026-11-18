@@ -23,6 +23,28 @@ def test_deep_consensus_passes():
     assert _bettable_reason(e, n_books=5, best_book="draftkings") is None
 
 
+def test_big_underdog_moneyline_downgraded():
+    """ML 赔率 ≥4.0 一律降级观察（历史 1/7 胜、ROI −36%，厚尾模型高估冷门）。"""
+    e = {"market": "moneyline", "side": "away", "book": "lowvig.ag", "ev": 0.34,
+         "price": 6.05, "signal": True}
+    reason = _bettable_reason(e, n_books=10, best_book="lowvig.ag")
+    assert reason and "大冷门" in reason
+
+
+def test_favorite_moneyline_still_passes():
+    """热门 ML（赔率 <4.0）不受冷门闸门影响。"""
+    e = {"market": "moneyline", "side": "home", "book": "draftkings", "ev": 0.06,
+         "price": 1.55, "signal": True}
+    assert _bettable_reason(e, n_books=10, best_book="draftkings") is None
+
+
+def test_big_underdog_spread_not_affected():
+    """闸门只作用于 moneyline，让分/大小不受影响。"""
+    e = {"market": "spread", "side": "away", "book": "draftkings", "ev": 0.06,
+         "price": 4.5, "signal": True}
+    assert _bettable_reason(e, n_books=10, best_book="draftkings") is None
+
+
 def test_mutual_exclusive_spread_vs_ml():
     """同场让分与胜负都触发时，只有 EV 最高的一条可下注。"""
     odds_rows = [
