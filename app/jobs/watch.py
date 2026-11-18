@@ -369,15 +369,6 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                         print(f"[watch] hao-tiyu odds: +{hao_rows} row(s)")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[watch] hao-tiyu odds skipped: {exc}")
-                # The Odds API 多书源（省额度：状态文件控制，默认 20h 内只拉一次）
-                try:
-                    from ..ingest import theodds
-
-                    message = theodds.store_odds_api(conn, slate_date=slate)
-                    conn.commit()
-                    print(f"[watch] {message}")
-                except Exception as exc:  # noqa: BLE001
-                    print(f"[watch] odds-api skipped: {exc}")
                 # HoopsAPI：upcoming 建映射 + 完赛归档收盘价（含 Pinnacle）
                 try:
                     from ..ingest import hoops
@@ -405,6 +396,19 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                     print(f"[watch] rapm: {model['n_stints']} stints from {model['n_games']} games")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[watch] pbp/rapm failed: {exc}")
+
+            # The Odds API 多书源：每轮都试，2h 闸门自己限流（原来只在 slate 切换时
+            # 拉一次，切 slate 那轮若失败整天就断供，2026-11-18 踩过）。
+            if with_ingest:
+                try:
+                    from ..ingest import theodds
+
+                    message = theodds.store_odds_api(conn, slate_date=slate)
+                    conn.commit()
+                    if message:
+                        print(f"[watch] {message}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] odds-api skipped: {exc}")
 
             try:
                 captured = settle.capture_closing(conn)

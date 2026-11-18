@@ -7,8 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from dotenv import load_dotenv  # noqa: E402
 
-# 支持 .env 文件（gitignore 内，存放 API key 等敏感配置）
-load_dotenv(ROOT / ".env")
+# 支持 .env 文件（gitignore 内，存放 API key 等敏感配置）。
+# override=True：.env 是密钥的唯一权威。否则常驻进程（watch_guard 拉起）会
+# 继承启动时的旧环境变量，改了 .env 也不生效（2026-11-18 换 odds key 踩过）。
+load_dotenv(ROOT / ".env", override=True)
 DATA_DIR = Path(os.getenv("NBAQ_DATA_DIR", ROOT / "data"))
 DB_PATH = Path(os.getenv("NBAQ_DB", DATA_DIR / "nba.db"))
 RAW_DIR = DATA_DIR / "raw"
