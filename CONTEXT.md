@@ -1720,3 +1720,14 @@ nba.db 是 CI 自己的副本（CI 从 data 分支恢复 + 只拉台账 + 结果
 
 教训：多通道共用一个合并函数时，必须把「谁是权威源」显式参数化；否则保守兜底
 值会顺着另一条通道反噬权威值，且失败是静默的（只在复盘对账时才发现）。
+
+**10.90 续（2026-11-18）**：`--authoritative-remote`。CI 的库从 data 分支恢复，
+自带自己 settle 的保守 −2.00；`merge_rows` 收紧后它再也无法自愈。给
+`betssync.run()` 加 `authoritative_remote`（CLI `bets-sync --authoritative-remote`），
+refresh.yml 与 odds-refresh.yml 的台账拉取都启用——台账是 333 导入后的共享真值，
+CI 从它收敛；PC 守护的 `pull_only=True` 保持非权威，不会回吐刚导入的修正。
+
+当日还暴露一个回路：odds-refresh 的 `bets-sync --push-static` 会把 CI 库的状态
+**推回台账**，所以一旦台账被 CI 的 −2.00 污染，权威拉取就会把这个错值当权威传播。
+处置：本地 `bets-sync --force` 把台账刷回 −1.60，再 seed 一次 data 分支，之后
+CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出现，先看台账值再动作。
