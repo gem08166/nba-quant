@@ -310,6 +310,7 @@ def cmd_bets_sync(args: argparse.Namespace) -> None:
             force_push=args.force,
             push_static=args.push_static,
             pull_only=args.pull_only,
+            authoritative_remote=args.authoritative_remote,
         )
         print(json.dumps(stats, ensure_ascii=False, indent=1))
     finally:
@@ -573,6 +574,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--pull-only",
         action="store_true",
         help="only pull the cloud ledger (PC dashboard mode; never pushes)",
+    )
+    bs.add_argument(
+        "--authoritative-remote",
+        action="store_true",
+        help="云端台账是权威源（CI 用）：已结算同结果单允许台账 profit 覆盖本地（修正 CI 自结算的保守 -2.00）",
     )
     bs.set_defaults(func=cmd_bets_sync)
 

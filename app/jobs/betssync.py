@@ -438,6 +438,7 @@ def run(
     push_static: bool = False,
     slate_date: str | None = None,
     pull_only: bool = False,
+    authoritative_remote: bool = False,
 ) -> dict:
     """一轮同步：inbox → 本地；云端台账 → 本地；本地 → 云端。
 
@@ -447,6 +448,10 @@ def run(
     pull_only：只拉不推（PC 静默采样模式用）。CI 是权威台账（它刚结算过），
     本机拉下来看即可；回推会把本机较少的注单集盖掉云端——除非本地确实有
     云端没有的新注单，那走 CLI 的 bets-sync --force。
+    authoritative_remote：云端台账视为权威源（CI 专用）。已结算同结果的
+    hao- 单允许用台账 profit 覆盖本地——CI 从 data 分支恢复的库可能带着
+    自己 settle 的保守 -2.00，靠这条自愈成 333 导入后的平台真实值。
+    PC 守护进程不得开启（否则会用旧台账回吐刚导入的修正）。
     """
     if not webdav.enabled():
         return {"skipped": "webdav not configured"}
@@ -496,7 +501,9 @@ def run(
         try:
             rows = json.loads(ledger_text)
             if isinstance(rows, list):
-                result = merge_rows(conn, rows, tombstones=deletions)
+                result = merge_rows(
+                    conn, rows, tombstones=deletions, authoritative=authoritative_remote
+                )
                 stats["ledger_merged"] = result["added"]
                 stats["ledger_updated"] = result.get("updated", 0)
         except (json.JSONDecodeError, TypeError) as exc:

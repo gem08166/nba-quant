@@ -75,9 +75,11 @@ jobs:
         run: echo "slate=$(python -c 'from app.dates import current_slate_date; print(current_slate_date())')" >> "$GITHUB_OUTPUT"
 
       # 合并云端台账 + 应用删除墓碑（用户清空/删除的注单不能在导出时复活）。
-      # pull_only：只拉不推，避免每天两次的 full run 覆盖云端台账。
+      # pull_only + authoritative-remote：只拉不推，且台账是权威源——CI 从 data
+      # 分支恢复的库可能带自己 settle 的保守 -2.00（带券输单），靠台账里 333 导入
+      # 后的平台真实值（-1.60）自愈。
       - name: Merge cloud ledger + apply deletions
-        run: python -m app.cli bets-sync --pull-only || true
+        run: python -m app.cli bets-sync --pull-only --authoritative-remote || true
 
       # 先抓齐所有盘口（ESPN + 第二书源），再训练/预测：
       # 旧顺序在抓第二书源之前 predict，导致共识只能看到 ESPN 一家。

@@ -75,7 +75,7 @@ jobs:
 
       # 坚果云数据通道：手机 APK 优先从这里拉 static.json / bets.json / 推快照
       - name: Jianguoyun sync (static + ledger + phone snapshots)
-        run: python -m app.cli bets-sync --push-static
+        run: python -m app.cli bets-sync --push-static --authoritative-remote
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
