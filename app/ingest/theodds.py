@@ -2,9 +2,12 @@ from __future__ import annotations
 
 """The Odds API 客户端（多书源共识）。
 
-额度非常有限（免费 500 credits/月），默认策略：
-- 每天最多拉 1 次（h2h+spreads+totals × 1 region = 3 credits）≈ 90/月
+额度非常有限（免费 500 credits/月），默认策略（2026-11-18 降频定版）：
+- 每 2 小时最多拉 1 次（h2h+spreads+totals × 1 region = 3 credits）≈ 36/天
+- 收盘窗口豁免的最小节奏同为 2h（默认即不豁免；要收盘密度用
+  NBAQ_ODDS_CLOSE_FETCH_MIN_HOURS 单独放水，注意 15min 节奏两天烧光 500）
 - 状态文件 data/odds_api_state.json 记录上次拉取时间与剩余额度，间隔不足直接跳过
+- 401 OUT_OF_USAGE_CREDITS / 429 视为额度尽，返回原因而不是抛异常
 - 每次响应打印 x-requests-remaining
 
 定价：一次请求返回多家 bookmaker（DraftKings/FanDuel/...），全部入库
@@ -119,7 +122,7 @@ def _remaining_quota_ok() -> tuple[bool, str]:
             if hrs < ODDS_CLOSE_FETCH_MIN_HOURS:
                 return False, (
                     f"收盘窗口内 {hrs * 60:.0f}min < {ODDS_CLOSE_FETCH_MIN_HOURS * 60:.0f}min"
-                    "（15 分钟一轮）"
+                    "（收盘窗口最小节奏）"
                 )
             return True, f"收盘窗口内拉取（{hrs * 60:.0f}min ≥ {ODDS_CLOSE_FETCH_MIN_HOURS * 60:.0f}min）"
         return False, f"距上次拉取 {hrs:.1f}h < {THE_ODDS_API_MIN_HOURS}h（省额度，跳过）"
@@ -161,9 +164,10 @@ def fetch_nba_odds(force: bool = False) -> tuple[list[dict], str]:
                 # 当前 key 额度尽 → 记录并轮换到下一个 key 重试
                 _save_state({**_load_state(), "key_idx": (key_idx + attempt + 1) % len(THE_ODDS_API_KEYS)})
                 continue
-            if resp.status_code == 429:
+            if resp.status_code in (401, 429):
+                # 额度尽/key 失效：401 OUT_OF_USAGE_CREDITS 与 429 同义，安静返回
                 _save_state({**_load_state(), "last_fetch_ts": time.time()})
-                return [], f"全部 key 额度用尽（429），remaining={remaining}"
+                return [], f"额度用尽（{resp.status_code}），remaining={remaining}"
             resp.raise_for_status()
             events = resp.json()
             key_idx = (key_idx + attempt) % len(THE_ODDS_API_KEYS)
