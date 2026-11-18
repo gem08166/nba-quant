@@ -94,6 +94,13 @@ def _team(team: dict) -> dict:
     }
 
 
+# ESPN 的 book 名不稳定（2026-11-17 起把 DraftKings 写成 "Draft Kings"），
+# 同一本书被拆成两个标签会让共识/新鲜度计数错乱，这里归一化。
+BOOK_ALIASES = {
+    "Draft Kings": "DraftKings",
+}
+
+
 def _close(node: dict, key: str = "close") -> dict:
     return node.get(key) or {}
 
@@ -102,6 +109,7 @@ def parse_odds(competition: dict) -> list[dict]:
     rows: list[dict] = []
     for odds in competition.get("odds") or []:
         book = ((odds.get("provider") or {}).get("name") or "unknown").strip()
+        book = BOOK_ALIASES.get(book, book)
         spread_block = odds.get("pointSpread") or {}
         home_close = _close(spread_block.get("home") or {})
         away_close = _close(spread_block.get("away") or {})
