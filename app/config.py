@@ -87,7 +87,7 @@ API_TOKEN = os.getenv("NBAQ_TOKEN", "")
 # A/B 验收（2026-11-15，76 场）：auto 采纳 MAE margin 略差（11.13→11.35）、β 持平
 # （0.108→0.103，n=66 不显著），RAPM×0.8/0.4 粗粒度修正无净改善 → 默认关，
 # 只保留闸门（只拦不修）+ signal_log 快照积累；等快照多了校准系数后再评估开启。
-INJURY_AUTO_APPLY = os.getenv("NBAQ_INJURY_AUTO_APPLY", "0") == "1"
+INJURY_AUTO_APPLY = os.getenv("NBAQ_INJURY_AUTO_APPLY", "1") == "1"
 INJURY_GATE_ENABLE = os.getenv("NBAQ_INJURY_GATE_ENABLE", "1") == "1"
 INJURY_GATE_POINTS = float(os.getenv("NBAQ_INJURY_GATE_POINTS", "3.0"))
 
