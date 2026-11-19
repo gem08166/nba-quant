@@ -28,6 +28,10 @@ MIN_FRESH_BOOKS = int(os.getenv("NBAQ_MIN_FRESH_BOOKS", "3"))
 # 大冷门 ML 闸门（2026-11-19）：赔率 ≥ 该值的胜负信号一律降级观察。
 # 数据依据：ML 赔率 ≥4.0 的已结算单 7 单仅 1 胜、ROI −36%（厚尾模型系统性高估冷门）。
 ML_UNDERDOG_MAX_PRICE = float(os.getenv("NBAQ_ML_UNDERDOG_MAX", "4.0"))
+# CL 会话静默窗口（北京时间小时，含头不含尾；2026-11-19 用户规则：
+# 晚上七点至十二点前不再跑 CL——晚间不启动、不捕捉、不推送）。
+CL_QUIET_START_H = float(os.getenv("NBAQ_CL_QUIET_START", "19"))
+CL_QUIET_END_H = float(os.getenv("NBAQ_CL_QUIET_END", "24"))
 
 # 信号有效期：超过该小时数未更新（或比赛已开赛/结束）即标记过期，
 # 不再计入「信号/可下注」统计，也不出现在可下注面板。

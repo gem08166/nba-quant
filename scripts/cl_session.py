@@ -29,12 +29,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.config import DATA_DIR, NTFY_SERVER, NTFY_TOPIC
-from app.dates import current_slate_date
+from app.config import CL_QUIET_END_H, DATA_DIR, NTFY_SERVER, NTFY_TOPIC
+from app.dates import cl_quiet_active, current_slate_date
 from app.jobs.settle import capture_closing, settle
 from scripts.cl_window import window_bounds
 
 BEIJING = timezone(timedelta(hours=8))
+
+
+def _quiet_sleep_secs() -> float:
+    """当前处于静默窗口时，返回到窗口结束的秒数；不在窗口返回 0。"""
+    now_bj = _now().astimezone(BEIJING)
+    if not cl_quiet_active(now_bj):
+        return 0.0
+    # 窗口结束时刻（小时 → 当天/次日时刻）
+    end_h = int(CL_QUIET_END_H) if CL_QUIET_END_H < 24 else 0
+    end = now_bj.replace(hour=end_h % 24, minute=int((CL_QUIET_END_H % 1) * 60),
+                         second=0, microsecond=0)
+    if CL_QUIET_END_H >= 24 and end <= now_bj:
+        end += timedelta(days=1)
+    elif CL_QUIET_END_H < 24 and CL_QUIET_END_H > CL_QUIET_START_H and end <= now_bj:
+        end += timedelta(days=1)
+    return max((end - now_bj).total_seconds(), 1.0)
 
 
 def _connect() -> sqlite3.Connection:
@@ -228,6 +244,12 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
         # 分段睡眠（每 5 分钟醒来看一眼是否有延迟/取消）
         while True:
             now = _now()
+            # 静默窗口内不开捕捉（晚间规则），睡过静默期再继续
+            q = _quiet_sleep_secs()
+            if q > 0:
+                _log(f"静默窗口中，睡 {q / 60:.0f} 分钟后再开捕捉")
+                time.sleep(min(q, 1800))
+                continue
             if now >= window_start:
                 break
             remaining = (window_start - now).total_seconds()
@@ -255,6 +277,12 @@ def run_session(interval: int, skip_wait: bool, dry_run: bool) -> None:
     end_reason = "赛程清空"
 
     while True:
+        # 静默窗口内暂停捕捉（晚间不跑 CL；--force 只豁免启动，捕捉期仍静默）
+        q = _quiet_sleep_secs()
+        if q > 0:
+            _log(f"静默窗口中，暂停捕捉 {q / 60:.0f} 分钟")
+            time.sleep(min(q, 1800))
+            continue
         round_num += 1
         now = _now()
 
@@ -416,7 +444,13 @@ def main() -> None:
     parser.add_argument("--interval", type=int, default=180, help="捕捉间隔（秒），默认 180")
     parser.add_argument("--now", action="store_true", help="跳过等待，立即开始捕捉")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不执行")
+    parser.add_argument("--force", action="store_true", help="绕过晚间静默窗口强制运行")
     args = parser.parse_args()
+
+    # 静默窗口（2026-11-19 用户规则：北京 19:00~24:00 不跑 CL）
+    if not args.force and not args.dry_run and cl_quiet_active(_now().astimezone(BEIJING)):
+        _log("静默窗口（19:00~24:00）内不启动 CL，退出（--force 可绕过）")
+        return
 
     lock = acquire_single_instance_lock()
     if lock is None and not args.dry_run:

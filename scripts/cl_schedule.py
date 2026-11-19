@@ -29,13 +29,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.config import DATA_DIR
+from app.config import CL_QUIET_END_H, CL_QUIET_START_H, DATA_DIR
 
 BEIJING = timezone(timedelta(hours=8))
 TASK_NAME = "NBA-CL-Session"
 LEAD_HOURS = 2
 EXCLUDED = ("STATUS_FINAL", "STATUS_POSTPONED", "STATUS_CANCELED", "STATUS_CANCELLED")
 LOG = Path(DATA_DIR) / "cl_schedule.log"
+
+
+def _clamp_quiet(hhmm: str) -> str:
+    """目标触发时刻落在 CL 静默窗口（默认北京 19:00~24:00）内 → 挪到窗口结束。
+
+    用户规则（2026-11-19）：晚上七点至十二点前不再 CL。cl_session 侧也有
+    同款守卫（含 --force 豁免），这里把计划任务触发点直接排到窗口外，
+    免得任务启动后立刻空跑退出。
+    """
+    h, m = hhmm.split(":")
+    t = int(h) + int(m) / 60.0
+    start, end = CL_QUIET_START_H, CL_QUIET_END_H
+    in_quiet = start <= t < end if start <= end else (t >= start or t < end)
+    if not in_quiet:
+        return hhmm
+    end_h = int(end) % 24
+    end_m = int((end % 1) * 60)
+    return f"{end_h:02d}:{end_m:02d}"
 
 
 def _log(msg: str) -> None:
@@ -129,6 +147,10 @@ def main() -> None:
     if cur is None:
         _log(f"cannot read current trigger; skip (want {target})")
         return
+    clamped = _clamp_quiet(target)
+    if clamped != target:
+        _log(f"target {target} 在静默窗口（{CL_QUIET_START_H:g}~{CL_QUIET_END_H:g}h）内 -> 改 {clamped}")
+        target = clamped
     if cur == target:
         _log(f"trigger already {target} ({reason})")
         return
