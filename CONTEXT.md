@@ -1825,3 +1825,17 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
   - 手机 390px：按钮 white-space nowrap + flex none，修复「抓快照/清缓存」竖排断行。
 - 注意：mockup 临时文件（site/_mock_*、app/web/_mock_*）已清理；
   .impeccable/mocks/ 保留五版 mockup 源文件。
+
+### 10.96 2026-11-21 odds-api key 失效 → 换新 key 恢复书源
+
+- **现象**：`.env` 唯一 key `...269229ef`（11-19 换上的）返回 **401 INVALID_KEY**——
+  不是额度用尽（used 才 57），是 key 在站点后台被注销/重置。
+- **处理**（用户提供新 key）：
+  - 实测新 key：remaining=443 / used=57（旧 key 的用量延续到新 key，regenerate 不清额度）。
+  - `.env` 首行 `NBAQ_ODDS_API_KEY` 替换为新值。
+  - **重启 watch**（kill 8268，guard 120s 拉起新进程读新 .env；不重启不生效）。
+  - 手动 `fetch_nba_odds(force=True)` + `store_odds_api(force=True)`：9 场 × 9 书源
+    全量回来，入库 104 行；9 家 book 最后抓取时间全部 17:35Z（恢复时刻）。
+- **当前额度**：remaining=431 / used=69（本轮验证耗 ~3-5 credit：fetch×3 + store×1）。
+  按 2h 闸门 36/天 ≈ 还剩 12 天。下次额度紧张时优先查 401 的 error_code：
+  `INVALID_KEY`（key 无效，找用户换）≠ `OUT_OF_USAGE_CREDITS`（额度用尽，等下月）。
