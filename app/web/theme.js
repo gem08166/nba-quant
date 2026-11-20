@@ -23,7 +23,7 @@ function themeApply(theme) {
     icon.innerHTML = THEME_ICON[next === "dark" ? "dark" : "day"];
   }
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", next === "day" ? "#f2f4f7" : "#101319");
+  if (meta) meta.setAttribute("content", next === "day" ? "#eef1f6" : "#10141c");
 }
 
 function themeInit() {

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NBA Quant · A2-1 报表卡</title>
+<style>
+:root{
+  --blue1:#3E8EFF; --blue2:#1E6FEB; --green1:#34C77B; --green2:#1FA05E;
+  --purple1:#8E7BFF; --purple2:#6C5CE7; --orange1:#FF9F43; --orange2:#F2820A;
+  --teal1:#2BD9C6; --teal2:#0FB8A6;
+  --ink:#1C2330; --ink-2:#4A5468; --ink-3:#8A93A6;
+  --card:#FFFFFF; --card-2:#F6F8FC; --line:#E7EBF2;
+  --win:#1FA05E; --loss:#E5484D; --warn:#F2820A; --bet:#1E6FEB;
+  --radius:18px; --radius-s:12px;
+  --shadow:0 1px 2px rgba(23,35,61,.05), 0 6px 22px rgba(23,35,61,.07);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,"SF Pro SC","PingFang SC","Segoe UI",Roboto,"Microsoft YaHei",sans-serif;
+  background:linear-gradient(180deg,#EEF3FB 0%,#E7EDF7 40%,#EDEFF6 100%);
+  color:var(--ink); min-height:100vh; -webkit-font-smoothing:antialiased;
+  padding:22px clamp(14px,3vw,34px) 40px;
+}
+.wrap{max-width:1180px;margin:0 auto}
+/* 顶栏 */
+.topbar{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.logo{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,var(--blue1),var(--blue2));box-shadow:0 4px 12px rgba(30,111,235,.35)}
+.logo svg{width:22px;height:22px}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:.2px}
+.brand p{font-size:12px;color:var(--ink-3);margin-top:1px}
+.controls{margin-left:auto;display:flex;gap:9px;align-items:center}
+input[type=date]{height:38px;border:1px solid var(--line);border-radius:12px;padding:0 12px;font:inherit;font-size:13.5px;background:#fff;color:var(--ink)}
+.btn{height:38px;padding:0 16px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;transition:.15s}
+.btn:hover{background:var(--card-2)}
+.btn.primary{color:#fff;border:none;background:linear-gradient(135deg,var(--blue1),var(--blue2));box-shadow:0 4px 12px rgba(30,111,235,.3)}
+/* tabs */
+.tabs{display:flex;gap:6px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:5px;margin-bottom:20px;width:max-content;box-shadow:var(--shadow)}
+.tab{height:36px;padding:0 18px;border:none;border-radius:10px;background:transparent;font:inherit;font-size:13.5px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.tab.active{background:linear-gradient(135deg,var(--blue1),var(--blue2));color:#fff;box-shadow:0 3px 10px rgba(30,111,235,.28)}
+/* 统计条 */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);display:flex;gap:14px;align-items:center}
+.stat .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;flex:none}
+.ic.b{background:linear-gradient(135deg,var(--blue1),var(--blue2))}
+.ic.g{background:linear-gradient(135deg,var(--green1),var(--green2))}
+.ic.p{background:linear-gradient(135deg,var(--purple1),var(--purple2))}
+.ic.o{background:linear-gradient(135deg,var(--orange1),var(--orange2))}
+.stat .k{font-size:12px;color:var(--ink-3)}
+.stat .v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.2px;margin-top:2px}
+.stat .v small{font-size:12px;font-weight:600;color:var(--ink-3)}
+/* 可下注信号 banner */
+.betsignal{background:linear-gradient(135deg,#1E6FEB,#3E8EFF);border-radius:var(--radius);padding:16px 18px;color:#fff;margin-bottom:20px;box-shadow:0 8px 24px rgba(30,111,235,.35)}
+.betsignal h2{font-size:14px;font-weight:700;opacity:.92;letter-spacing:.3px}
+.betsignal .row{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.sig{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:9px 14px;font-size:13px;display:flex;gap:8px;align-items:center}
+.sig b{font-variant-numeric:tabular-nums}
+.sig .ev{background:rgba(255,255,255,.2);border-radius:7px;padding:2px 7px;font-size:11.5px;font-weight:700}
+/* 比赛卡 */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.card-top{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.teams{font-weight:700;font-size:15px}
+.teams small{color:var(--ink-3);font-weight:600;font-size:11.5px;margin-left:8px}
+.tip{margin-left:auto;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.proj{display:flex;gap:12px;padding:12px 16px 4px;align-items:center}
+.ring{--p:64;width:46px;height:46px;border-radius:50%;flex:none;
+  background:conic-gradient(var(--blue1) calc(var(--p)*1%), #E7EBF2 0);
+  display:grid;place-items:center;position:relative}
+.ring::before{content:"";position:absolute;inset:5px;border-radius:50%;background:#fff}
+.ring span{position:relative;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.proj .lines{display:flex;gap:14px;font-size:12.5px;color:var(--ink-2)}
+.proj .lines b{color:var(--ink);font-variant-numeric:tabular-nums}
+.odds{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:12px 16px 16px}
+.ohead{font-size:10.5px;color:var(--ink-3);text-align:center;font-weight:600;letter-spacing:.5px;margin-bottom:-4px}
+.ob{border:1px solid var(--line);border-radius:var(--radius-s);padding:8px 6px;text-align:center;background:var(--card-2);transition:.15s}
+.ob:hover{border-color:var(--blue1)}
+.ob .l{font-size:12px;color:var(--ink-2);font-weight:600}
+.ob .p{font-size:15.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.ob .bk{font-size:10px;color:var(--ink-3);margin-top:2px}
+.ob.best{border-color:var(--blue1);background:linear-gradient(135deg,rgba(62,142,255,.09),rgba(30,111,235,.05))}
+.ob.bet{border:2px solid var(--bet);background:linear-gradient(135deg,rgba(62,142,255,.14),rgba(30,111,235,.07))}
+.ob.bet .p{color:var(--bet)}
+.ob.bet::after{content:"可下注";display:inline-block;margin-top:4px;font-size:10px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--blue1),var(--blue2));border-radius:6px;padding:2px 7px}
+/* 注单表 */
+.panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-top:20px;overflow:hidden}
+.panel h2{font-size:14.5px;font-weight:700;padding:14px 18px;border-bottom:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:11px;color:var(--ink-3);font-weight:600;text-align:left;padding:8px 14px;background:var(--card-2);letter-spacing:.4px}
+td{padding:10px 14px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
+td .pill{font-size:11px;font-weight:700;border-radius:7px;padding:2px 8px}
+.pill.win{color:var(--win);background:rgba(31,160,94,.1)}
+.pill.loss{color:var(--loss);background:rgba(229,72,77,.1)}
+.pill.open{color:var(--bet);background:rgba(30,111,235,.1)}
+.profit-pos{color:var(--win);font-weight:700}
+.profit-neg{color:var(--loss);font-weight:700}
+.notice{font-size:12px;color:var(--ink-3);margin-top:16px;line-height:1.6}
+@media (max-width:760px){.stats{grid-template-columns:1fr 1fr}.controls .btn{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar">
+    <div class="logo"><svg viewBox="0 0 20 20" fill="none"><rect x="1.5" y="1.5" width="17" height="17" rx="3" stroke="currentColor" stroke-width="1.8"/><text x="10" y="14.5" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">Q</text></svg></div>
+    <div class="brand"><h1>NBA Quant</h1><p>赛前 · 免费数据 · 个人研究</p></div>
+    <div class="controls">
+      <input type="date" value="2026-11-20">
+      <button class="btn">☾</button>
+      <button class="btn">清缓存</button>
+      <button class="btn primary">刷新</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active">赛前看板</button>
+    <button class="tab">赛时</button>
+    <button class="tab">赛后复盘</button>
+    <button class="tab">收益</button>
+    <button class="tab">研究图表</button>
+  </nav>
+
+  <section class="stats">
+    <div class="stat"><div class="ic b">📊</div><div><div class="k">今日场次</div><div class="v">9 <small>场</small></div></div></div>
+    <div class="stat"><div class="ic g">✅</div><div><div class="k">可下注信号</div><div class="v">3 <small>条</small></div></div></div>
+    <div class="stat"><div class="ic p">🎯</div><div><div class="k">在台注单</div><div class="v">3 <small>真实</small></div></div></div>
+    <div class="stat"><div class="ic o">💰</div><div><div class="k">累计盈亏</div><div class="v">-3.42<small>u · 98 单</small></div></div></div>
+  </section>
+
+  <section class="betsignal">
+    <h2>⚡ 可下注信号 · 已过闸门（共识 ≥3 书源 · 无分歧 · 非软书）</h2>
+    <div class="row">
+      <div class="sig">CHA 客胜 @<b>3.10</b><span class="ev">EV +7.8%</span></div>
+      <div class="sig">CLE -6.0 @<b>1.99</b><span class="ev">EV +14.6%</span></div>
+      <div class="sig">NO@OKC 小 228.5 @<b>1.98</b><span class="ev">EV +14.6%</span></div>
+    </div>
+  </section>
+
+  <main class="grid">
+    <article class="card">
+      <div class="card-top"><div class="teams">骑士 <small>VS</small> 步行者</div><div class="tip">08:30</div></div>
+      <div class="proj">
+        <div class="ring" style="--p:72"><span>72%</span></div>
+        <div class="lines">
+          <span>模型让分 <b>-6.9</b></span>
+          <span>总分 <b>231.3</b></span>
+        </div>
+      </div>
+      <div class="odds">
+        <div><div class="ohead">让分</div><div class="ob bet"><div class="l">-6.0</div><div class="p">1.99</div><div class="bk">lowvig</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">232.5</div><div class="p">1.91</div><div class="bk">333</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">主</div><div class="p">1.39</div><div class="bk">333</div></div></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-top"><div class="teams">老鹰 <small>VS</small> 黄蜂</div><div class="tip">08:00</div></div>
+      <div class="proj">
+        <div class="ring" style="--p:64"><span>64%</span></div>
+        <div class="lines">
+          <span>模型让分 <b>+5.5</b></span>
+          <span>总分 <b>220.9</b></span>
+        </div>
+      </div>
+      <div class="odds">
+        <div><div class="ohead">让分</div><div class="ob"><div class="l">+6.5</div><div class="p">2.05</div><div class="bk">333</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">218.5</div><div class="p">1.97</div><div class="bk">333</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob bet"><div class="l">客</div><div class="p">3.10</div><div class="bk">fanduel</div></div></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-top"><div class="teams">雷霆 <small>VS</small> 鹈鹕</div><div class="tip">09:00</div></div>
+      <div class="proj">
+        <div class="ring" style="--p:86"><span>86%</span></div>
+        <div class="lines">
+          <span>模型让分 <b>-14.2</b></span>
+          <span>总分 <b>224.8</b></span>
+        </div>
+      </div>
+      <div class="odds">
+        <div><div class="ohead">让分</div><div class="ob"><div class="l">-11.5</div><div class="p">1.95</div><div class="bk">hao</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob bet"><div class="l">小 228.5</div><div class="p">1.98</div><div class="bk">lowvig</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">主</div><div class="p">1.16</div><div class="bk">333</div></div></div>
+      </div>
+    </article>
+  </main>
+
+  <section class="panel">
+    <h2>注单台账 · 最近</h2>
+    <table>
+      <tr><th>比赛</th><th>注</th><th>价</th><th>结果</th><th style="text-align:right">盈亏</th></tr>
+      <tr><td>尼克斯 @ 森林狼</td><td>客胜</td><td>1.80</td><td><span class="pill win">赢</span></td><td class="profit-pos" style="text-align:right">+1.60</td></tr>
+      <tr><td>勇士 @ 灰熊</td><td>小 226.5</td><td>2.00</td><td><span class="pill win">赢</span></td><td class="profit-pos" style="text-align:right">+2.00</td></tr>
+      <tr><td>开拓者 @ 雄鹿</td><td>小 228.5</td><td>1.91</td><td><span class="pill loss">输</span></td><td class="profit-neg" style="text-align:right">-1.60</td></tr>
+      <tr><td>黄蜂 @ 老鹰</td><td>客胜</td><td>3.00</td><td><span class="pill open">在台</span></td><td style="text-align:right;color:var(--ink-3)">—</td></tr>
+    </table>
+  </section>
+
+  <p class="notice">数据来自 ESPN 免费接口；模型为 Elo + 调整后攻防/节奏，仅供个人研究，不构成投注建议。Mockup A2-1 · 报表卡。</p>
+</div>
+</body>
+</html>

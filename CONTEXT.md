@@ -1773,9 +1773,7 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
 - **测试**：`tests/test_cl_quiet.py` 5 例（窗口内/外、边界半开、钳制移动/保留）。
 - 注意：静默期跨到明早的注单结算顺延到 00:00 后的 CL 会话补做（settle 幂等）。
 
-### 10.94 2026-11-20 333 抓价两个隐性故障（骨架屏卡死 + 港式赔率）
-
-- **现象**：11-20 07:46/08:27 两轮「2026-11-20 no cards」，同日 08:31 只入库
+### 10.94 2026-11-20 333 抓价两个隐性故障（骨架屏卡死 + 港式赔率）- **现象**：11-20 07:46/08:27 两轮「2026-11-20 no cards」，同日 08:31 只入库
   独赢（`2 parsed (moneyline)`），让分/大小全丢。
 - **根因 1（加载竞态）**：headless 游客打开同一 URL 偶发卡骨架屏——页面
   根本没发出 `/product/business/...` 盘口请求，45s 内 `simple-handicap-layout`
@@ -1798,3 +1796,22 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
   测试 `tests/test_fetch333_odds.py` 7 例（新增港式识别 2 例），全量 328 passed。
 - 注意：开赛后早盘页会正常移走比赛，仍会「no cards」，日志已注明
   `games started / not published / page stuck` 三种可能。
+
+### 10.95 2026-11-20 前端全站重做：Liquid Glass（玻璃拟态 2.0）
+
+- **用户流程**：五版 mockup 对比（A2-1 报表卡 / A2-2 时刻表 / A2-3 光谱轨 /
+  A2-4 液态玻璃 / A2-5 Calm）→ 用户拍板 **A2-4 Liquid Glass**。
+- **实现**（`app/web/styles.css` 整体重写 1500 行，选择器全保留，JS 零改动）：
+  - 五层玻璃配方：tint(白.055/.46) + blur(16px) saturate(160%) + 不对称 specular rim
+    （顶边最亮）+ 135° sheen(::after) + body 上 4 组彩色光斑（blur 的折射内容）。
+  - 玻璃只做 chrome（topbar/tabs/stats/card/chart-card/modal/bp-list/table-wrap/lm-panel），
+    数字/表格行实底；蓝渐变 = 可下注专用；绿=赢、红=输、琥珀=赛时。
+  - 双主题同语言：深色石墨玻璃（默认）+ 浅色暖白玻璃（day），rim/tint/语义色全套令牌翻转；
+    `prefers-reduced-transparency` 全组件实底回退；sw 缓存 v38→v39；theme-color 同步。
+  - DESIGN.md 建档（55 令牌 + 组件规范 + 5 条硬约束）；PRODUCT.md 建档（产品事实）。
+- **验证**（playwright 实测，1440×900 + 390×844 双视口、双主题、5 个 tab）：
+  赛前看板（3 可下注卡蓝边+横幅）、赛时、赛后复盘（纸白记分卡 98:126）、
+  收益（16 统计卡+SVG 曲线）、研究图表（9 chart-card，canvas 色取 CSS 变量正常）。
+  修一处：`.edge-badge .ev .edge-time` 加 margin-left 8px（EV 与生成时间挤在一起）。
+- 注意：mockup 临时文件（site/_mock_*、app/web/_mock_*）已清理；
+  .impeccable/mocks/ 保留五版 mockup 源文件。

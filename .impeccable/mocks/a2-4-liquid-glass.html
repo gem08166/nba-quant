@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NBA Quant · A2-4 Liquid Glass</title>
+<style>
+/* A2-4「Liquid Glass 液态玻璃」：iOS 26 玻璃拟态 2.0
+   五层配方：tint / blur+saturate / specular rim / sheen / SVG refraction
+   —— 玻璃只用于「chrome」（顶栏、tabs、信号条、卡片容器），
+      数据表格/数字本体保持实底（可读性纪律）
+   —— 底层放彩色「内容」让 blur 有东西可采样：渐变光斑 + 球场木纹色带 */
+:root{
+  --blue:#1E6FEB; --blue1:#3E8EFF; --blue2:#1557C0;
+  --cyan:#22B8F0; --purple:#7C6FF0; --green:#1FA05E; --orange:#F2820A; --red:#E5484D;
+  --ink:#101623; --ink-2:#3D4557; --ink-3:#6B7386;
+  --glass-bg:rgba(255,255,255,.42);
+  --glass-border:rgba(255,255,255,.65);
+  --glass-shadow:0 8px 24px rgba(18,32,64,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,"SF Pro SC","PingFang SC","Segoe UI",Roboto,"Microsoft YaHei",sans-serif;
+  color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased;
+  padding:22px clamp(14px,3vw,34px) 40px;
+  /* 内容层：多组彩色光斑 + 球场地板色，让玻璃有的可折 */
+  background:
+    radial-gradient(560px 420px at 8% -4%, rgba(62,142,255,.30), transparent 60%),
+    radial-gradient(480px 380px at 96% 2%, rgba(124,111,240,.26), transparent 60%),
+    radial-gradient(520px 420px at 55% 108%, rgba(34,184,240,.22), transparent 62%),
+    radial-gradient(420px 360px at 88% 78%, rgba(255,159,67,.18), transparent 58%),
+    linear-gradient(160deg,#DCE8FA 0%,#E6E9F8 35%,#EDE7F6 62%,#E3EDF7 100%);
+  background-attachment:fixed;
+}
+.wrap{max-width:1180px;margin:0 auto}
+.num{font-variant-numeric:tabular-nums}
+/* ===== 玻璃基元 ===== */
+.glass{
+  position:relative; isolation:isolate;
+  background:var(--glass-bg);
+  backdrop-filter:blur(14px) saturate(170%);
+  -webkit-backdrop-filter:blur(14px) saturate(170%);
+  border:1px solid var(--glass-border);
+  border-radius:18px;
+  box-shadow:
+    0 10px 30px rgba(18,32,64,.12),
+    inset 0 1px 1px rgba(255,255,255,.9),
+    inset 0 -1px 1px rgba(255,255,255,.35),
+    inset 1px 0 1px rgba(255,255,255,.25),
+    inset -1px 0 1px rgba(255,255,255,.25);
+}
+.glass::after{ /* sheen 斜向光泽 */
+  content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(135deg,rgba(255,255,255,.55) 0%,rgba(255,255,255,.12) 30%,transparent 58%);
+}
+/* 顶栏玻璃 + 悬浮 */
+.topbar{display:flex;align-items:center;gap:14px;padding:12px 16px;margin-bottom:16px;border-radius:20px}
+.logo{width:44px;height:44px;border-radius:14px;color:#fff;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--blue1),var(--blue2));box-shadow:0 4px 14px rgba(30,111,235,.4)}
+.logo svg{width:22px;height:22px}
+.brand h1{font-size:19px;font-weight:700}
+.brand p{font-size:12px;color:var(--ink-2);opacity:.75}
+.controls{margin-left:auto;display:flex;gap:9px;align-items:center}
+input[type=date]{height:38px;border:1px solid rgba(255,255,255,.7);border-radius:12px;padding:0 12px;font:inherit;font-size:13.5px;background:rgba(255,255,255,.5);color:var(--ink)}
+.btn{height:38px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,.7);background:rgba(255,255,255,.4);backdrop-filter:blur(6px);font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;transition:.15s}
+.btn:hover{background:rgba(255,255,255,.62)}
+.btn.primary{color:#fff;border:none;background:linear-gradient(135deg,var(--blue1),var(--blue2));box-shadow:0 4px 14px rgba(30,111,235,.35)}
+/* tabs：胶囊玻璃分段控件 */
+.tabs{display:inline-flex;gap:5px;padding:5px;border-radius:16px;margin-bottom:18px}
+.tab{height:36px;padding:0 18px;border:none;border-radius:11px;background:transparent;font:inherit;font-size:13.5px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.tab.active{color:#fff;background:linear-gradient(135deg,var(--blue1),var(--blue2));box-shadow:0 3px 12px rgba(30,111,235,.35)}
+/* 统计条：四块玻璃 */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat{padding:15px 17px}
+.stat .k{font-size:12px;color:var(--ink-2);opacity:.8;font-weight:600}
+.stat .v{font-size:21px;font-weight:800;margin-top:3px}
+.stat .v small{font-size:12px;font-weight:600;color:var(--ink-2);opacity:.7}
+.stat .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1.5px}
+/* 信号条：玻璃横幅 + 里面彩色信号 chips */
+.betsignal{padding:15px 18px;margin-bottom:16px;border-radius:20px}
+.betsignal h2{font-size:13.5px;font-weight:700;letter-spacing:.2px;color:var(--ink)}
+.betsignal .row{display:flex;gap:9px;margin-top:11px;flex-wrap:wrap}
+.sig{display:inline-flex;gap:8px;align-items:center;font-size:13px;font-weight:600;color:#fff;
+  border-radius:12px;padding:8px 14px;
+  background:linear-gradient(135deg,rgba(30,111,235,.92),rgba(62,142,255,.82));
+  box-shadow:0 4px 14px rgba(30,111,235,.35), inset 0 1px 1px rgba(255,255,255,.5)}
+.sig b{font-weight:800}
+.sig .ev{background:rgba(255,255,255,.25);border-radius:7px;padding:2px 7px;font-size:11.5px;font-weight:800}
+/* 比赛卡：玻璃卡，内容实底数字 */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.card{overflow:hidden;border-radius:20px}
+.card-top{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.5)}
+.teams{font-weight:700;font-size:15px}
+.teams small{color:var(--ink-2);opacity:.65;font-weight:600;font-size:11.5px;margin-left:8px}
+.tip{margin-left:auto;font-size:12px;color:var(--ink-2);opacity:.75;font-variant-numeric:tabular-nums}
+.proj{display:flex;gap:12px;padding:12px 16px 4px;align-items:center}
+.ring{--p:72;width:46px;height:46px;border-radius:50%;flex:none;position:relative;display:grid;place-items:center;
+  background:conic-gradient(var(--blue) calc(var(--p)*1%), rgba(255,255,255,.6) 0)}
+.ring::before{content:"";position:absolute;inset:5px;border-radius:50%;background:rgba(255,255,255,.88)}
+.ring span{position:relative;font-size:11.5px;font-weight:800}
+.proj .lines{display:flex;gap:14px;font-size:12.5px;color:var(--ink-2)}
+.proj .lines b{color:var(--ink)}
+.odds{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:12px 16px 16px}
+.ohead{font-size:10.5px;color:var(--ink-2);opacity:.7;text-align:center;font-weight:700;letter-spacing:.5px;margin-bottom:-4px}
+.ob{border:1px solid rgba(255,255,255,.66);border-radius:12px;padding:8px 6px;text-align:center;background:rgba(255,255,255,.34);backdrop-filter:blur(4px);transition:.15s}
+.ob:hover{background:rgba(255,255,255,.6)}
+.ob .l{font-size:12px;color:var(--ink-2);font-weight:600}
+.ob .p{font-size:15.5px;font-weight:800;margin-top:2px}
+.ob .bk{font-size:10px;color:var(--ink-2);opacity:.6;margin-top:2px}
+.ob.best{border-color:rgba(30,111,235,.5);background:rgba(62,142,255,.14)}
+.ob.bet{border:1.5px solid var(--blue);background:rgba(30,111,235,.12)}
+.ob.bet .p{color:var(--blue)}
+.ob.bet::after{content:"可下注";display:inline-block;margin-top:4px;font-size:10px;font-weight:800;color:#fff;background:linear-gradient(135deg,var(--blue1),var(--blue2));border-radius:6px;padding:2px 7px}
+/* 台账：玻璃容器 + 实底表格 */
+.panel{margin-top:18px;overflow:hidden;border-radius:20px}
+.panel h2{font-size:14px;font-weight:700;padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.55)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:10.5px;color:var(--ink-2);opacity:.75;font-weight:700;text-align:left;padding:8px 16px;background:rgba(255,255,255,.30);letter-spacing:.8px}
+td{padding:9px 16px;border-top:1px solid rgba(255,255,255,.42)}
+.pos{color:var(--green);font-weight:800}.neg{color:var(--red);font-weight:800}
+.pill{font-size:11px;font-weight:800;border-radius:7px;padding:2px 8px}
+.pill.win{color:var(--green);background:rgba(31,160,94,.14)}
+.pill.loss{color:var(--red);background:rgba(229,72,77,.13)}
+.pill.open{color:var(--blue);background:rgba(30,111,235,.13)}
+.notice{font-size:12px;color:var(--ink-2);opacity:.8;margin-top:16px;line-height:1.6}
+/* 减少透明度偏好：玻璃退化成实底 */
+@media (prefers-reduced-transparency: reduce){
+  .glass,.ob,.btn{background:#fff;backdrop-filter:none;-webkit-backdrop-filter:none}
+}
+@media (max-width:760px){.stats{grid-template-columns:1fr 1fr}.controls .btn{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar glass">
+    <div class="logo"><svg viewBox="0 0 20 20" fill="none"><rect x="1.5" y="1.5" width="17" height="17" rx="3" stroke="currentColor" stroke-width="1.8"/><text x="10" y="14.5" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">Q</text></svg></div>
+    <div class="brand"><h1>NBA Quant</h1><p>赛前 · 免费数据 · 个人研究</p></div>
+    <div class="controls">
+      <input type="date" value="2026-11-20">
+      <button class="btn">☾</button>
+      <button class="btn primary">刷新</button>
+    </div>
+  </header>
+
+  <nav class="tabs glass">
+    <button class="tab active">赛前看板</button>
+    <button class="tab">赛时</button>
+    <button class="tab">赛后复盘</button>
+    <button class="tab">收益</button>
+    <button class="tab">研究图表</button>
+  </nav>
+
+  <section class="stats">
+    <div class="stat glass"><div class="k">今日场次</div><div class="v num">9 <small>场</small></div></div>
+    <div class="stat glass"><div class="k"><span class="dot" style="background:var(--blue)"></span>可下注信号</div><div class="v num" style="color:var(--blue)">3 <small>条</small></div></div>
+    <div class="stat glass"><div class="k"><span class="dot" style="background:var(--purple)"></span>在台注单</div><div class="v num">3 <small>真实</small></div></div>
+    <div class="stat glass"><div class="k"><span class="dot" style="background:var(--orange)"></span>累计盈亏</div><div class="v num" style="color:var(--red)">-3.42<small>u · 98 单</small></div></div>
+  </section>
+
+  <section class="betsignal glass">
+    <h2>⚡ 可下注信号 · 已过闸门（共识 ≥3 书源 · 无分歧 · 非软书）</h2>
+    <div class="row">
+      <div class="sig">CHA 客胜 @<b class="num">3.10</b><span class="ev">EV +7.8%</span></div>
+      <div class="sig">CLE -6.0 @<b class="num">1.99</b><span class="ev">EV +14.6%</span></div>
+      <div class="sig">NO@OKC 小 228.5 @<b class="num">1.98</b><span class="ev">EV +14.6%</span></div>
+    </div>
+  </section>
+
+  <main class="grid">
+    <article class="card glass">
+      <div class="card-top"><div class="teams">骑士 <small>VS</small> 步行者</div><div class="tip">08:30</div></div>
+      <div class="proj">
+        <div class="ring" style="--p:72"><span class="num">72%</span></div>
+        <div class="lines"><span>模型让分 <b class="num">-6.9</b></span><span>总分 <b class="num">231.3</b></span></div>
+      </div>
+      <div class="odds">
+        <div><div class="ohead">让分</div><div class="ob bet"><div class="l">-6.0</div><div class="p num">1.99</div><div class="bk">lowvig</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">232.5</div><div class="p num">1.91</div><div class="bk">333</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">主</div><div class="p num">1.39</div><div class="bk">333</div></div></div>
+      </div>
+    </article>
+
+    <article class="card glass">
+      <div class="card-top"><div class="teams">老鹰 <small>VS</small> 黄蜂</div><div class="tip">08:00</div></div>
+      <div class="proj">
+        <div class="ring" style="--p:64"><span class="num">64%</span></div>
+        <div class="lines"><span>模型让分 <b class="num">+5.5</b></span><span>总分 <b class="num">220.9</b></span></div>
+      </div>
+      <div class="odds">
+        <div><div class="ohead">让分</div><div class="ob"><div class="l">+6.5</div><div class="p num">2.05</div><div class="bk">333</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">218.5</div><div class="p num">1.97</div><div class="bk">333</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob bet"><div class="l">客</div><div class="p num">3.10</div><div class="bk">fanduel</div></div></div>
+      </div>
+    </article>
+
+    <article class="card glass">
+      <div class="card-top"><div class="teams">雷霆 <small>VS</small> 鹈鹕</div><div class="tip">09:00</div></div>
+      <div class="proj">
+        <div class="ring" style="--p:86"><span class="num">86%</span></div>
+        <div class="lines"><span>模型让分 <b class="num">-14.2</b></span><span>总分 <b class="num">224.8</b></span></div>
+      </div>
+      <div class="odds">
+        <div><div class="ohead">让分</div><div class="ob"><div class="l">-11.5</div><div class="p num">1.95</div><div class="bk">hao</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob bet"><div class="l">小 228.5</div><div class="p num">1.98</div><div class="bk">lowvig</div></div></div>
+        <div><div class="ohead" style="visibility:hidden">.</div><div class="ob"><div class="l">主</div><div class="p num">1.16</div><div class="bk">333</div></div></div>
+      </div>
+    </article>
+  </main>
+
+  <section class="panel glass">
+    <h2>注单台账 · 最近</h2>
+    <table>
+      <tr><th>比赛</th><th>注</th><th>价</th><th>结果</th><th style="text-align:right">盈亏</th></tr>
+      <tr><td>尼克斯 @ 森林狼</td><td>客胜</td><td class="num">1.80</td><td><span class="pill win">赢</span></td><td class="pos" style="text-align:right">+1.60</td></tr>
+      <tr><td>勇士 @ 灰熊</td><td>小 226.5</td><td class="num">2.00</td><td><span class="pill win">赢</span></td><td class="pos" style="text-align:right">+2.00</td></tr>
+      <tr><td>开拓者 @ 雄鹿</td><td>小 228.5</td><td class="num">1.91</td><td><span class="pill loss">输</span></td><td class="neg" style="text-align:right">-1.60</td></tr>
+      <tr><td>黄蜂 @ 老鹰</td><td>客胜</td><td class="num">3.00</td><td><span class="pill open">在台</span></td><td style="text-align:right;color:var(--ink-2);opacity:.7">—</td></tr>
+    </table>
+  </section>
+
+  <p class="notice">数据来自 ESPN 免费接口；模型为 Elo + 调整后攻防/节奏，仅供个人研究，不构成投注建议。Mockup A2-4 · Liquid Glass（玻璃只做 chrome，数据保持实底；Safari/Firefox 自动降级为磨砂）。</p>
+</div>
+</body>
+</html>
