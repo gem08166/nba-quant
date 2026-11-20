@@ -1839,3 +1839,29 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
 - **当前额度**：remaining=431 / used=69（本轮验证耗 ~3-5 credit：fetch×3 + store×1）。
   按 2h 闸门 36/天 ≈ 还剩 12 天。下次额度紧张时优先查 401 的 error_code：
   `INVALID_KEY`（key 无效，找用户换）≠ `OUT_OF_USAGE_CREDITS`（额度用尽，等下月）。
+
+### 10.97 2026-11-21 VPS 夜间哨兵上线（干净源，睡觉时段采集不断）
+
+- **背景**：用户新购腾讯云轻量 VPS（硅谷二区，Debian 13.2，2C2G/40G，IP
+  43.162.117.228，实例 lhins-qvopge1r，到期 2026-12-20），本机夜间关机导致
+  采集与信号推送中断。该机同时跑着用户的 VPN（nginx 8443 / 30000 端口）。
+- **安全边界（关键决策）**：333 / hao-tiyu 是博彩域名，**不上 VPS**——
+  虽然硅谷区不受国内云合规审计管辖，但 333 对境外机房 IP 的风控更严，
+  且 VPS 上只跑 ESPN + The Odds API（合计 10 书源，共识闸门 ≥3 完全满足）。
+  333 凭据 / 下单动作 / CL 收盘会话全部留在本机。
+- **部署**（SSH 密钥 `~/.ssh/nbaq_vps`，经控制台 TAT 执行命令安装公钥）：
+  - 代码 tar 上传 `/opt/nba-quant`（**排除 .env**——config 的 load_dotenv
+    override=True 会让代码目录 .env 覆盖 EnvironmentFile，等于泄密）。
+  - 凭据 `/etc/nbaq/sentinel.env`（600）：odds key / ntfy / 坚果云。
+  - venv（Python 3.13.5 + numpy 2.5.5）+ `python -m app.cli init` 建空库。
+  - systemd `nbaq-sentinel.service`（Restart=always，MemoryMax=700M），
+    循环 5min：ESPN ingest → odds-api（2h 闸门）→ betssync 只读 → predict
+    → ntfy 推送 → 每小时导出 `nbaq/sentinel/<slate>.json`（~450KB）。
+  - fail2ban 已装（22 端口对全网开放，防爆破）。
+- **本机侧**：watch 启动自动 `pull_recent()`（最近 3 天，幂等合并）；
+  手动 `python -m app.cli sentinel-pull --days 3`。合并规则：
+  games 按 updated_at 新者胜；odds/injuries 按键比对（SQLite UNIQUE 对
+  moneyline 的 NULL line 不去重，必须逐键判断——首个实现踩过，599 行重复）。
+- **验证**：VPS 单轮 9 场/64 伤停/导出 uploaded=True；本机 sentinel-pull
+  拉回 1 文件、合并 532 行新赔率、1 场状态更新。内存 37MB。
+- **分工口诀**：VPS 管"夜里知道"，本机管"醒来下注"。
