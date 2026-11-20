@@ -1813,5 +1813,15 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
   赛前看板（3 可下注卡蓝边+横幅）、赛时、赛后复盘（纸白记分卡 98:126）、
   收益（16 统计卡+SVG 曲线）、研究图表（9 chart-card，canvas 色取 CSS 变量正常）。
   修一处：`.edge-badge .ev .edge-time` 加 margin-left 8px（EV 与生成时间挤在一起）。
+- **顶栏二轮优化**（用户反馈「这部分再优化一下」）：
+  - 通栏贴边条 → **悬浮玻璃横梁**：全圆角 22px、margin 14px、阴影加重一档
+    （0 14px 40px），与内容卡片分离成"梁上面板"层次。
+  - 控件对齐：日期输入/按钮统一 height 40px（原 41/39 混杂）、btn 改 inline-flex
+    居中、主题切换按钮定宽 40px 图标钮。
+  - 主次分明：刷新 = 蓝渐变 primary（min-width 76px + 更重光晕），抓快照/清缓存 =
+    玻璃次级钮；按钮 hover 提升阴影。
+  - 副标题 muted → text-dim（浅色玻璃上对比度提高）；logo 44px、三层阴影（外浮 +
+    内顶光 + 内底深）更像"发光的玻璃块"。
+  - 手机 390px：按钮 white-space nowrap + flex none，修复「抓快照/清缓存」竖排断行。
 - 注意：mockup 临时文件（site/_mock_*、app/web/_mock_*）已清理；
   .impeccable/mocks/ 保留五版 mockup 源文件。

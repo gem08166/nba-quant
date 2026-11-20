@@ -241,35 +241,44 @@ body {
 
 .topbar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 18px;
-  margin: 14px -20px 16px;
-  padding: 18px 20px 14px;
-  border-radius: 0 0 20px 20px;
-  border-top: none;
+  margin: 14px -20px 18px;
+  padding: 14px 22px;
+  border-radius: 22px;
+  /* 比卡片重一档的浮起：玻璃横梁独立于内容流 */
+  box-shadow:
+    0 14px 40px rgba(4, 8, 18, 0.50),
+    inset 0 1px 1px var(--rim-top),
+    inset 0 -1px 1px var(--rim-bottom),
+    inset 1px 0 1px var(--rim-side),
+    inset -1px 0 1px var(--rim-side);
 }
 
 /* APK 刘海屏：顶栏 padding-top 交给安全区变量接管 */
 @supports (padding: env(safe-area-inset-top)) {
-  .topbar { padding-top: calc(16px + env(safe-area-inset-top, 0px)); }
+  .topbar { padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
 }
 
-.brand { display: flex; align-items: center; gap: 13px; }
+.brand { display: flex; align-items: center; gap: 14px; }
 
 /* 渐变图标块：A2 语言的彩色徽章 */
 .logo {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 13px;
-  background: linear-gradient(135deg, #3e8eff, #1557c0);
+  border-radius: 14px;
+  background: linear-gradient(135deg, #3e8eff 0%, #1e5fd6 55%, #1557c0 100%);
   color: #fff;
   font-family: var(--font-num);
-  font-size: 19px;
+  font-size: 20px;
   line-height: 1;
-  box-shadow: 0 4px 14px rgba(30, 111, 235, 0.40), inset 0 1px 1px rgba(255, 255, 255, 0.45);
+  box-shadow:
+    0 5px 16px rgba(30, 111, 235, 0.45),
+    inset 0 1px 1px rgba(255, 255, 255, 0.55),
+    inset 0 -2px 4px rgba(8, 30, 80, 0.35);
   flex: none;
 }
 
@@ -279,26 +288,27 @@ h1 {
   font-size: 21px;
   font-weight: 700;
   letter-spacing: 0.01em;
-  line-height: 1.1;
+  line-height: 1.15;
 }
 .brand p {
   margin: 3px 0 0;
-  color: var(--muted);
+  color: var(--text-dim);
   font-family: var(--font-num);
-  font-size: 12px;
-  letter-spacing: 0.02em;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
 }
 
-.controls { display: flex; gap: 8px; align-items: center; }
+.controls { display: flex; gap: 9px; align-items: center; }
 
 input, select, button { font: inherit; }
 
 input[type="date"], input[type="number"], input[type="text"], select {
-  background: var(--bg-deep);
+  background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  padding: 8px 11px;
+  border-radius: 12px;
+  padding: 0 13px;
+  height: 40px;
   outline: none;
   font-family: var(--font-num);
   font-size: 13px;
@@ -315,14 +325,18 @@ input:focus, select:focus {
   border: 1px solid var(--glass-border);
   background: var(--panel-2);
   color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 8px 15px;
+  border-radius: 12px;
+  height: 40px;
+  padding: 0 16px;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
   font-weight: 600;
   font-size: 13px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .btn:hover { border-color: var(--hover-line); background: var(--panel-3); transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
@@ -337,12 +351,19 @@ input:focus, select:focus {
   background: var(--btn-primary-bg);
   border-color: transparent;
   color: var(--btn-primary-text);
-  font-weight: 650;
-  box-shadow: 0 4px 14px rgba(30, 111, 235, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+  font-weight: 700;
+  min-width: 76px;
+  box-shadow: 0 5px 16px rgba(30, 111, 235, 0.40), inset 0 1px 1px rgba(255, 255, 255, 0.45), inset 0 -2px 4px rgba(8, 30, 80, 0.30);
 }
 .btn.primary:disabled { opacity: 0.5; }
-.btn.primary:hover { background: var(--btn-primary-hover); }
-.btn.small { padding: 4px 10px; font-size: 12px; }
+.btn.primary:hover {
+  background: var(--btn-primary-hover);
+  box-shadow: 0 7px 20px rgba(30, 111, 235, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.5), inset 0 -2px 4px rgba(8, 30, 80, 0.3);
+}
+.btn.small { height: 32px; padding: 0 11px; font-size: 12px; border-radius: 10px; }
+
+/* 主题切换：图标按钮（方形，与相邻按钮同高） */
+#theme-toggle { width: 40px; padding: 0; }
 
 /* ---------- 标签页：玻璃胶囊分段控件 ---------- */
 
@@ -1482,6 +1503,15 @@ html[data-theme="day"] body {
   background-attachment: fixed;
 }
 html[data-theme="day"] .modal { background: rgba(28, 37, 48, 0.32); }
+/* 浅色下顶栏浮起用暖阴影 */
+html[data-theme="day"] .topbar {
+  box-shadow:
+    0 14px 40px rgba(28, 37, 48, 0.14),
+    inset 0 1px 1px var(--rim-top),
+    inset 0 -1px 1px var(--rim-bottom),
+    inset 1px 0 1px var(--rim-side),
+    inset -1px 0 1px var(--rim-side);
+}
 html[data-theme="day"] ::-webkit-scrollbar-thumb {
   background: rgba(28, 37, 48, 0.22);
   border-color: transparent;
@@ -1523,11 +1553,13 @@ html[data-theme="day"] .bettable-banner {
     align-items: flex-start;
     flex-direction: column;
     margin: 10px -12px 14px;
-    padding: 16px 12px 12px;
+    padding: 14px 14px 12px;
     gap: 12px;
   }
   .controls { width: 100%; }
-  .controls input { flex: 1; }
+  .controls input { flex: 1; height: 40px; min-width: 0; }
+  .controls .btn { height: 40px; padding: 0 13px; white-space: nowrap; flex: none; }
+  #theme-toggle { width: 40px; }
   .tabs {
     gap: 4px;
     margin: 0 -12px 16px;
