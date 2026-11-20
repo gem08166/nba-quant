@@ -5,7 +5,7 @@ import time
 from datetime import date as date_cls, datetime, timedelta, timezone
 
 from .. import db
-from ..config import CI_TRIGGER_MINUTES, LIVE_INTERVAL, LOCAL_PUBLISH_LIVE, WATCH_INTERVAL
+from ..config import CI_TRIGGER_MINUTES, LIVE_INTERVAL, LOCAL_PUBLISH_LIVE, SENTINEL_CLEAN, WATCH_INTERVAL
 from ..dates import current_slate_date
 from ..ingest import service
 from ..models import rapm, ratings
@@ -177,6 +177,22 @@ def _rotate_log(path, max_bytes: int = 5 * 1024 * 1024, keep: int = 3) -> list[s
     return moved
 
 
+def _pull_sentinel_once() -> None:
+    """开机补拉 VPS 夜间哨兵数据（幂等合并，失败不影响主流程）。"""
+    from . import sentinel as sentinel_job
+
+    if not sentinel_job.webdav.enabled():
+        return
+    conn = db.connect()
+    try:
+        stats = sentinel_job.pull_recent(conn, current_slate_date())
+        conn.commit()
+        if stats.get("files"):
+            print(f"[watch] sentinel pulled: {stats}")
+    finally:
+        conn.close()
+
+
 def run(interval: float | None = None, with_ingest: bool = True, once: bool = False) -> None:
     """Long-running loop: ingest once a day, capture closing lines, settle bets,
     re-predict and push new signals. Hardened: file log, failure alerts,
@@ -195,6 +211,12 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     interval = interval or WATCH_INTERVAL
     providers = notify.providers_enabled()
     print(f"[watch] started interval={interval:.0f}s ingest={with_ingest} notify={providers or 'off'} log={log_path}")
+
+    # 开机补拉 VPS 夜间哨兵数据（本机睡觉时 VPS 只跑干净源；幂等，失败不影响主流程）
+    try:
+        _pull_sentinel_once()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[watch] sentinel pull failed: {exc}")
 
     last_slate: str | None = None
     loop_failures = 0
@@ -360,26 +382,29 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 if backup_path:
                     print(f"[watch] backup: {backup_path.name}")
                 # 第二盘口源（好体育）：入库 book='hao-tiyu'，失败可降级
-                try:
-                    from ..ingest import hao
+                # 哨兵模式跳过：hao-tiyu 是博彩域名，VPS 上不能访问（合规风险）
+                if not SENTINEL_CLEAN:
+                    try:
+                        from ..ingest import hao
 
-                    hao_rows = hao.store_nba_odds(conn, slate)
-                    conn.commit()
-                    if hao_rows:
-                        print(f"[watch] hao-tiyu odds: +{hao_rows} row(s)")
-                except Exception as exc:  # noqa: BLE001
-                    print(f"[watch] hao-tiyu odds skipped: {exc}")
+                        hao_rows = hao.store_nba_odds(conn, slate)
+                        conn.commit()
+                        if hao_rows:
+                            print(f"[watch] hao-tiyu odds: +{hao_rows} row(s)")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[watch] hao-tiyu odds skipped: {exc}")
                 # HoopsAPI：upcoming 建映射 + 完赛归档收盘价（含 Pinnacle）
-                try:
-                    from ..ingest import hoops
+                if not SENTINEL_CLEAN:
+                    try:
+                        from ..ingest import hoops
 
-                    stats_hoops = hoops.sync_games(conn)
-                    conn.commit()
-                    arch = hoops.archive_closing(conn)
-                    conn.commit()
-                    print(f"[watch] hoops: {stats_hoops} archived={arch}")
-                except Exception as exc:  # noqa: BLE001
-                    print(f"[watch] hoops skipped: {exc}")
+                        stats_hoops = hoops.sync_games(conn)
+                        conn.commit()
+                        arch = hoops.archive_closing(conn)
+                        conn.commit()
+                        print(f"[watch] hoops: {stats_hoops} archived={arch}")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[watch] hoops skipped: {exc}")
                 # PBP for the last two slates (late West Coast games finish
                 # after the slate flips; backfill_pbp is idempotent).
                 try:

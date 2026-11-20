@@ -294,6 +294,39 @@ def cmd_watch(args: argparse.Namespace) -> None:
     watch_job.run(interval=args.interval, with_ingest=not args.no_ingest, once=args.once)
 
 
+def cmd_sentinel_pull(args: argparse.Namespace) -> None:
+    """本机开机补拉 VPS 夜间哨兵数据（幂等）。"""
+    import json
+
+    from .dates import current_slate_date
+    from .jobs import sentinel
+
+    today = args.date or current_slate_date()
+    conn = db.connect()
+    try:
+        stats = sentinel.pull_recent(conn, today, days=args.days)
+        conn.commit()
+        print(json.dumps(stats, ensure_ascii=False, indent=1))
+    finally:
+        conn.close()
+
+
+def cmd_sentinel_export(args: argparse.Namespace) -> None:
+    """导出干净源数据（VPS 用；--file 时写本地文件便于自检）。"""
+    import json
+
+    from .dates import current_slate_date
+    from .jobs import sentinel
+
+    slate = args.date or current_slate_date()
+    conn = db.connect()
+    try:
+        stats = sentinel.export_day(conn, slate, dry_run_path=args.file)
+        print(json.dumps(stats, ensure_ascii=False, indent=1))
+    finally:
+        conn.close()
+
+
 def cmd_bets_sync(args: argparse.Namespace) -> None:
     import json
 
@@ -581,6 +614,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="云端台账是权威源（CI 用）：已结算同结果单允许台账 profit 覆盖本地（修正 CI 自结算的保守 -2.00）",
     )
     bs.set_defaults(func=cmd_bets_sync)
+
+    sp = sub.add_parser("sentinel-pull", help="pull VPS night-sentinel data from WebDAV and merge")
+    sp.add_argument("--days", type=int, default=3, help="look back N days (default 3)")
+    sp.add_argument("--date", default=None, help="today's slate date (default: current slate)")
+    sp.set_defaults(func=cmd_sentinel_pull)
+
+    se = sub.add_parser("sentinel-export", help="export clean-source data to WebDAV (VPS use)")
+    se.add_argument("--date", default=None, help="slate date (default: current slate)")
+    se.add_argument("--file", default=None, help="write to a local file instead of WebDAV (testing)")
+    se.set_defaults(func=cmd_sentinel_export)
 
     be = sub.add_parser("bets-export", help="export the ledger as a re-importable JSON file")
     be.add_argument("--out", default=None, help="output path (default data/bets-export-YYYY-MM-DD.json)")

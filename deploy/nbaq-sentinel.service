@@ -1,0 +1,22 @@
+[Unit]
+Description=NBA Quant night sentinel (clean sources only: ESPN + The Odds API)
+Documentation=https://github.com/gem08166/nba-quant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nba-quant
+# 凭据只放在 /etc/nbaq/sentinel.env（600, root），不进代码目录
+EnvironmentFile=/etc/nbaq/sentinel.env
+ExecStart=/opt/nba-quant/.venv/bin/python -m scripts.sentinel
+Restart=always
+RestartSec=60
+# 内存护栏：2GB 机器上哨兵峰值 <200MB（不含 Chromium，夜间不抓 333）
+MemoryMax=700M
+# 日志进 journald（journalctl -u nbaq-sentinel -f）
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

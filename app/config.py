@@ -33,6 +33,11 @@ ML_UNDERDOG_MAX_PRICE = float(os.getenv("NBAQ_ML_UNDERDOG_MAX", "4.0"))
 CL_QUIET_START_H = float(os.getenv("NBAQ_CL_QUIET_START", "19"))
 CL_QUIET_END_H = float(os.getenv("NBAQ_CL_QUIET_END", "24"))
 
+# 夜间哨兵（2026-11-21）：VPS 只跑干净源（ESPN + The Odds API），跳过博彩站源。
+# 原因：333/hao-tiyu 是博彩域名，国内云 VPS 访问会被服务商合规审计（TLS SNI 明文）。
+# 开启后 watch 跳过 hao/hoops/settle/betssync/simulate，只做采集+预测+推送+导出。
+SENTINEL_CLEAN = os.getenv("NBAQ_SENTINEL_CLEAN", "0") == "1"
+
 # 信号有效期：超过该小时数未更新（或比赛已开赛/结束）即标记过期，
 # 不再计入「信号/可下注」统计，也不出现在可下注面板。
 SIGNAL_MAX_AGE_HOURS = float(os.getenv("NBAQ_SIGNAL_MAX_AGE_HOURS", "12"))

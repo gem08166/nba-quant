@@ -26,6 +26,8 @@ LIVE = f"{FOLDER}/live.json"
 DELETED = f"{FOLDER}/deleted.json"
 SNAP_INBOX = f"{FOLDER}/snapshots/inbox"
 SNAP_DONE = f"{SNAP_INBOX}/done"
+# 夜间哨兵（VPS）导出的干净源数据：nbaq/sentinel/<slate>.json
+SENTINEL = f"{FOLDER}/sentinel"
 
 
 def enabled() -> bool:
