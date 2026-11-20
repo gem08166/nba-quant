@@ -27,10 +27,51 @@ SAMPLE_CARD = {
 def test_parse_helpers():
     assert _parse_price("1.94") == 1.94
     assert _parse_price("") is None
-    assert _parse_price("0.5") is None  # 非赔率数字
+    assert _parse_price("0.1") is None  # 低于合理赔率下限
     assert _parse_line("-6.5") == -6.5
     assert _parse_line("+2.5") == 2.5
     assert _parse_line("大 225.5") is None
+
+
+def test_hk_odds_pair_detection():
+    from scripts.fetch333_odds import _pair_decimal
+
+    # 港式：0.91/0.97 -> 欧式 1.91/1.97
+    assert _pair_decimal(0.91, 0.97) == (1.91, 1.97)
+    # 欧式原样保留
+    assert _pair_decimal(1.91, 1.97) == (1.91, 1.97)
+    # 港式高赔（1.65 = 欧式 2.65）也要识别
+    assert _pair_decimal(0.44, 1.65) == (1.44, 2.65)
+    # 单边缺失：<=1 的按港式补 1
+    assert _pair_decimal(None, 0.92) == (None, 1.92)
+    assert _pair_decimal(None, 1.44) == (None, 1.44)
+
+
+def test_card_to_rows_hk_display():
+    """2026-11-20 临场实测：让分/大小为港式，独赢仍欧式，必须统一成欧式。"""
+    card = {
+        "home": "孟菲斯灰熊",
+        "away": "金州勇士",
+        "odds": [
+            {"tid": "oddsBtn-2|300308909|ah|h|0", "label": "-5.5", "price": "0.91"},
+            {"tid": "oddsBtn-2|300308909|ah|a|0", "label": "+5.5", "price": "0.97"},
+            {"tid": "oddsBtn-2|300308909|ou|ov|0", "label": "大 224.5", "price": "0.92"},
+            {"tid": "oddsBtn-2|300308909|ou|ud|0", "label": "小 224.5", "price": "0.94"},
+            {"tid": "oddsBtn-2|300308909|ml|h|0", "label": "主", "price": "1.44"},
+            {"tid": "oddsBtn-2|300308909|ml|a|0", "label": "客", "price": "2.65"},
+        ],
+    }
+    by_key = {(r["market"], r["side"]): r for r in card_to_rows(card)}
+    assert by_key[("spread", "home")]["line"] == -5.5
+    assert by_key[("spread", "home")]["price"] == 1.91
+    assert by_key[("spread", "away")]["price"] == 1.97
+    assert by_key[("total", "over")]["line"] == 224.5
+    assert by_key[("total", "over")]["price"] == 1.92
+    assert by_key[("total", "under")]["price"] == 1.94
+    assert by_key[("moneyline", "home")]["price"] == 1.44
+    assert by_key[("moneyline", "away")]["price"] == 2.65
+    # 全部是欧式赔率（>1）
+    assert all(r["price"] > 1.0 for r in by_key.values())
 
 
 def test_card_to_rows_full():

@@ -14,6 +14,9 @@
    + `oddsBtn-2|<eventId>|<market>|<side>|0`（ah|h 的 label 即主队让线）
 3. 中文队名 → 英文映射，按「北京日期对应的 UTC 窗口」匹配 games
 4. 经 espn_service.insert_odds 入库（报价没变只更新 last_seen_at）
+5. 健壮性（2026-11-20）：偶发卡骨架屏 → 等卡片+赔率按钮就绪、重载重试、
+   失败写诊断；让分/大小临场会切港式赔率（0.91 = 欧式 1.91），成对隐含
+   概率判定后统一成欧式
 
 调度：NBA-333-Odds 计划任务每 30 分钟调用一次（pythonw，SYSTEM）。
 日志：data/333-odds.log。所有失败只记日志退出，绝不影响主流程。
@@ -35,6 +38,12 @@ BEIJING = timezone(timedelta(hours=8))
 WEB = "https://333fzwno98.app"
 NBA_TID = 7067
 LOG = ROOT / "data" / "333-odds.log"
+
+# 2026-11-20：headless 偶发卡骨架屏（页面不发盘口请求，卡片永不出现）。
+# 同 URL 在普通浏览器/重跑时正常，属加载竞态 —— 就绪等待 + 重载重试。
+PAGE_ATTEMPTS = max(1, int(os.getenv("NBAQ_333_PAGE_ATTEMPTS", "3")))
+PAGE_TIMEOUT_MS = int(os.getenv("NBAQ_333_PAGE_TIMEOUT_MS", "45000"))
+CARD_WAIT_MS = int(os.getenv("NBAQ_333_CARD_WAIT_MS", "40000"))
 
 # 333 中文队名 → 英文关键字（用于对 DB 里 ESPN 英文队名做 substring 匹配）
 ZH2EN = {
@@ -77,7 +86,7 @@ ZH2EN = {
 EXTRACT_JS = r"""
 (async () => {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 10; i++) {
     const cards = document.querySelectorAll('[data-testid^="simple-handicap-layout-basketball-"]');
     let filled = 0;
     for (const c of cards) {
@@ -110,6 +119,22 @@ EXTRACT_JS = r"""
 })()
 """
 
+# 就绪判定：卡片存在、双方队名已渲染、且让分/大小/独赢三列（6 个按钮）都在。
+# 队名和赔率按钮是分批 hydrate 的，只等队名会抓到「只有独赢」的半截卡。
+READY_JS = r"""
+() => {
+  const cards = document.querySelectorAll('[data-testid^="simple-handicap-layout-basketball-"]');
+  if (!cards.length) return false;
+  for (const c of cards) {
+    const h = c.querySelector('[data-testid="sport-event-card-home-name"]');
+    const a = c.querySelector('[data-testid="sport-event-card-away-name"]');
+    if (!h || !a || !h.innerText.trim() || !a.innerText.trim()) return false;
+    if (c.querySelectorAll('[data-testid^="oddsBtn-"]').length < 6) return false;
+  }
+  return true;
+}
+"""
+
 
 def _log(msg: str) -> None:
     line = f"{datetime.now(BEIJING).strftime('%m-%d %H:%M:%S')} {msg}"
@@ -126,11 +151,45 @@ def _log(msg: str) -> None:
 
 
 def _parse_price(v: str) -> float | None:
+    """解析赔率数字。
+
+    允许 <1 的值：333 的让分/大小会按港式赔率显示（0.91 = 欧式 1.91），
+    独赢同时又是欧式，必须两种都接受，再由 _pair_decimal 成对判定。
+    """
     try:
         p = float(v)
     except (TypeError, ValueError):
         return None
-    return p if 1.0 < p < 100.0 else None
+    return p if 0.3 < p < 100.0 else None
+
+
+# 二选一市场两边隐含概率之和的合理上限（正常 1.02~1.10，留余量）
+MAX_OVERROUND = 1.35
+
+
+def _pair_decimal(p1: float | None, p2: float | None) -> tuple:
+    """把一对二选一价格统一成欧式（小数）赔率。
+
+    判定依据：欧式两边 1/p 之和应落在 1.00~1.35；若按港式（p+1）才落进
+    该区间，说明页面用的是港式显示。单边缺失或 <=1.0 时按港式补 1。
+    """
+    if p1 is None or p2 is None:
+        def _fix(p):
+            return round(p + 1.0, 2) if (p is not None and p <= 1.0) else p
+
+        return _fix(p1), _fix(p2)
+
+    raw = 1.0 / p1 + 1.0 / p2
+    hk = 1.0 / (p1 + 1.0) + 1.0 / (p2 + 1.0)
+
+    def _score(x: float) -> float:
+        if 1.0 <= x <= MAX_OVERROUND:
+            return abs(x - 1.06)
+        return 10.0 + min(abs(x - 1.0), abs(x - MAX_OVERROUND))
+
+    if _score(raw) <= _score(hk):
+        return round(p1, 2), round(p2, 2)
+    return round(p1 + 1.0, 2), round(p2 + 1.0, 2)
 
 
 def _parse_line(v: str) -> float | None:
@@ -174,6 +233,12 @@ def card_to_rows(card: dict) -> list[dict]:
             ml_a = price
 
     rows: list[dict] = []
+    # 港式/欧式赔率统一（333 临场会把让分/大小切成港式，独赢仍欧式）
+    if ah_h and ah_a:
+        ph, pa = _pair_decimal(ah_h[1], ah_a[1])
+        ah_h, ah_a = (ah_h[0], ph), (ah_a[0], pa)
+    ou_ov, ou_ud = _pair_decimal(ou_ov, ou_ud)
+    ml_h, ml_a = _pair_decimal(ml_h, ml_a)
     # ah 两边取主队线口径（ah|h 即主队线），若只有 ah|a 的 label 可用则推回主队线
     line, h_price = ah_h or (None, None)
     if line is None and ah_a:
@@ -218,12 +283,37 @@ def _launch(pw):
         return pw.chromium.launch(headless=True)
 
 
+def _page_diag(page) -> dict:
+    """失败时留证据：URL、卡片数、骨架屏数、正文片段。"""
+    try:
+        return page.evaluate(
+            """() => ({
+                url: location.href,
+                cards: document.querySelectorAll('[data-testid^="simple-handicap-layout-basketball-"]').length,
+                skeletons: document.querySelectorAll('[data-testid*="skeleton"]').length,
+                body: (document.body.innerText || "").replace(/\\s+/g, " ").slice(0, 160),
+            })"""
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+def _extract_cards(page) -> list[dict]:
+    try:
+        return json.loads(page.evaluate(EXTRACT_JS))
+    except Exception as exc:  # noqa: BLE001
+        _log(f"extract failed: {exc}")
+        return []
+
+
 def _collect_cards(beijing_date: str) -> list[dict]:
-    """游客身份抓某北京日期的 NBA 早盘卡片。"""
+    """游客身份抓某北京日期的 NBA 早盘卡片（卡骨架屏时重载重试）。"""
+    from playwright.sync_api import TimeoutError as PWTimeout
     from playwright.sync_api import sync_playwright
 
     ymd = beijing_date.replace("-", "")
     url = f"{WEB}/sportEvents/early/basketball/interval/{ymd}/{NBA_TID}"
+    attempts = PAGE_ATTEMPTS
     with sync_playwright() as p:
         browser = _launch(p)
         context = browser.new_context(
@@ -236,9 +326,42 @@ def _collect_cards(beijing_date: str) -> list[dict]:
         )
         try:
             page = context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            raw = page.evaluate(EXTRACT_JS)
-            return json.loads(raw)
+            for attempt in range(1, attempts + 1):
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+                    try:
+                        page.wait_for_function(READY_JS, timeout=CARD_WAIT_MS)
+                    except PWTimeout:
+                        # 未就绪也先抽一次：可能只是个别卡片慢，别丢掉已渲染的
+                        _log(
+                            f"{beijing_date} attempt {attempt}/{attempts}: 卡片未就绪 "
+                            f"{json.dumps(_page_diag(page), ensure_ascii=False)}"
+                        )
+                    cards = _extract_cards(page)
+                    complete = [c for c in cards if c.get("home") and c.get("away")]
+                    if complete:
+                        if len(complete) < len(cards):
+                            _log(
+                                f"{beijing_date}: {len(cards) - len(complete)} 张卡片队名未渲染，已跳过"
+                            )
+                        return cards
+                    if attempt < attempts:
+                        _log(f"{beijing_date} attempt {attempt}/{attempts}: 0 卡片，重载重试")
+                        page.reload(wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+                        page.wait_for_timeout(1500)
+                except Exception as exc:  # noqa: BLE001
+                    _log(f"{beijing_date} attempt {attempt}/{attempts} failed: {exc}")
+                    if attempt < attempts:
+                        try:
+                            page.reload(wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+                            page.wait_for_timeout(1500)
+                        except Exception:  # noqa: BLE001
+                            pass
+            _log(
+                f"{beijing_date} 抓取失败（{attempts} 次尝试），"
+                f"最后诊断 {json.dumps(_page_diag(page), ensure_ascii=False)}"
+            )
+            return []
         finally:
             context.close()
             browser.close()
@@ -283,7 +406,7 @@ def store_nba_odds(conn, beijing_dates: list[str]) -> int:
             _log(f"{beijing_date} capture failed: {exc}")
             continue
         if not cards:
-            _log(f"{beijing_date} no cards (no games published yet?)")
+            _log(f"{beijing_date} no cards (games started / not published / page stuck)")
             continue
         games = _games_in_window(conn, beijing_date)
         for card in cards:
@@ -306,18 +429,31 @@ def store_nba_odds(conn, beijing_dates: list[str]) -> int:
             rows = card_to_rows(card)
             n = espn_service.insert_odds(conn, game["id"], rows)
             inserted += n
+            markets = "/".join(sorted({r["market"] for r in rows})) or "-"
             _log(
                 f"{beijing_date} {game['away_name']} @ {game['home_name']}: "
-                f"{len(rows)} parsed, {n} new row(s)"
+                f"{len(rows)} parsed ({markets}), {n} new row(s)"
             )
     return inserted
 
 
 def main() -> int:
+    import argparse
+
     from app import db
 
+    parser = argparse.ArgumentParser(description="抓 333 NBA 早盘 DOM 赔率")
+    parser.add_argument(
+        "--date", action="append", default=None,
+        help="北京日期 YYYY-MM-DD，可重复；默认今天+明天",
+    )
+    args = parser.parse_args()
+
     now_bj = datetime.now(BEIJING)
-    dates = [now_bj.strftime("%Y-%m-%d"), (now_bj + timedelta(days=1)).strftime("%Y-%m-%d")]
+    if args.date:
+        dates = args.date
+    else:
+        dates = [now_bj.strftime("%Y-%m-%d"), (now_bj + timedelta(days=1)).strftime("%Y-%m-%d")]
     conn = db.connect()
     try:
         n = store_nba_odds(conn, dates)
