@@ -2,8 +2,10 @@ name: refresh-and-deploy
 
 on:
   schedule:
-    # UTC 02:00 / 08:00 = 北京时间 10:00 / 16:00
+    # UTC 02:00 / 00:00 / 08:00 = 北京 10:00 / 08:00 / 16:00
+    # 08:00 档（2026-11-21）：用户起床时看板已含夜间哨兵数据，不用等本机开机
     - cron: "0 2,8 * * *"
+    - cron: "0 0 * * *"
   push:
     branches: [main]
   workflow_dispatch:
@@ -80,6 +82,11 @@ jobs:
       # 后的平台真实值（-1.60）自愈。
       - name: Merge cloud ledger + apply deletions
         run: python -m app.cli bets-sync --pull-only --authoritative-remote || true
+
+      # 夜间哨兵数据（VPS 睡觉时段采集的 ESPN/Odds API 快照，存坚果云）：
+      # 合并进 CI 库，让 Pages 看板在本机开机前就反映夜间线移动。幂等。
+      - name: Pull night-sentinel data
+        run: python -m app.cli sentinel-pull --days 3 || true
 
       # 先抓齐所有盘口（ESPN + 第二书源），再训练/预测：
       # 旧顺序在抓第二书源之前 predict，导致共识只能看到 ESPN 一家。
