@@ -11,7 +11,12 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-from ..config import INJURY_GATE_ENABLE, INJURY_GATE_POINTS
+from ..config import (
+    INJURY_GATE_ENABLE,
+    INJURY_GATE_POINTS,
+    INJURY_GATE_UNRESOLVED,
+    INJURY_GATE_UNSCORED_PLAYED,
+)
 from ..models import rapm
 
 # 写 applied_at / 内部时间戳的统一格式（与库内 captured_at 一致）
@@ -161,6 +166,36 @@ def _team_short(conn: sqlite3.Connection, team_id: int) -> str:
     return (row["abbrev"] if row else "") or str(team_id)
 
 
+def _season_appearance(conn: sqlite3.Connection, player: str) -> bool | None:
+    """该球员本赛季是否有出场痕迹（players 表由 PBP 构建）。
+
+    返回 True=有出场（若 RAPM 仍无建议 = 打分失败，危险的盲区）；
+    None=解析不到或确认无出场记录——两者都无法核实真实影响：
+    可能是名字变体（ESPN 名 ≠ PBP 名，打分失败），也可能是赛季未出场
+    （impact=0 合理）。保守起见都按「未核实」进盲区桶（≥2 个才拦）。
+    """
+    name = (player or "").strip()
+    if not name:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM players WHERE lower(name)=lower(?)", (name,)
+        ).fetchone()
+        if row and row["n"]:
+            return True
+        # 全名对不上时按姓氏（最后一个词）精确命中也算有出场
+        surname = name.split()[-1].casefold()
+        if not surname:
+            return None
+        rows = conn.execute("SELECT name FROM players").fetchall()
+        for r in rows:
+            if (r["name"] or "").casefold().split()[-1] == surname:
+                return True
+    except sqlite3.Error:
+        return None  # 无 players 表（测试/空库）→ 无法核实
+    return None  # players 表无行：无法核实（名字变体 or 赛季未出场）
+
+
 # 闸门只认确证缺阵（规格 0.87：out/doubtful 才拦）。questionable/day-to-day 是
 # 赛前投机状态，A/B 显示其碎片修正是主要噪音源（44/53 场 <3 分）。
 _GATE_STATUSES = {"out", "doubtful"}
@@ -172,12 +207,19 @@ def apply_injury_gate(
     edges: list[dict],
     model: dict | None = None,
 ) -> list[dict]:
-    """伤停闸门（bettable 的最后一道）：下注侧 out/doubtful 缺人合计分值
-    ≥ INJURY_GATE_POINTS → 降级为观察并注明缺谁缺多少。in-place 改写并返回同一列表。
+    """伤停闸门（bettable 的最后一道），两道规则：
+
+    1. 分值闸门（0.87）：下注侧 out/doubtful 缺人合计分值 ≥ INJURY_GATE_POINTS
+       → 降级为观察并注明缺谁缺多少。
+    2. 盲区闸门（0.99）：impact=0 且非 manual 的未评分缺阵——打分失败
+       （有出场痕迹但 RAPM 无建议）≥1 个，或名字无法解析 ≥2 个 → 降级。
+       大小分两侧任一触发即拦。
+
+    in-place 改写并返回同一列表。
 
     model = RAPM 模型（None=自动取最新），非 team-ratings 模型。
     取值优先级：manual 手设 impact > 去重行对应的建议（0.87 审查 F2/F3）；
-    大小分（ov/ud）无球队侧不触发；阈值默认 3.0 分（约半个首发级别的影响）。
+    大小分（ov/ud）无球队侧不触发分值闸门；阈值默认 3.0 分（约半个首发级别的影响）。
     """
     if not INJURY_GATE_ENABLE or not edges:
         return edges
@@ -210,8 +252,7 @@ def apply_injury_gate(
         side = "home" if row["team_id"] == _home_team_id(conn, game_id) else "away"
         by_side[side].append(f"{row['player']} {impact:.1f}")
         points[side] += impact
-    if not by_side["home"] and not by_side["away"]:
-        return edges
+    # 分值闸门（老规则）：有正分缺阵才可能触发
     for edge in edges:
         if not edge.get("bettable"):
             continue
@@ -224,6 +265,67 @@ def apply_injury_gate(
         edge["bettable"] = False
         edge["bettable_note"] = note
         edge["gated"] = note
+
+    # ---------- 盲区闸门（0.99）：未评分缺阵 ----------
+    # 既有闸门 `if impact <= 0: continue` 对 impact=0 的 out/doubtful 全盲。
+    # 未评分缺阵分两档（manual 手设 0 分 = 人工确认无影响，不进盲区）：
+    # - 打分失败：本赛季有出场痕迹（players 表有行）但 RAPM 无建议 → 1 个即拦；
+    # - 无法解析：players 表无行，无法核实是否角色球员 → ≥2 个才拦。
+    # 大小分（side=None）两侧任一触发即拦：缺核心得分手时模型总分口径失真，
+    # 大小两个方向的 edge 都不可信，保守双杀。
+    if not INJURY_GATE_ENABLE:
+        return edges
+    home_id = _home_team_id(conn, game_id)
+    unscored_played: dict[str, list[str]] = {"home": [], "away": []}
+    unscored_unknown: dict[str, list[str]] = {"home": [], "away": []}
+    for row in rows:
+        status = (row["status"] or "").casefold()
+        if status not in _GATE_STATUSES:
+            continue
+        source = row.get("impact_source") or "auto"
+        if source == "manual":
+            # 人工确认的 0 分 = 真没影响，不进盲区；manual 正分已被主循环处理
+            continue
+        sug = suggestions.get((row["team_id"], row["player"]))
+        if sug is not None:
+            # 有建议（哪怕建议值 0 = RAPM 评分为负钳到 0）→ 打分流程正常走过
+            continue
+        if float(row["impact"] or 0.0) > 0:
+            continue  # 有正分已被主循环处理
+        side = "home" if row["team_id"] == home_id else "away"
+        played = _season_appearance(conn, row["player"])
+        if played:
+            unscored_played[side].append(row["player"])
+        elif played is None:
+            unscored_unknown[side].append(row["player"])
+
+    for edge in edges:
+        if not edge.get("bettable") or edge.get("gated"):
+            continue  # 已被分值闸门拦的不重复标注
+        side = side_of(edge)
+        sides = [side] if side else ["home", "away"]
+        reason = None
+        for s in sides:
+            team_id = home_id if s == "home" else _away_team_id(conn, game_id)
+            team = _team_short(conn, team_id) if team_id else s
+            if len(unscored_played[s]) >= INJURY_GATE_UNSCORED_PLAYED:
+                names = ", ".join(sorted(set(unscored_played[s])))
+                reason = (
+                    f"伤停闸门（盲区）：{team} 缺阵未评分但有出场痕迹（{names}）"
+                    "——影响分打分失败，模型按满员计算，保守拦截"
+                )
+                break
+            if len(unscored_unknown[s]) >= INJURY_GATE_UNRESOLVED:
+                names = ", ".join(sorted(set(unscored_unknown[s])))
+                reason = (
+                    f"伤停闸门（盲区）：{team} 有 {len(unscored_unknown[s])} 名无法核实的缺阵"
+                    f"（{names}）——影响分缺失，保守拦截"
+                )
+                break
+        if reason:
+            edge["bettable"] = False
+            edge["bettable_note"] = reason
+            edge["gated"] = reason
     return edges
 
 

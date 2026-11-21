@@ -104,6 +104,13 @@ API_TOKEN = os.getenv("NBAQ_TOKEN", "")
 INJURY_AUTO_APPLY = os.getenv("NBAQ_INJURY_AUTO_APPLY", "1") == "1"
 INJURY_GATE_ENABLE = os.getenv("NBAQ_INJURY_GATE_ENABLE", "1") == "1"
 INJURY_GATE_POINTS = float(os.getenv("NBAQ_INJURY_GATE_POINTS", "3.0"))
+# 盲区闸门（0.99）：impact=0 且非 manual 的 out/doubtful 是「未评分缺阵」——
+# 既有闸门对它们全盲（2026-11-21 LAC@DAL：Beal/Ingram/Miller 三人 out 全是
+# 0 分，模型以为满员，推出幻影 edge）。分两档拦截：
+# - 打分失败（本赛季有出场痕迹但 RAPM 无建议）≥1 个即拦；
+# - 名字无法解析（players 表无行，无法核实是否角色球员）≥2 个才拦。
+INJURY_GATE_UNSCORED_PLAYED = int(os.getenv("NBAQ_INJURY_GATE_UNSCORED_PLAYED", "1"))
+INJURY_GATE_UNRESOLVED = int(os.getenv("NBAQ_INJURY_GATE_UNRESOLVED", "2"))
 
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
 USER_AGENT = "nba-quant-personal/0.1 (research)"
