@@ -16,6 +16,10 @@ from .predict import predict_date
 # (ESPN outages / parser breakage otherwise go unnoticed for hours).
 EMPTY_SLATE_ALERT_LOOPS = 6
 
+# 哨兵导出合并间隔：VPS 每小时导出一次；本机常驻不重启时也要能持续合并，
+# 否则只有开机那一次补拉（VPS 夜间 5 分钟粒度的线移动就永远进不了本地库）。
+SENTINEL_PULL_INTERVAL = 1800.0
+
 
 class Tee:
     """同时写 stdout 和日志文件（watch 的运行记录落盘）。
@@ -225,6 +229,7 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
     was_live = False
     last_ci_trigger = 0.0
     last_sim_backfill = 0.0
+    last_sentinel_pull = 0.0
     while True:
         slate = current_slate_date()
         if slate != last_slate:
@@ -249,6 +254,16 @@ def run(interval: float | None = None, with_ingest: bool = True, once: bool = Fa
                 except Exception as exc:  # noqa: BLE001
                     loop_failed = True
                     print(f"[watch] ingest failed: {exc}")
+
+            # 哨兵数据周期合并：VPS 每小时导出一份，本机常驻（不重启）也要定期拉，
+            # 否则只有开机那一次补拉，夜间的 5 分钟粒度快照永远进不了本地库。
+            now_ts = time.time()
+            if now_ts - last_sentinel_pull >= SENTINEL_PULL_INTERVAL:
+                last_sentinel_pull = now_ts
+                try:
+                    _pull_sentinel_once()
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[watch] sentinel pull failed: {exc}")
 
             # 历史比赛日的"僵尸未结算"兜底：slate 翻天后，旧日的比赛已完赛但
             # 再也不会被 ingest（只拉当日），未结算注单会永远 open。

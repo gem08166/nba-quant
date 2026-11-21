@@ -93,6 +93,50 @@ def test_merge_prefers_newer_game_state(tmp_path):
         conn.close()
 
 
+def test_preflight_warns_on_empty_history(tmp_path):
+    """空库（无完赛历史）必须显式告警：否则 predict 每轮失败、整夜 0 推送。"""
+    from scripts import sentinel as sentinel_script
+
+    conn = _fresh_db(tmp_path)
+    messages: list[str] = []
+    original = sentinel_script._log
+    sentinel_script._log = messages.append
+    try:
+        finals = sentinel_script._preflight(conn)
+    finally:
+        sentinel_script._log = original
+        conn.close()
+    assert finals == 0
+    assert any("无法训练" in m for m in messages)
+
+
+def test_preflight_ok_with_enough_finals(tmp_path):
+    from scripts import sentinel as sentinel_script
+
+    conn = _fresh_db(tmp_path)
+    rows = [
+        (f"g{i}", "2026", 2, "2026-11-01", "2026-11-02T00:00Z", 1, 2,
+         "STATUS_FINAL", 100, 99, "2026-11-02T03:00:00+00:00")
+        for i in range(30)
+    ]
+    conn.executemany(
+        "insert into games (id,season,season_type,slate_date,tipoff,home_id,away_id,"
+        "status,home_score,away_score,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    messages: list[str] = []
+    original = sentinel_script._log
+    sentinel_script._log = messages.append
+    try:
+        finals = sentinel_script._preflight(conn)
+    finally:
+        sentinel_script._log = original
+        conn.close()
+    assert finals == 30
+    assert any("preflight ok" in m for m in messages)
+
+
 def test_build_payload_scopes_to_slate_window(tmp_path):
     conn = _fresh_db(tmp_path)
     try:

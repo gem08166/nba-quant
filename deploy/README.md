@@ -42,6 +42,33 @@ python3 -m venv .venv
 .venv/bin/python -m app.cli init          # 建库（空库）
 ```
 
+### 2.1 训练 seed（**不做这步哨兵等于白跑**）
+
+评级模型需要 ≥30 场已完赛比赛才能拟合；空库会让 `predict_date()` 每轮抛
+`not enough completed games to fit: 0`，结果是整夜 **0 推送**（2026-11-21 实测）。
+
+```powershell
+# 本机：生成 seed（teams + 全部 games，约 275KB）
+python -m scripts.make_seed            # → deploy/seed_games.sql
+scp deploy/seed_games.sql root@<VPS_IP>:/tmp/
+```
+
+```bash
+# VPS：导入（幂等，会先清空 teams/games 再写）
+cd /opt/nba-quant
+.venv/bin/python - <<'PY'
+import sqlite3
+from pathlib import Path
+conn = sqlite3.connect("data/nba.db")
+conn.executescript(Path("/tmp/seed_games.sql").read_text(encoding="utf-8"))
+conn.commit()
+print("finals", conn.execute("select count(*) from games where status='STATUS_FINAL'").fetchone()[0])
+PY
+```
+
+自检：启动日志应有 `preflight ok: N completed games`（N ≥ 30），
+单轮日志里 `signals_total` 应大于 0。
+
 ## 3. 凭据（600，不进代码目录）
 
 ```bash

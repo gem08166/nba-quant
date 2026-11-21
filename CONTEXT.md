@@ -1865,3 +1865,29 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
 - **验证**：VPS 单轮 9 场/64 伤停/导出 uploaded=True；本机 sentinel-pull
   拉回 1 文件、合并 532 行新赔率、1 场状态更新。内存 37MB。
 - **分工口诀**：VPS 管"夜里知道"，本机管"醒来下注"。
+
+### 10.98 2026-11-21 哨兵首夜静默 0 推送（空库无历史 → 模型训练失败）
+
+- **现象**：VPS 哨兵整夜每 5 分钟跑完，日志只有 `round slate=...`，
+  `signals_bettable`/`pushed` 全是 0；导出包正常（9 场/64 伤停/1000+ 赔率），
+  但**一条信号都没推**。本机 watch 侧一切正常（CL/收盘/结算/推送）。
+- **根因**：VPS 是空库，只有当日 9 场；`predict_date()` 训练评级模型时
+  `ratings.fit` 要求 ≥30 场已完赛，直接抛
+  `ValueError: not enough completed games to fit: 0`。而 `scripts/sentinel.py`
+  的 round 日志只打 `ingest_error`，`predict_error` 被静默吞掉——所以看起来
+  "每轮都成功"。
+- **修复**：
+  1. `scripts/make_seed.py` 导出 teams + 全部 games（275KB）→
+     `deploy/seed_games.sql`；VPS 导入后 1528 场完赛，`preflight ok`。
+  2. `scripts/sentinel.py` 新增 `_preflight()`：启动时检查完赛数 <30 直接告警；
+     round 日志改为打印 `signals_total` + 全部 `*_error`（ingest/odds_api/
+     betsync/predict/export），同类静默失败不再可能。
+  3. `deploy/vps_setup.sh` 增加 seed 导入步骤（幂等），`deploy/README.md`
+     写明"不做这步哨兵等于白跑"。
+  4. `app/jobs/watch.py`：哨兵数据从"只在启动拉一次"改为**每 30 分钟拉一次**
+     （`SENTINEL_PULL_INTERVAL`）——本机常驻不重启也能持续合并 VPS 的
+     5 分钟粒度快照。
+- **验证**：VPS `preflight ok: 1528 completed games`；单轮
+  `signals_total=3 signals_bettable=3 pushed=2`；本机 331 tests passed。
+- **教训**：常驻脚本的"成功日志"必须覆盖每个阶段的结果，否则"没报错"
+  会被误读成"没问题"。

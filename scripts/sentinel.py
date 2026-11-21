@@ -49,6 +49,31 @@ def _log(msg: str) -> None:
     print(line, flush=True)
 
 
+def _preflight(conn=None) -> int:
+    """启动自检：没有历史完赛数据，评级模型训练不出来，哨兵等于白跑。
+
+    2026-11-21 事故：VPS 空库只有当日 9 场，predict_date 每轮抛
+    「not enough completed games to fit: 0」，但错误被吞掉，整夜 0 推送。
+    """
+    own = conn is None
+    conn = conn or db.connect()
+    try:
+        finals = conn.execute(
+            "SELECT COUNT(*) FROM games WHERE status='STATUS_FINAL' AND home_score IS NOT NULL"
+        ).fetchone()[0]
+    finally:
+        if own:
+            conn.close()
+    if finals < 30:
+        _log(
+            f"警告：库里只有 {finals} 场已完赛，评级模型无法训练（<30）——"
+            "请先导入 deploy/seed_games.sql 再启动哨兵"
+        )
+    else:
+        _log(f"preflight ok: {finals} completed games")
+    return finals
+
+
 def run_once(export_file: str | None = None, do_export: bool = True) -> dict:
     slate = current_slate_date()
     conn = db.connect()
@@ -109,6 +134,7 @@ def main() -> int:
     if not SENTINEL_CLEAN:
         _log("警告：NBAQ_SENTINEL_CLEAN 未开启（本脚本本身已不含博彩源，仅提示）")
 
+    _preflight()
     interval = args.interval or WATCH_INTERVAL
     _log(f"sentinel start interval={interval:.0f}s once={args.once}")
     last_export = 0.0
@@ -120,16 +146,22 @@ def main() -> int:
             stats = run_once(export_file=args.export_file, do_export=do_export)
             if stats.get("export"):
                 last_export = now
-            _log(
-                "round "
-                + " ".join(
-                    f"{k}={v}"
-                    for k, v in stats.items()
-                    if k in ("slate", "signals_bettable", "pushed")
-                )
-                + (f" export={stats['export']}" if stats.get("export") else "")
-                + (f" ERR={stats['ingest_error']}" if stats.get("ingest_error") else "")
-            )
+            keys = ("slate", "signals_total", "signals_bettable", "pushed")
+            parts = [f"{k}={stats[k]}" for k in keys if k in stats]
+            if stats.get("export"):
+                parts.append(f"export={stats['export']}")
+            # 所有环节的错误都要打出来：旧版只打 ingest_error，predict 失败会让
+            # signals_bettable 一直是 0 却完全无痕（2026-11-21 VPS 空库事故）。
+            for err_key in (
+                "ingest_error",
+                "odds_api_error",
+                "betsync_error",
+                "predict_error",
+                "export_error",
+            ):
+                if stats.get(err_key):
+                    parts.append(f"{err_key}={str(stats[err_key])[:200]}")
+            _log("round " + " ".join(parts))
         except Exception:  # noqa: BLE001
             _log("round crashed:\n" + traceback.format_exc())
         if args.once:

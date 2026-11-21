@@ -32,13 +32,33 @@ from datetime import datetime
 print("  deps ok: numpy", numpy.__version__, "| NY time", datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M"))
 PY
 
-echo "[4/6] 建库"
+echo "[4/6] 建库 + 训练 seed"
 mkdir -p "$APP/data"
 if [ ! -f "$APP/data/nba.db" ]; then
   .venv/bin/python -m app.cli init >/dev/null
   echo "  db initialized"
 else
   echo "  db exists"
+fi
+# 空库没有历史完赛数据 → 评级模型训练不出来 → 哨兵静默 0 推送。
+# seed_games.sql 由本机 `python -m scripts.make_seed` 生成（teams + 全部 games）。
+if [ -f "$APP/deploy/seed_games.sql" ]; then
+  .venv/bin/python - <<'PY'
+import sqlite3
+from pathlib import Path
+sql = Path("deploy/seed_games.sql").read_text(encoding="utf-8")
+conn = sqlite3.connect("data/nba.db")
+conn.executescript(sql)
+conn.commit()
+finals = conn.execute(
+    "SELECT COUNT(*) FROM games WHERE status='STATUS_FINAL' AND home_score IS NOT NULL"
+).fetchone()[0]
+print(f"  seed imported: finals={finals}")
+if finals < 30:
+    raise SystemExit("seed too small: ratings model needs >=30 completed games")
+PY
+else
+  echo "  WARN: deploy/seed_games.sql 缺失，评级模型会训练失败（哨兵将 0 推送）"
 fi
 
 echo "[5/6] systemd"
