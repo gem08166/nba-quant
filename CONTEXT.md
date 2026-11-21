@@ -1905,3 +1905,21 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
 - **CI 侧隐患**：CI 自己的 data 分支库已 97.1MB，同样在逼近 100MB 红线；
   下次 CI 跑完 restore 61MB 快照即解除。
 - 台账注单已推送坚果云（bets-sync --force pushed=true），CI 下轮运行会合并。
+
+### 10.100 2026-11-22 盲区闸门：impact=0 的未评分缺阵不再全盲
+
+- **背景**：LAC@DAL 推出 ML @2.80（edge +8.4%）的幻影信号。排查：Beal /
+  Ingram / Miller 三人 out 但影响分全是 0（RAPM 无建议），既有闸门
+  `if impact <= 0: continue` 对这类「打分失败的缺阵」完全失明，模型按
+  满员计算。与 11-15 鹈鹕事故同型——人工 Step 1.5 核查能拦，管线拦不住。
+- **实现**（commit `215b52f`，10 tests）：`apply_injury_gate` 增加盲区档：
+  - 打分失败（players 表有出场痕迹但 RAPM 无建议）≥1 个 → 拦下注侧信号；
+  - 名字无法核实（players 表无行）≥2 个 → 拦（1 个可能是纯板凳不误伤）；
+  - manual 手设 0 分 = 人工确认无影响，不进盲区；
+  - 大小分两侧任一触发即拦（缺核心得分手时总分方向不可知，保守双杀）。
+  - 阈值 env 可调：`NBAQ_INJURY_GATE_UNSCORED_PLAYED`（默认 1）/
+    `NBAQ_INJURY_GATE_UNRESOLVED`（默认 2）。
+- **实测**：LAC@DAL ML 被拦（注明 Ingram/Miller），MEM@MIN 小分与
+  BOS@SAC 让分正常通过；341 tests 全绿；VPS 哨兵同步更新。
+- **遗留**：打分失败的根因（ESPN 名 ↔ PBP 名变体、赛季未出场）未修，
+  闸门是兜底而非根治；后续可做名字归一化让 RAPM 直接吃进这些球员。
