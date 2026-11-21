@@ -1891,3 +1891,17 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
   `signals_total=3 signals_bettable=3 pushed=2`；本机 331 tests passed。
 - **教训**：常驻脚本的"成功日志"必须覆盖每个阶段的结果，否则"没报错"
   会被误读成"没问题"。
+
+### 10.99 2026-11-21 登录流程定版：333 一律人工登录 + 注单同步通道修正
+
+- **用户决定**：333 登录永远人工手动完成（自动登录/自动重试/快照回灌登录全部停用），
+  已写进 skill Step 0。原因：新版前端 token 与设备强绑定，实测 Edge→Chrome 搬
+  localStorage 两次都被服务端拒绝并清空 token；且自动重试有风控风险。
+- **注单同步通道（GitHub）**：本地库 123MB 超 GitHub 100MB 文件红线，
+  force-push data 分支被 pre-receive 拒绝。根因是 predictions 表 13932 行
+  （每轮插一行 × details JSON ~5KB）占 68.5MB。处置：每场只留最近 3 条
+  （13932→384 行），VACUUM 后库 123MB→61MB；data 分支已用本地权威库
+  重新 seed（含今日三单结算）。备份 data/nba.db.bak-20261121。
+- **CI 侧隐患**：CI 自己的 data 分支库已 97.1MB，同样在逼近 100MB 红线；
+  下次 CI 跑完 restore 61MB 快照即解除。
+- 台账注单已推送坚果云（bets-sync --force pushed=true），CI 下轮运行会合并。
