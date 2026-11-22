@@ -19,13 +19,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NBAQ_ODDS_API_KEY: ${{ secrets.NBAQ_ODDS_API_KEY }}
+  # 2026-11-22 额度决策（CONTEXT 10.101）：CI 不再消费 The Odds API——
+  # 三方各耗各的额度撑不到 12 月重置。CI 只留 ESPN 刷新 Pages 看板。
   HOOPS_API_KEY: ${{ secrets.HOOPS_API_KEY }}
   NBAQ_NTFY_TOPIC: ${{ secrets.NBAQ_NTFY_TOPIC }}
   NBAQ_WEBDAV_USER: ${{ secrets.NBAQ_WEBDAV_USER }}
   NBAQ_WEBDAV_PASS: ${{ secrets.NBAQ_WEBDAV_PASS }}
-  # 2h→4h（2026-11-22）：三方各耗各的额度，按 5.8 credit/h 会在 2.5 天内见底
-  NBAQ_ODDSAPI_MIN_HOURS: "4"
 
 jobs:
   tick:
