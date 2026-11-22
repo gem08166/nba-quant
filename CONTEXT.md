@@ -1923,3 +1923,15 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
   BOS@SAC 让分正常通过；341 tests 全绿；VPS 哨兵同步更新。
 - **遗留**：打分失败的根因（ESPN 名 ↔ PBP 名变体、赛季未出场）未修，
   闸门是兜底而非根治；后续可做名字归一化让 RAPM 直接吃进这些球员。
+
+### 10.101 2026-11-22 额度告急 → VPS 哨兵 odds-api 降频 2h→4h
+
+- **现象**：一夜消耗 ~75 credit（remaining 500→341），三方（本机 / VPS / CI）
+  各有独立 2h 闸门、互不通气，实测 ~5.8 credit/小时，按此速度约 2.5 天见底。
+- **处置**：`NBAQ_ODDSAPI_MIN_HOURS` 本来就是 env 可调项（config 第 149 行），
+  无需改代码——VPS `/etc/nbaq/sentinel.env` 追加 `NBAQ_ODDSAPI_MIN_HOURS=4`
+  并重启哨兵（preflight ok 验证）。本机与 CI 维持 2h。
+- **注意**：收盘窗口（开赛前 2h）仍按 `ODDS_CLOSE_FETCH_MIN_HOURS=2` 豁免，
+  即临近开赛仍会有 2h 节奏的抓取——收盘线不能省。
+- **预期**：总消耗降到 ~30/天，341 额度可撑 ~11 天；12 月初额度重置前若仍紧张，
+  再把 CI 的 odds-api 抓取去掉（CI 只留 ESPN + 收盘快照）。
