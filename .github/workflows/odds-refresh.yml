@@ -24,6 +24,8 @@ env:
   NBAQ_NTFY_TOPIC: ${{ secrets.NBAQ_NTFY_TOPIC }}
   NBAQ_WEBDAV_USER: ${{ secrets.NBAQ_WEBDAV_USER }}
   NBAQ_WEBDAV_PASS: ${{ secrets.NBAQ_WEBDAV_PASS }}
+  # 2h→4h（2026-11-22）：三方各耗各的额度，按 5.8 credit/h 会在 2.5 天内见底
+  NBAQ_ODDSAPI_MIN_HOURS: "4"
 
 jobs:
   tick:
