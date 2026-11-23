@@ -2,7 +2,13 @@
 import sqlite3
 from datetime import datetime
 
-from scripts.import_333_bets import find_prunable, normalize_payload, team_abbrev, to_bet
+from scripts.import_333_bets import (
+    find_prunable,
+    normalize_payload,
+    parse_market,
+    team_abbrev,
+    to_bet,
+)
 
 
 def _bets_conn():
@@ -141,6 +147,45 @@ def test_authoritative_prunes_only_settled_bets_inside_window():
     pruned = find_prunable(conn, {"hao-1"}, times)
 
     assert [r["ref"] for r in pruned] == ["srv-9"]
+
+
+def test_prune_keeps_orders_present_in_snapshot_even_if_skipped():
+    """快照里出现过、但导入器跳过的单（未支持盘口）不能被当成"平台已删除"。
+
+    真实案例 2026-11-23：5 笔单队总分/第一节总分被跳过导入，随后被修剪逻辑
+    误删 4 笔（净 +3.02u 凭空消失），并在云端写了墓碑。
+    """
+    conn = _bets_conn()
+    _insert_bet(conn, "hao-teamtotal", "2026-11-22T12:27:00+08:00")   # 快照内、导入被跳过
+    _insert_bet(conn, "srv-9", "2026-11-22T13:00:00+08:00")           # 快照内、确实不在快照 → 删
+
+    times = [datetime.fromisoformat("2026-11-22T12:00:00+08:00")]
+    pruned = find_prunable(
+        conn, set(), times, True, None, {"hao-teamtotal"}
+    )
+
+    assert [r["ref"] for r in pruned] == ["srv-9"]
+
+
+def test_parse_market_supports_team_totals_and_q1():
+    assert parse_market("ou") == ("total", None)
+    assert parse_market("ou_q1/ov") == ("total_1st", None)
+    assert parse_market("h-ou") == ("total_team", "home")
+    assert parse_market("a-ou/ov") == ("total_team", "away")
+    assert parse_market("h-ah") == (None, "home")   # 单队让分不认，宁可不导
+    assert parse_market("ml") == ("moneyline", None)
+
+
+def test_to_bet_imports_team_total():
+    conn = _conn()
+    order = _raw_order("t1")
+    order["gameContent"]["detail"][0].update({"market": "h-ou", "betOn": "ov", "k": "111.5"})
+    bet, reason = to_bet(conn, normalize_payload([order])[0])
+    assert reason is None, reason
+    assert bet["market"] == "total_team"
+    assert bet["side"] == "over"
+    assert bet["line"] == 111.5
+    assert "单队总分" in bet["note"] and "太阳" in bet["note"]
 
 
 def test_prune_window_uses_payout_time_not_bet_time():

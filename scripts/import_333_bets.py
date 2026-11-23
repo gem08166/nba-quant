@@ -10,7 +10,8 @@
 
 口径：
 - 单关（parlay=false 且 1 条 leg）才导入；串关跳过并计数；
-- market: ah→spread / ou→total / ml→moneyline；betOn: h→home / a→away / ov→over / ud→under；
+- market: ah→spread / ou→total / ml→moneyline / ou_q1→total_1st / h-ou|a-ou→total_team；
+  betOn: h→home / a→away / ov→over / ud→under（market 可能带 `/ov` 后缀，取斜杠前部分）；
 - 赔率是欧赔（1.93），直接入库；注额 = ante；盈亏 = netWinAmount（含本金盈亏）；
 - 结果按 netWin 正负：>0 胜 / <0 负 / =0 走盘或取消；
 - ref = `hao-<orderId>`（重复导入幂等）；
@@ -41,10 +42,34 @@ from app.jobs import betssync
 from app.timeutil import BEIJING as BJT
 from app.timeutil import EASTERN as ET
 
-MARKET = {"ah": "spread", "ou": "total", "ml": "moneyline"}
+MARKET = {"ah": "spread", "ou": "total", "ml": "moneyline", "ou_q1": "total_1st"}
 SIDE = {"h": "home", "a": "away", "ov": "over", "ud": "under", "un": "under"}
-MARKET_ZH = {"spread": "让分", "total": "大小分", "moneyline": "胜负"}
+MARKET_ZH = {
+    "spread": "让分",
+    "total": "大小分",
+    "moneyline": "胜负",
+    "total_1st": "第一节总分",
+    "total_team": "单队总分",
+}
 SIDE_ZH = {"home": "主", "away": "客", "over": "大", "under": "小"}
+
+
+def parse_market(raw: str) -> tuple[str | None, str | None]:
+    """平台 market 字段 → (本地 market, 单队标记)。
+
+    `ou_q1/ov`（带选向后缀）、`h-ou`/`a-ou`（主/客单队总分）都要能认。
+    带 `h-`/`a-` 前缀的只支持 ou（单队总分）；其它单队盘口（如 h-ah）宁可不导，
+    也不能误记成全场盘口。
+    """
+    base = str(raw or "").split("/")[0].strip().lower()
+    team_side = None
+    if base.startswith("h-"):
+        team_side, base = "home", base[2:]
+    elif base.startswith("a-"):
+        team_side, base = "away", base[2:]
+    if team_side:
+        return ("total_team" if base == "ou" else None), team_side
+    return MARKET.get(base), None
 
 
 def team_abbrev(full: str) -> str | None:
@@ -163,7 +188,7 @@ def to_bet(conn, rec: dict):
     if len(legs) != 1:
         return None, f"legs={len(legs)}"
     leg = legs[0]
-    market = MARKET.get(leg.get("market"))
+    market, team_side = parse_market(leg.get("market"))
     side = SIDE.get(leg.get("betOn"))
     if not market or not side:
         return None, f"market={leg.get('market')}/{leg.get('betOn')}"
@@ -196,8 +221,12 @@ def to_bet(conn, rec: dict):
         f" {line:g}" if line is not None else ""
     )
     prefix = "滚球" if leg.get("inplay") else "333体育"
+    team_sub = ""
+    if market == "total_team" and team_side:
+        team_name = leg.get("home" if team_side == "home" else "away") or ""
+        team_sub = f" {team_name}"
     note = (
-        f"{prefix} {MARKET_ZH[market]} {SIDE_ZH[side]}{line_text} "
+        f"{prefix} {MARKET_ZH[market]}{team_sub} {SIDE_ZH[side]}{line_text} "
         f"@{price:.2f} · {game_slate(conn, game_id)}"
     )
     return {
@@ -267,6 +296,7 @@ def find_prunable(
     times,
     complete_snapshot: bool = True,
     payout_times=None,
+    snapshot_refs: set[str] | None = None,
 ) -> list[dict]:
     """以 333 为准：找出本次快照窗口内、但不在快照里的已结算真实注单。
 
@@ -274,6 +304,10 @@ def find_prunable(
     早下单、窗口开始前已结算的单不会出现在快照里，但它仍然真实存在，
     不能当作"平台已删除"修剪掉（否则每天抓单都会误删历史注单）。
     payout_times 缺失时退回用下注时间的保守估计。
+
+    `snapshot_refs`：本次快照里出现过的**全部**订单 ref（含因盘口未支持而跳过导入的）。
+    出现过就不算"平台已删除"——否则「跳过导入」会被误当「删除」，把单队总分/
+    第一节总分这类未支持盘口的真实注单误删（2026-11-23 实测丢了 4 笔）。
     """
     if not times and not payout_times:
         return []
@@ -283,12 +317,13 @@ def find_prunable(
     else:
         lo = min(times) - timedelta(hours=12)
     out = []
+    seen = set(imported_refs) | set(snapshot_refs or ())
     for row in conn.execute(
         "SELECT * FROM bets WHERE note NOT LIKE '回填%' AND note NOT LIKE '模拟%'"
     ).fetchall():
         cand = dict(row)
         ref = str(cand.get("ref") or "")
-        if ref in imported_refs:
+        if ref in seen:
             continue
         if cand.get("result") == "open":
             continue  # 未结算的真实注单不删（快照可能不含未结算区）
@@ -395,9 +430,13 @@ def main() -> None:
 
         if args.authoritative:
             imported_refs = {b["ref"] for b in prep}
+            # 快照里出现过的单（含跳过导入的）都不能算"平台已删除"。
+            snapshot_refs = {f"hao-{rec['orderId']}" for rec in records if rec.get("orderId")}
             times = [b["_bet_time"] for b in prep]
             payouts = [b["_payout_time"] for b in prep if b.get("_payout_time")]
-            pruned = find_prunable(conn, imported_refs, times, complete_snapshot, payouts)
+            pruned = find_prunable(
+                conn, imported_refs, times, complete_snapshot, payouts, snapshot_refs
+            )
             if pruned:
                 ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
                 (backup_dir / f"bets-333-pruned-{ts}.json").write_text(
