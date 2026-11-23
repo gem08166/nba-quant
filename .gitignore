@@ -48,3 +48,6 @@ deploy/*.png
 
 # playwright MCP è¾“å‡ºï¼ˆå¿«ç…§/æ§åˆ¶å°æ—¥å¿—ï¼‰
 .playwright-mcp/
+
+# ¸ùÄ¿Â¼ÎóÌá½»µÄÁÙÊ±½ØÍ¼
+/login-state.png
