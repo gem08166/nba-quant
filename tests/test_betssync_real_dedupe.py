@@ -76,7 +76,7 @@ def test_sim_and_real_do_not_collapse():
 
 
 def test_hao_platform_result_overrides_local_settlement():
-    """333 平台订单是权威：平台结果可以覆盖本地结算结果。"""
+    """333 权威导入（authoritative=True）可用平台结果覆盖本地自行结算的结果。"""
     conn = _conn()
     betssync.merge_rows(
         conn,
@@ -85,6 +85,7 @@ def test_hao_platform_result_overrides_local_settlement():
     result = betssync.merge_rows(
         conn,
         [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="won")],
+        authoritative=True,
     )
     assert result["updated"] == 1
     row = conn.execute("SELECT result FROM bets WHERE ref='hao-1'").fetchone()
@@ -106,6 +107,27 @@ def test_non_authoritative_merge_keeps_existing_settled_profit():
     assert result["duplicates"] == 1
     row = conn.execute("SELECT profit FROM bets WHERE ref='hao-1'").fetchone()
     assert row["profit"] == -1.6
+
+
+def test_non_authoritative_merge_never_flips_settled_result():
+    """结果不同也不行：云端 CI 自结算的 lost/−2.00 不能把本地 won/+1.96 翻掉。
+
+    2026-11-24 实测：333 权威导入后 `bets-sync`（非权威）拉云端台账，
+    这个分支只看「结果不一致」就覆盖，于是 +1.96 被改回 −2.00，
+    再 `--force` 推回云端 → 污染回路复燃。
+    """
+    conn = _conn()
+    betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="won", profit=1.96)],
+    )
+    result = betssync.merge_rows(
+        conn,
+        [_bet("hao-1", "2026-11-06T16:03:00+00:00", result="lost", profit=-2.0)],
+    )
+    assert result["updated"] == 0
+    row = conn.execute("SELECT result, profit FROM bets WHERE ref='hao-1'").fetchone()
+    assert (row["result"], row["profit"]) == ("won", 1.96)
 
 
 def test_authoritative_merge_overrides_existing_settled_profit():

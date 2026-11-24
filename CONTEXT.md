@@ -1969,3 +1969,24 @@ CI 保持收敛（2026-11-18 实测 Pages 回到 −12.78）。后续若再出�
    （快照合计 −1.98u，快照内 0 缺、0 差异），真实台账
    **120 单全结（56W/63L/1P，249u，−8.56u，ROI −3.4%）**，0 未结；
    窗口外 74 笔历史单保留；清理撞车模拟单 1 笔；新增 3 个回归测试（319 passed）。
+
+**10.103（2026-11-24）−2.00 污染复燃：结果不一致的分支绕过了 authoritative**
+
+- **现象**：333 权威导入后本地 `won/+1.96`（`hao-261123082248-ajNfgT`），
+  跑一次普通 `bets-sync`（非权威合并云端台账）就被改回 `lost/−2.00`；
+  `--force` 再把它推回云端 → 污染回路复燃，四处核对从 −22.16 变 −26.12。
+- **根因**：`merge_rows` 的覆盖条件写成
+  `cur_result != incoming or (authoritative and profit 不同)`——
+  「结果不一致」这一支**与 authoritative 无关**，云端 CI 自结算的保守值可以翻转平台结果。
+  10.90 那次只堵了「同结果、profit 不同」，漏了「结果不同」。
+- **修复**：改为
+  `cur_result == "open" or (ref 是 hao- and authoritative and (结果或 profit 不同))`，
+  即**只有 333 权威导入能改已结算单的结果/盈亏**；非权威合并只补空字段。
+  原 `test_hao_platform_result_overrides_local_settlement` 改成显式 `authoritative=True`，
+  新增 `test_non_authoritative_merge_never_flips_settled_result`（345 passed）。
+- **本次同步**：50 笔近 7 日已结单全部入库（10 新增 / 1 更新 / 0 跳过 / 0 修剪），
+  逐条 `netWinAmount` 对齐（快照合计 −4.32u）；真实台账
+  **132 单全结（60W/71L/1P，281u，−22.16u，ROI −7.9%）**，0 未结；
+  清理撞车模拟单 5 笔；333 余额 82.16 → 78.56（与近两日 −3.60u 一致）。
+- **操作提示**：权威导入后若怀疑云端还有旧值，直接 `bets-sync --force`
+  现在安全（非权威拉取不会再翻转结果）；急用时也可只推不拉（跳过云端合并）。

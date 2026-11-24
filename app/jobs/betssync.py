@@ -256,12 +256,15 @@ def merge_rows(
             if incoming in ("won", "lost", "push"):
                 if cur_result == "open" or (
                     str(ref).startswith("hao-")
+                    and authoritative
                     and (
                         cur_result != incoming
-                        or (authoritative and row.get("profit") != current.get("profit"))
+                        or row.get("profit") != current.get("profit")
                     )
                 ):
-                    # 333 平台订单是权威：平台结果可以覆盖本地自行结算的结果
+                    # 只有 333 权威导入（authoritative=True）才能改「已结算」单的结果/盈亏。
+                    # 否则云端台账里 CI 自结算的保守 −2.00（结果甚至可能记成 lost）
+                    # 会顺着 pull 把平台已核对的 won/+1.96 盖掉——2026-11-24 实测复发。
                     cur = conn.execute(
                         """
                         UPDATE bets SET result=?, profit=?,
